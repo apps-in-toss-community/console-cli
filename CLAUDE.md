@@ -83,16 +83,7 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `login`, `logout`, 
 - **Copy-paste code를 쓰지 않는 이유**: UX가 실제로 더 나쁨(focus 잃음, 잘못된 토큰 붙여넣기). 보안 경계가 사용자가 code를 복사한 앱으로 옮겨감. `127.0.0.1` localhost callback은 `gh auth login --web`, `gcloud auth login`, `firebase login`이 모두 쓰는 바로 그 패턴이고, 시크릿을 **single-use redirect**로 좁힌다.
 - **agent-plugin 호환성**: `login`은 agent-plugin skill이 **절대** 호출하지 않는다. plugin은 `whoami --json`이 세션 없음을 보이면 deploy를 거부하고, 사용자에게 터미널에서 직접 `ait-console login`을 돌리라고 안내한다. 인터랙티브 단계를 agent 바깥으로 뺀다.
 
-## Build / Release
-
-### Build pipeline
-
-- **Dev 의존성 관리**: pnpm 10.33.0. `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
-- **Node dist (npm 경로)**: `tsdown`으로 `dist/cli.mjs` + `.d.mts` 산출. `@ait-co/console-cli` npm 패키지가 이걸 싣는다.
-- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/ait-console-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 아직 partial이라 제외).
-- **버전 임베딩**: build-time define `AIT_CONSOLE_VERSION`이 `package.json`의 `version`을 읽어 tsdown / Bun 양쪽 경로에 주입.
-
-### 기술 스택
+## 기술 스택
 
 - **TypeScript** (ESM only, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`)
 - **tsdown** — Node용 dist 빌드 (`pnpm build`)
@@ -102,6 +93,15 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `login`, `logout`, 
 - **pnpm** — 패키지 매니저 (10.33.0)
 - **Biome** — lint + formatter (umbrella 공통)
 - **Changesets** — 릴리즈 (Type A: npm publish + binary release)
+
+## Build / Release
+
+### Build pipeline
+
+- **Dev 의존성 관리**: pnpm 10.33.0. `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+- **Node dist (npm 경로)**: `tsdown`으로 `dist/cli.mjs` + `.d.mts` 산출. `@ait-co/console-cli` npm 패키지가 이걸 싣는다.
+- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/ait-console-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 아직 partial이라 제외).
+- **버전 임베딩**: build-time define `AIT_CONSOLE_VERSION`이 `package.json`의 `version`을 읽어 tsdown / Bun 양쪽 경로에 주입.
 
 ### 명령어
 
@@ -137,14 +137,14 @@ pnpm format         # biome format --write .
 2. `tag_name`의 `v` 제거 후 임베드 버전과 비교. 같으면 "already up to date"로 exit 0. `--force`는 체크 우회.
 3. 현재 실행 파일 경로 확인. Bun 컴파일 바이너리에선 `process.execPath`가 바이너리 자체. npm/Node에선 `process.execPath`가 `node`이므로 self-upgrade를 **거부**하고 `npm i -g @ait-co/console-cli@latest`를 안내.
 4. 플랫폼/아키에 맞는 asset name 골라 `<exePath>.new.<timestamp>`로 다운로드.
-5. `SHA256SUMS` asset으로 SHA-256 검증.
-6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe를 rename할 수 없어서 `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리("boot 시 stale `.old` 청소" 체크).
-7. 새 바이너리를 `--version`으로 re-exec 해서 smoke test.
+5. **(계획됨, 현재 미구현)** `SHA256SUMS` asset으로 SHA-256 검증. 0.1.x 스캐폴드의 `src/commands/upgrade.ts`는 아직 이 단계를 수행하지 않는다 — TODO로 추적. (`install.sh`는 이미 검증한다.)
+6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe를 rename할 수 없어서 `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리("boot 시 stale `.old` 청소" 체크 — 현재는 `.old` 파일만 남기고 정리 로직은 미구현, TODO).
+7. **(계획됨, 현재 미구현)** 새 바이너리를 `--version`으로 re-exec 해서 smoke test.
 
 ### `install.sh`
 
 - `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `ait-console-<os>-<arch>`.
-- Download: `releases/latest/download/<name>` + `SHA256SUMS`. 검증 `grep " $NAME$" SHA256SUMS | shasum -a 256 -c -`.
+- Download: `releases/latest/download/<name>` + `SHA256SUMS`. `SHA256SUMS`에서 바이너리 이름에 해당하는 라인만 필터링 후 `shasum -a 256 -c` 또는 `sha256sum -c`로 검증 (둘 중 사용 가능한 쪽).
 - 설치 위치: `${AIT_CONSOLE_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v ait-console`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
 - 엣지 케이스 (TODO.md 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AIT_CONSOLE_QUIET=1`.
 

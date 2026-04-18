@@ -5,7 +5,7 @@
 
 `ait-console` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
 
-앱인토스 콘솔을 **CLI**와 **MCP**로 자동화하는 커뮤니티 도구. 최초 로그인만 브라우저로 하고, 이후 작업은 headless 브라우저로 처리한다.
+앱인토스 콘솔을 CLI로 자동화하는 커뮤니티 도구. 최초 로그인만 브라우저로 하고, 이후 작업은 headless 브라우저로 처리한다. (MCP 모드는 후순위 — [TODO.md](./TODO.md) 참고.)
 
 > This is an **unofficial, community-maintained** project. Not affiliated with or endorsed by Toss or the Apps in Toss team. It drives the public developer console from a user's authenticated browser session — it is **not** a client for a blessed, documented API, and behavior may break whenever the console UI changes.
 >
@@ -47,6 +47,7 @@ ait-console --version          # print the embedded version
 ait-console whoami             # show the currently logged-in user (exits non-zero if no session)
 ait-console whoami --json      # machine-readable output for scripts and agents
 ait-console upgrade            # self-update to the latest GitHub Release (binary installs only)
+ait-console upgrade --dry-run  # check for an update without downloading or replacing
 ait-console upgrade --force    # reinstall the latest release even if versions match
 ```
 
