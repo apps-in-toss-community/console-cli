@@ -31,8 +31,45 @@
 - `--verbose`도 민감 정보 redact.
 - Playwright 스크린샷은 기본 off (디버그 시 opt-in).
 
+## 기술 스택
+
+- **TypeScript** (ESM only, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`)
+- **tsdown** — Node용 dist 빌드 (`pnpm build`)
+- **Bun** — 플랫폼별 standalone 바이너리 컴파일 (`bun build --compile`, `pnpm build:bin`). pnpm은 의존성 관리만.
+- **vitest** — 테스트
+- **pnpm** — 패키지 매니저 (10.33.0)
+- **Biome** — lint + formatter
+- **Changesets** — 릴리즈 (Type A: npm publish)
+
+## 명령어
+
+```bash
+pnpm build          # tsdown으로 dist/ (npm install -g 용)
+pnpm build:bin      # Bun으로 dist-bin/ 플랫폼별 바이너리 (GitHub Releases 용)
+pnpm dev            # watch 모드
+pnpm typecheck      # tsc --noEmit
+pnpm test           # vitest run
+pnpm lint           # biome check .
+pnpm lint:fix       # biome check --write .
+pnpm format         # biome format --write .
+```
+
+## 배포 채널
+
+사용자 설치 경로 3가지 지원 예정:
+
+1. **GitHub Releases 바이너리** — `install.sh`로 플랫폼 감지 + 다운로드. Node 불필요.
+2. **npm global** — `npm i -g @ait-co/console-cli` (또는 `pnpm add -g`).
+3. **Homebrew tap** (후순위) — `brew install apps-in-toss-community/tap/ait-console`.
+
+`ait-console upgrade` 서브커맨드로 self-upgrade 제공 (GitHub Releases API 기반).
+
+## 릴리즈
+
+버전 정책·Changesets 흐름은 umbrella `../CLAUDE.md`의 "배포 전략" 섹션 참고. 현재는 **`0.1.x` patch only** 구간.
+
 ## Status
 
-placeholder 상태. 구현 전.
+scaffold 완료, 구현 전. `src/cli.ts`는 "WIP" 메시지만 출력.
 
 전체 로드맵은 [landing page](https://apps-in-toss-community.github.io/) 참고.
