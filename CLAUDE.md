@@ -8,6 +8,7 @@
 
 ## 짝 repo
 
+- **`sdk-example`** (downstream consumer) — console-cli가 완성되면 sdk-example을 **앱인토스 실제 미니앱으로 배포**(현재 GitHub Pages 배포에 더해)해서 E2E 검증. 이게 CLI의 주요 품질 게이트.
 - **`agent-plugin`** — `/ait deploy`가 이 CLI를 shell out으로 호출. 또는 MCP server로 붙여서 agent가 직접 tool call 가능하게.
 
 독립 실행 가능. 다른 repo 변경 없이 배포 가능.
