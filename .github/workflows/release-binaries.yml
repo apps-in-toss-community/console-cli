@@ -1,0 +1,109 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+  # Manual trigger for testing against an existing release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach binaries to'
+        required: true
+        type: string
+
+concurrency:
+  group: release-binaries-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux-x64
+            out: ait-console-linux-x64
+          - runner: ubuntu-latest
+            target: linux-arm64
+            out: ait-console-linux-arm64
+          - runner: macos-latest
+            target: darwin-x64
+            out: ait-console-darwin-x64
+          - runner: macos-latest
+            target: darwin-arm64
+            out: ait-console-darwin-arm64
+          - runner: windows-latest
+            target: windows-x64
+            out: ait-console-windows-x64.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build binary (${{ matrix.target }})
+        shell: bash
+        run: bun run scripts/build-bin.ts ${{ matrix.target }}
+
+      - name: Compute SHA-256
+        shell: bash
+        run: |
+          cd dist-bin
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "${{ matrix.out }}" > "${{ matrix.out }}.sha256"
+          else
+            sha256sum "${{ matrix.out }}" > "${{ matrix.out }}.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: |
+            dist-bin/${{ matrix.out }}
+            dist-bin/${{ matrix.out }}.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-bin
+          merge-multiple: true
+
+      - name: Assemble SHA256SUMS
+        shell: bash
+        run: |
+          cd dist-bin
+          cat *.sha256 | sort > SHA256SUMS
+          rm -f *.sha256
+          ls -la
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        shell: bash
+        run: |
+          cd dist-bin
+          gh release upload "$TAG" * --clobber --repo "$GITHUB_REPOSITORY"

@@ -15,9 +15,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown src/cli.ts --format esm --dts",
+    "build": "tsdown",
     "build:bin": "bun run scripts/build-bin.ts",
-    "dev": "tsdown src/cli.ts --format esm --dts --watch",
+    "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "biome check .",
@@ -52,5 +52,8 @@
   "homepage": "https://www.npmjs.com/package/@ait-co/console-cli",
   "bugs": {
     "url": "https://github.com/apps-in-toss-community/console-cli/issues"
+  },
+  "dependencies": {
+    "citty": "^0.2.2"
   }
 }
