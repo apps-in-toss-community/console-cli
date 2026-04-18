@@ -1,0 +1,56 @@
+{
+  "name": "@ait-co/console-cli",
+  "version": "0.1.0",
+  "description": "CLI and MCP server for the Apps in Toss developer console — log in once in a browser, then drive builds, deploys, and releases headlessly",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "ait-console": "./dist/cli.mjs"
+  },
+  "main": "./dist/cli.mjs",
+  "types": "./dist/cli.d.mts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown src/cli.ts --format esm --dts",
+    "build:bin": "bun run scripts/build-bin.ts",
+    "dev": "tsdown src/cli.ts --format esm --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.12",
+    "@changesets/cli": "^2.31.0",
+    "@types/bun": "^1.2.0",
+    "tsdown": "^0.21.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  },
+  "keywords": [
+    "apps-in-toss",
+    "toss",
+    "mini-app",
+    "cli",
+    "mcp",
+    "deployment"
+  ],
+  "packageManager": "pnpm@10.33.0",
+  "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apps-in-toss-community/console-cli"
+  },
+  "homepage": "https://www.npmjs.com/package/@ait-co/console-cli",
+  "bugs": {
+    "url": "https://github.com/apps-in-toss-community/console-cli/issues"
+  }
+}
