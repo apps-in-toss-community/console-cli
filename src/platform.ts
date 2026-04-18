@@ -35,7 +35,7 @@ export function detectPlatform(): PlatformTarget | null {
       return null;
   }
 
-  // We don't ship windows-arm64 yet (see PLAN.md §5).
+  // We don't ship windows-arm64 yet — Bun's `--compile` target support is still partial.
   if (os === 'windows' && arch === 'arm64') return null;
 
   const suffix = os === 'windows' ? '.exe' : '';

@@ -27,6 +27,8 @@ Pin a specific version:
 curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AIT_CONSOLE_VERSION=v0.1.1 sh
 ```
 
+Override the install directory with `AIT_CONSOLE_INSTALL_DIR=/custom/path` (default `$HOME/.local/bin`).
+
 ### npm (fallback)
 
 If you already have Node 24+ on your PATH:
@@ -45,7 +47,10 @@ ait-console --version          # print the embedded version
 ait-console whoami             # show the currently logged-in user (exits non-zero if no session)
 ait-console whoami --json      # machine-readable output for scripts and agents
 ait-console upgrade            # self-update to the latest GitHub Release (binary installs only)
+ait-console upgrade --force    # reinstall the latest release even if versions match
 ```
+
+`ait-console upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
 Planned commands — `login`, `logout`, `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
 
@@ -72,4 +77,4 @@ Every command accepts `--json`. When set:
 
 ## Status
 
-Scaffold complete, implementation in progress. See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.
+Scaffold complete. `whoami` and `upgrade` are implemented; `login`, `logout`, `deploy`, `logs`, `status` are not yet — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.

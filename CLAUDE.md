@@ -46,7 +46,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `ait-console whoami` | ✅ | 로컬 세션에서 현재 로그인 유저 표시. 세션 없으면 non-zero exit. 세션 모듈의 첫 실제 consumer. |
 | `ait-console upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
 
-Next (tracked in TODO.md, 이 PR에는 없음): `login`, `logout`, `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
+Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `login`, `logout`, `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
 **Non-goals for 0.1.x**: 플러그인 시스템, multi-account switching, release-notes 생성. 모두 Dave의 명시적 `minor`/`major` 승인 뒤에.
 
@@ -145,7 +145,7 @@ pnpm format         # biome format --write .
 
 - `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `ait-console-<os>-<arch>`.
 - Download: `releases/latest/download/<name>` + `SHA256SUMS`. 검증 `grep " $NAME$" SHA256SUMS | shasum -a 256 -c -`.
-- 설치 위치: `${AIT_CONSOLE_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`.
+- 설치 위치: `${AIT_CONSOLE_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v ait-console`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
 - 엣지 케이스 (TODO.md 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AIT_CONSOLE_QUIET=1`.
 
 ### Release flow (Type A per umbrella)
