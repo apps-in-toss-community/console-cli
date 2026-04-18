@@ -42,8 +42,10 @@ jobs:
 
       - uses: changesets/action@v1
         with:
-          publish: npm publish --provenance --access public
+          publish: pnpm changeset publish
           version: pnpm changeset version
+          createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true

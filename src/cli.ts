@@ -1,9 +1,20 @@
 #!/usr/bin/env node
+import { defineCommand, runMain } from 'citty';
+import { upgradeCommand } from './commands/upgrade.js';
+import { whoamiCommand } from './commands/whoami.js';
+import { VERSION } from './version.js';
 
-function main(): void {
-  console.log('ait-console (WIP)');
-  console.log('This CLI is not yet implemented.');
-  console.log('See https://github.com/apps-in-toss-community/console-cli for status.');
-}
+const main = defineCommand({
+  meta: {
+    name: 'ait-console',
+    version: VERSION,
+    description:
+      'Community CLI for the Apps in Toss developer console (unofficial; not affiliated with Toss).',
+  },
+  subCommands: {
+    whoami: whoamiCommand,
+    upgrade: upgradeCommand,
+  },
+});
 
-main();
+runMain(main);
