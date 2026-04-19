@@ -1,7 +1,7 @@
 # console-cli
 
-> 🚧 **Work in Progress** — not yet published.
-> 아직 개발 중입니다. 릴리스 전입니다.
+> 🚧 **Pre-1.0 (`0.1.x`)** — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next on [TODO.md](./TODO.md).
+> 1.0 이전 단계입니다. 일부 명령(`whoami`/`login`/`logout`/`upgrade`)만 동작하고, `deploy`/`logs`/`status`는 진행 중입니다.
 
 `ait-console` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
 
