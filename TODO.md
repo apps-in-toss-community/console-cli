@@ -1,13 +1,17 @@
 # TODO
 
 ## High Priority
-- [ ] Implement `ait-console login` — localhost callback OAuth flow: spawn ephemeral HTTP server on `127.0.0.1:<port>`, open the user's browser to the Toss OAuth URL with `redirect_uri=http://127.0.0.1:<port>/callback` and a random `state`, validate on callback, write session file. Pending discovery of the developer-console login URL and scopes.
+- [ ] Discover the real Toss developer console OAuth authorize URL, client id, and scopes so `ait-console login` can work without the `AIT_CONSOLE_OAUTH_URL` override. The callback server + state + browser-open + session-write scaffold is in place; what's missing is the outbound endpoint. Track in CLAUDE.md § "Open questions".
+- [ ] Replace the placeholder "callback query carries user_id/email/display_name" path in `login` with a real token-exchange + Playwright `storageState` capture once the OAuth endpoint is known. `src/commands/login.ts` around the `rawUserId`/`rawEmail` block.
+
+## Notes on session schema
+
+`readSession` now type-checks `user.email` and `user.displayName`. Pre-login scaffold sessions from before this branch had only `user.id`, which would now read as "no session" and silently fall back to the login flow. Pre-1.0, this is fine — no stable users exist. If a migration is ever needed, widen `readSession` to tolerate missing `email` and write a back-fill on next `login`.
 
 ## Medium Priority
 - [ ] Implement `ait-console deploy [path]` — headless Playwright driving the console's deploy flow with the stored session. Include `--dry-run` from day one.
 - [ ] Implement `ait-console logs [--tail]` — scrape/stream logs from the console.
 - [ ] Implement `ait-console status` — app status and last-deploy summary.
-- [ ] Implement `ait-console logout` — delete the session file. Trivial, pairs with `login`.
 - [ ] Wire SHA-256 verification into `ait-console upgrade` — download `SHA256SUMS` from the release, verify the binary before atomic replace (currently only `install.sh` verifies). `src/commands/upgrade.ts` ~L135.
 - [ ] Wire smoke test after upgrade — re-exec the new binary with `--version` before considering the upgrade successful.
 - [ ] Clean up stale `<exePath>.old` files on Windows boot (currently left behind after self-upgrade).

@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { configDir, sessionFilePath } from './paths.js';
 
@@ -42,6 +42,10 @@ export async function readSession(): Promise<Session | null> {
     const parsed = JSON.parse(raw) as Session;
     if (parsed.schemaVersion !== 1) return null;
     if (!parsed.user || typeof parsed.user.id !== 'string') return null;
+    if (typeof parsed.user.email !== 'string') return null;
+    if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
+      return null;
+    }
     return parsed;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -68,6 +72,17 @@ export async function writeSession(session: Session): Promise<void> {
     await chmod(sessionFilePath(), 0o600);
   } catch {
     // Windows / exotic FS: best-effort only.
+  }
+}
+
+export async function clearSession(): Promise<{ existed: boolean }> {
+  try {
+    await unlink(sessionFilePath());
+    return { existed: true };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return { existed: false };
+    throw err;
   }
 }
 

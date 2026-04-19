@@ -44,6 +44,9 @@ This is the path that `agent-plugin` uses when a project already has Node instal
 
 ```sh
 ait-console --version          # print the embedded version
+ait-console login              # open the browser, capture the OAuth callback on localhost, save the session
+ait-console login --no-browser # print the authorize URL instead of auto-opening a browser
+ait-console logout             # delete the local session file
 ait-console whoami             # show the currently logged-in user (exits non-zero if no session)
 ait-console whoami --json      # machine-readable output for scripts and agents
 ait-console upgrade            # self-update to the latest GitHub Release (binary installs only)
@@ -53,7 +56,13 @@ ait-console upgrade --force    # reinstall the latest release even if versions m
 
 `ait-console upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
-Planned commands — `login`, `logout`, `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
+Planned commands — `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
+
+### Login details
+
+`ait-console login` spawns a short-lived HTTP server on `127.0.0.1:<random-port>` and waits for the OAuth provider to redirect back to `/callback` with a `code` and a `state` parameter. The `state` is a 32-byte crypto-random value generated per attempt and rechecked on arrival — any mismatch is rejected with a 400 and the login aborts. The server binds to the loopback interface only, listens for exactly one successful callback, and shuts down after either success or a 5-minute timeout (override with `--timeout <seconds>`).
+
+The Apps in Toss developer console OAuth authorize URL is not publicly documented yet (see [CLAUDE.md](./CLAUDE.md) § "Open questions"). Until it is, set `AIT_CONSOLE_OAUTH_URL` (and optionally `AIT_CONSOLE_OAUTH_CLIENT_ID` / `AIT_CONSOLE_OAUTH_SCOPE`) to point at the real endpoint; without it, `login` exits with a usage error rather than calling a placeholder.
 
 ## Session storage
 
@@ -78,4 +87,4 @@ Every command accepts `--json`. When set:
 
 ## Status
 
-Scaffold complete. `whoami` and `upgrade` are implemented; `login`, `logout`, `deploy`, `logs`, `status` are not yet — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.
+Scaffold complete. `whoami`, `login`, `logout`, and `upgrade` are implemented (`login` still needs the real Toss OAuth endpoint — override via `AIT_CONSOLE_OAUTH_URL`); `deploy`, `logs`, `status` are not yet — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.

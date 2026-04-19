@@ -44,9 +44,11 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `ait-console --version` | ✅ | build time에 `package.json`의 `version`을 `AIT_CONSOLE_VERSION` define으로 주입. |
 | `ait-console --help` | ✅ | `citty` 자동 생성. |
 | `ait-console whoami` | ✅ | 로컬 세션에서 현재 로그인 유저 표시. 세션 없으면 non-zero exit. 세션 모듈의 첫 실제 consumer. |
+| `ait-console login` | ✅ (scaffold) | `127.0.0.1` ephemeral 포트에 `node:http` 콜백 서버를 띄우고, 랜덤 `state`로 CSRF 방지, 5분 timeout 후 세션을 `0600`으로 저장. **실제 Toss OAuth URL은 discovery 전** — `AIT_CONSOLE_OAUTH_URL` 환경변수로 override하지 않으면 usage error. |
+| `ait-console logout` | ✅ | `session.json` 삭제. 파일이 없어도 no-op (exit 0). |
 | `ait-console upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
 
-Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `login`, `logout`, `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
+Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
 **Non-goals for 0.1.x**: 플러그인 시스템, multi-account switching, release-notes 생성. 모두 Dave의 명시적 `minor`/`major` 승인 뒤에.
 
@@ -77,11 +79,20 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `login`, `logout`, 
 
 ### Login 선택 근거 (localhost callback vs copy-paste)
 
-**결정: localhost callback server + PKCE-style one-shot code capture.** (0.1.x 스캐폴드에는 stub만 있음.)
+**결정: localhost callback server + PKCE-style one-shot code capture.** (0.1.x 스캐폴드에 실제 구현됨, 단 OAuth 엔드포인트는 placeholder.)
 
-- `login`은 `server.listen(0)`으로 ephemeral port에 HTTP 서버를 띄우고, Toss OAuth URL을 `redirect_uri=http://127.0.0.1:<port>/callback`과 random `state`로 열어 callback을 기다린 뒤 `state` 검증 → 서버 종료 → 세션 기록.
+- `login`은 `server.listen(0, '127.0.0.1', ...)`으로 ephemeral port에 `node:http` 서버를 띄우고, Toss OAuth URL을 `redirect_uri=http://127.0.0.1:<port>/callback`과 random `state` (32 bytes base64url)로 열어 callback을 기다린 뒤 `state` 검증 → 서버 종료 → 세션 기록.
 - **Copy-paste code를 쓰지 않는 이유**: UX가 실제로 더 나쁨(focus 잃음, 잘못된 토큰 붙여넣기). 보안 경계가 사용자가 code를 복사한 앱으로 옮겨감. `127.0.0.1` localhost callback은 `gh auth login --web`, `gcloud auth login`, `firebase login`이 모두 쓰는 바로 그 패턴이고, 시크릿을 **single-use redirect**로 좁힌다.
 - **agent-plugin 호환성**: `login`은 agent-plugin skill이 **절대** 호출하지 않는다. plugin은 `whoami --json`이 세션 없음을 보이면 deploy를 거부하고, 사용자에게 터미널에서 직접 `ait-console login`을 돌리라고 안내한다. 인터랙티브 단계를 agent 바깥으로 뺀다.
+
+#### 구현 세부 결정 (0.1.x scaffold)
+
+- **포트 선택**: 기본은 `listen(0)` — OS-assigned ephemeral. `StartCallbackServerOptions.preferredPort`가 지정되면 한 번 시도하고, `EADDRINUSE`면 곧바로 0으로 fallback. 고정 포트 range(예: 8765–8775)를 쓰지 않는 이유 — 로컬 앱 하나가 이미 점유했을 때 user에게 추가 원인을 주기만 함. 공격자가 localhost에서 경쟁을 노려도 `state` 미일치로 막힘.
+- **Timeout**: 기본 5분 (`--timeout <sec>`로 override). 타이머는 `unref()` 처리해서 테스트·CI가 행에 걸리지 않게.
+- **브라우저 자동 열기**: `open` npm 패키지 의존성 없이 플랫폼별 `spawn`으로 직접 실행 — macOS `open`, Windows `cmd /c start "" <url>`, 그 외 `xdg-open`. 실패하면 silent fallback으로 URL을 stdout에 찍고, 사용자는 직접 복사. `AIT_CONSOLE_NO_BROWSER=1` 또는 `--no-browser`로 강제 off (CI·테스트·headless 환경에서 사용).
+- **Toss OAuth 엔드포인트 부재 대응**: `AIT_CONSOLE_OAUTH_URL`이 없으면 login은 `TBD://...` placeholder를 쓰지 않고 **usage error(exit 2)로 즉시 실패**. 선택적으로 `AIT_CONSOLE_OAUTH_CLIENT_ID`, `AIT_CONSOLE_OAUTH_SCOPE`도 override 가능. 실제 URL이 discovery되면 코드에서 default 상수를 업데이트하고 env-var는 escape hatch로 유지.
+- **세션 shape (임시)**: OAuth 엔드포인트가 확정되기 전까지는 `user_id` / `email` / `display_name`를 callback query string에서 그대로 받아 `session.json`에 기록. Playwright storageState capture(`cookies`/`origins`)은 `deploy` 구현과 함께 채워질 예정이며, 그때 `login` 내부도 token-exchange POST로 교체한다.
+- **Logout**: 세션 파일을 `unlink`. `ENOENT`면 "no active session"으로 exit 0 — idempotent. Agent plugin이 `logout`을 여러 번 호출해도 안전.
 
 ## 기술 스택
 
@@ -168,12 +179,12 @@ pnpm format         # biome format --write .
 
 ## Open questions
 
-- `login`이 실제로 사용자를 어느 페이지에 떨구는가? 개발자 콘솔 로그인 페이지 URL과 OAuth scope는 아직 discovery 중. 그때까지 `login`은 stub 유지.
+- `login`이 실제로 사용자를 어느 페이지에 떨구는가? 개발자 콘솔 로그인 페이지 URL과 OAuth scope는 아직 discovery 중. 그때까지 `login`은 `AIT_CONSOLE_OAUTH_URL` env-var 없이 실행하면 usage error로 실패하도록 해두었다 (콜백 서버/`state`/세션 파일 쪽 scaffold는 완성).
 - macOS 바이너리 서명? 0.1.x에서는 안 함. 사용자가 `chmod +x` + `xattr -d com.apple.quarantine`로 우회. 제대로 된 notarization은 1.0 item.
 - `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
 
 ## Status
 
-scaffold 완료 (`whoami`/`upgrade` 동작, `login` stub). 나머지 command는 TODO.md 참고.
+scaffold 완료 (`whoami`/`login`/`logout`/`upgrade` 동작; `login`은 callback server + state + session write까지 끝났고 실제 OAuth 엔드포인트는 `AIT_CONSOLE_OAUTH_URL`로 override). 나머지 command는 TODO.md 참고.
 
 전체 로드맵은 [landing page](https://apps-in-toss-community.github.io/) 참고.
