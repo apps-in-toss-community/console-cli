@@ -180,7 +180,7 @@ pnpm format         # biome format --write .
 ## Open questions
 
 - `login`이 실제로 사용자를 어느 페이지에 떨구는가? 개발자 콘솔 로그인 페이지 URL과 OAuth scope는 아직 discovery 중. 그때까지 `login`은 `AIT_CONSOLE_OAUTH_URL` env-var 없이 실행하면 usage error로 실패하도록 해두었다 (콜백 서버/`state`/세션 파일 쪽 scaffold는 완성).
-- macOS 바이너리 서명: **0.1.1부터 ad-hoc 서명 적용**. `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서 `codesign --force --sign - --options runtime --entitlements scripts/macos-entitlements.plist`를 실행한다. CI는 macos-latest runner에서 빌드+사인까지 한 번에. `install.sh`도 macOS 설치 후 `xattr -d` + 재-사인을 fallback으로 시도. 정식 Apple notarization (Developer Program $99/년)은 1.0 item으로 미룸.
+- macOS 바이너리 서명: **0.1.x에서 ad-hoc 서명 적용**. Apple stock `codesign`은 Bun-compiled 바이너리의 비표준 `LC_CODE_SIGNATURE` stub 때문에 `invalid or unsupported format for signature`로 거부하므로, **`rcodesign`** (https://github.com/indygreg/apple-platform-rs)을 사용. `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서: (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명. 워크플로(`release-binaries.yml`)의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드. `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도(이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과). Bun 1.3.13+ stable이 root cause를 fix하므로, 그때 setup-bun을 pin하고 rcodesign 의존성을 제거. 정식 Apple notarization (Developer Program $99/년)은 1.0 item.
 - `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
 
 ## Status
