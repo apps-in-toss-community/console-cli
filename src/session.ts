@@ -42,6 +42,10 @@ export async function readSession(): Promise<Session | null> {
     const parsed = JSON.parse(raw) as Session;
     if (parsed.schemaVersion !== 1) return null;
     if (!parsed.user || typeof parsed.user.id !== 'string') return null;
+    if (typeof parsed.user.email !== 'string') return null;
+    if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
+      return null;
+    }
     return parsed;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;

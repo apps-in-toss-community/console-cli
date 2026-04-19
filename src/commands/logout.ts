@@ -1,4 +1,5 @@
 import { defineCommand } from 'citty';
+import { ExitCode } from '../exit.js';
 import { clearSession, sessionPathForDiagnostics } from '../session.js';
 
 export const logoutCommand = defineCommand({
@@ -15,7 +16,24 @@ export const logoutCommand = defineCommand({
   },
   async run({ args }) {
     const path = sessionPathForDiagnostics();
-    const { existed } = await clearSession();
+
+    let existed: boolean;
+    try {
+      const result = await clearSession();
+      existed = result.existed;
+    } catch (err) {
+      // Permission / filesystem errors (EACCES / EPERM / EBUSY) must not
+      // produce an unhandled rejection — route through the same structured
+      // error pattern the rest of the CLI uses.
+      const message = (err as Error).message;
+      if (args.json) {
+        process.stdout.write(
+          `${JSON.stringify({ ok: false, reason: 'unlink-failed', path, message })}\n`,
+        );
+      }
+      process.stderr.write(`Failed to remove session file at ${path}: ${message}\n`);
+      process.exit(ExitCode.Generic);
+    }
 
     if (args.json) {
       process.stdout.write(

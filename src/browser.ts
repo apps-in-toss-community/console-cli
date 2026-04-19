@@ -21,8 +21,12 @@ export function openBrowser(url: string): Promise<OpenBrowserResult> {
         // `cmd /c start` needs the `""` window-title placeholder so a URL
         // containing `&` isn't reinterpreted. `windowsVerbatimArguments`
         // keeps Node from re-quoting our already-quoted arguments, which
-        // would otherwise corrupt URLs with special characters.
-        const child = spawn('cmd', ['/c', 'start', '""', url], {
+        // would otherwise corrupt URLs with special characters. We also
+        // wrap the URL in double-quotes so an intervening literal space
+        // (rare but legal through redirects/proxies) is treated as part
+        // of the argument.
+        const quotedUrl = `"${url.replace(/"/g, '%22')}"`;
+        const child = spawn('cmd', ['/c', 'start', '""', quotedUrl], {
           stdio: 'ignore',
           detached: true,
           windowsHide: true,

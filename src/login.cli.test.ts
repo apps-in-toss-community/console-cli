@@ -1,10 +1,15 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 // End-to-end smoke for the built CLI binary. Skipped when `dist/cli.mjs` is
 // absent so plain `pnpm test` still passes without a prior `pnpm build`.
+// `import.meta.url` points at the compiled test module (src/*.test.ts), so
+// `../dist/cli.mjs` resolves from the repo root — no build-output layout
+// changes should be needed if tsdown's out-dir moves.
 
 const distCli = fileURLToPath(new URL('../dist/cli.mjs', import.meta.url));
 const hasDist = existsSync(distCli);
@@ -42,4 +47,69 @@ describe.runIf(hasDist)('ait-console login (integration)', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.reason).toBe('invalid-timeout');
   });
+
+  it('completes the callback round-trip and writes a session file', async () => {
+    const configRoot = mkdtempSync(join(tmpdir(), 'ait-console-cli-it-'));
+    const env = { ...process.env };
+    env.AIT_CONSOLE_OAUTH_URL = 'https://example.com/oauth/authorize';
+    env.AIT_CONSOLE_NO_BROWSER = '1';
+    env.XDG_CONFIG_HOME = configRoot;
+
+    const child = spawn(process.execPath, [distCli, 'login', '--json', '--timeout=30'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c: Buffer) => {
+      stdout += c.toString('utf8');
+    });
+    child.stderr.on('data', (c: Buffer) => {
+      stderr += c.toString('utf8');
+    });
+
+    const authUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('Timed out waiting for URL on stderr')),
+        5000,
+      );
+      const check = () => {
+        const match = stderr.match(/https:\/\/example\.com\/oauth\/authorize\?[^\s]+/);
+        if (match) {
+          clearTimeout(timer);
+          resolve(match[0]);
+        }
+      };
+      child.stderr.on('data', check);
+      check();
+    });
+
+    const parsed = new URL(authUrl);
+    const redirectUri = parsed.searchParams.get('redirect_uri');
+    const state = parsed.searchParams.get('state');
+    expect(redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+    expect(state).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    const res = await fetch(
+      `${redirectUri}?code=authcode&state=${state}&user_id=u_1&email=alice%40example.com&display_name=Alice`,
+    );
+    expect(res.status).toBe(200);
+
+    const exitCode = await new Promise<number>((resolve) => {
+      child.on('exit', (code) => resolve(code ?? -1));
+    });
+    expect(exitCode).toBe(0);
+
+    const jsonLine = stdout.trim();
+    const payload = JSON.parse(jsonLine) as { ok: boolean; user: { id: string; email: string } };
+    expect(payload.ok).toBe(true);
+    expect(payload.user.id).toBe('u_1');
+    expect(payload.user.email).toBe('alice@example.com');
+
+    const sessionPath = join(configRoot, 'ait-console', 'session.json');
+    const session = JSON.parse(readFileSync(sessionPath, 'utf8'));
+    expect(session.user.id).toBe('u_1');
+    expect(session.user.email).toBe('alice@example.com');
+  }, 15000);
 });

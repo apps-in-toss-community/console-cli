@@ -75,7 +75,9 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/'/g, '&#39;')
+    .replace(/\//g, '&#47;')
+    .replace(/`/g, '&#96;');
 }
 
 type ParseResult =
@@ -242,7 +244,12 @@ export async function startCallbackServer(
     res.end(errorHtml(message));
     // Don't settle on arbitrary 404s — the user might have a noisy
     // extension or favicon probe. Only settle on structural errors at the
-    // /callback path itself.
+    // /callback path itself. Once we settle (success or structural error),
+    // every subsequent request — including a legitimate-looking redirect —
+    // gets 410 Gone via the `settled` branch above. The first-wins contract
+    // is intentional: a CSRF attacker can't race a real redirect by firing
+    // a bad callback first (it'll reject with state-mismatch), and a noisy
+    // browser reload after success can't re-render a login page.
     if (result.kind === 'state-mismatch') {
       finish({ kind: 'err', e: new CallbackStateMismatchError() });
     } else if (result.kind === 'missing-code') {

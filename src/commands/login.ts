@@ -18,8 +18,15 @@ import { type Session, writeSession } from '../session.js';
 
 // Cap raw callback-query fields before writing them to the session file.
 // The real flow will replace this with a token-endpoint POST; until then,
-// accept only short, control-char-free strings for the user label.
-const MAX_FIELD_LENGTH = 512;
+// accept only short, control-char-free strings for the user label. 128 is
+// well above the 254-char RFC 5321 email length cap and plausible display
+// names, so anything longer is presumed garbage.
+const MAX_FIELD_LENGTH = 128;
+
+// Sentinel used when the (still-in-discovery) callback does not carry a
+// user identity. Using a fixed label avoids storing the raw OAuth `code`
+// as a user id, which would then leak through `whoami`.
+const PENDING_USER_ID = 'pending:oauth-discovery';
 
 function sanitizeField(raw: string | undefined): string | undefined {
   if (typeof raw !== 'string') return undefined;
@@ -92,17 +99,14 @@ export const loginCommand = defineCommand({
     const clientId = process.env.AIT_CONSOLE_OAUTH_CLIENT_ID;
     const scope = process.env.AIT_CONSOLE_OAUTH_SCOPE;
 
-    const timeoutNum = Number(args.timeout);
-    if (!Number.isFinite(timeoutNum) || timeoutNum <= 0) {
-      if (args.json) {
-        process.stdout.write(
-          `${JSON.stringify({ ok: false, reason: 'invalid-timeout', given: args.timeout })}\n`,
-        );
-      }
-      process.stderr.write(`Invalid --timeout value: ${args.timeout}\n`);
-      process.exit(ExitCode.Usage);
-    }
-    const timeoutMs = timeoutNum * 1000;
+    // Flush-safe exit: wait for stdout to drain before calling
+    // `process.exit` so a pipe consumer never loses the final JSON line.
+    // The returned Promise never resolves, so `await exitAfterFlush(...)`
+    // halts execution while the drain callback fires `process.exit`.
+    const exitAfterFlush = async (code: number): Promise<never> => {
+      await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+      process.exit(code);
+    };
 
     const emitError = (payload: Record<string, unknown>, human: string) => {
       if (args.json) {
@@ -110,6 +114,18 @@ export const loginCommand = defineCommand({
       }
       process.stderr.write(`${human}\n`);
     };
+
+    const timeoutNum = Number(args.timeout);
+    // Require ≥ 1 s so `CallbackTimeoutError`'s rounded-to-seconds message
+    // can't produce misleading "Login timed out after 1s" for a 500 ms cap.
+    if (!Number.isFinite(timeoutNum) || timeoutNum < 1) {
+      emitError(
+        { reason: 'invalid-timeout', given: args.timeout },
+        `Invalid --timeout value: ${args.timeout}`,
+      );
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const timeoutMs = timeoutNum * 1000;
 
     if (!authorizeUrl) {
       emitError(
@@ -120,7 +136,7 @@ export const loginCommand = defineCommand({
           'or track the TODO in CLAUDE.md § "Open questions".',
         ].join('\n'),
       );
-      process.exit(ExitCode.Usage);
+      return exitAfterFlush(ExitCode.Usage);
     }
 
     const server = await startCallbackServer({ timeoutMs });
@@ -134,22 +150,20 @@ export const loginCommand = defineCommand({
 
     // Per the --json contract, stdout in JSON mode is strictly a single
     // JSON document. Progress/diagnostic chatter always goes to stderr so
-    // behavior is consistent between modes.
-    if (!args.json) {
-      process.stderr.write(`Listening for the OAuth callback on ${server.redirectUri}\n`);
-    }
+    // behavior is consistent between modes — in JSON mode it still helps
+    // humans watching a terminal and gives tests a way to recover the
+    // server's port.
+    process.stderr.write(`Listening for the OAuth callback on ${server.redirectUri}\n`);
 
     let launched = false;
     if (!args['no-browser']) {
       const result = await openBrowser(authUrl);
       launched = result.launched;
     }
-    if (!args.json) {
-      if (launched) {
-        process.stderr.write('Opened your browser. Complete the login there.\n');
-      } else {
-        process.stderr.write(`Open this URL in your browser to continue:\n  ${authUrl}\n`);
-      }
+    if (launched) {
+      process.stderr.write('Opened your browser. Complete the login there.\n');
+    } else {
+      process.stderr.write(`Open this URL in your browser to continue:\n  ${authUrl}\n`);
     }
 
     let query: CallbackQuery;
@@ -162,18 +176,20 @@ export const loginCommand = defineCommand({
         { reason, message: (err as Error).message },
         `Login failed: ${(err as Error).message}`,
       );
-      process.exit(exitCode);
+      return exitAfterFlush(exitCode);
     }
     await server.close();
 
     // Token exchange / session capture is pending Toss console OAuth
     // discovery (tracked in TODO.md and CLAUDE.md § "Open questions").
     // Until then we accept optional user-label fields from the callback
-    // query string, but validate them strictly and fall back to the opaque
-    // `code` as a last resort. The real flow will POST to a token endpoint
-    // and capture a Playwright `storageState` — at which point `cookies`
-    // and `origins` become non-empty and this sanitization goes away.
-    const userId = sanitizeField(query.raw.user_id) ?? query.code;
+    // query string but validate them strictly. If no identity field is
+    // present we store a fixed sentinel rather than smuggling the raw
+    // OAuth `code` (a secret) into the user-visible identifier. The real
+    // flow will POST to a token endpoint and capture a Playwright
+    // `storageState` — at which point `cookies` and `origins` become
+    // non-empty and this sanitization goes away.
+    const userId = sanitizeField(query.raw.user_id) ?? PENDING_USER_ID;
     const email = sanitizeField(query.raw.email) ?? '';
     const displayName = sanitizeField(query.raw.display_name);
 
