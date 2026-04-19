@@ -121,6 +121,18 @@ fi
 chmod 0755 "$tmp/$binary"
 mv "$tmp/$binary" "$dest"
 
+# On macOS, strip the quarantine attribute (set by curl when downloading via
+# Safari/Finder, no-op for direct shell download) and re-apply an ad-hoc
+# signature as a safety net. Binaries built in CI are already ad-hoc signed,
+# but a re-sign here is harmless and recovers the case where the CI signature
+# was lost in transit.
+if [ "$os" = "darwin" ]; then
+  xattr -d com.apple.quarantine "$dest" 2>/dev/null || true
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$dest" >/dev/null 2>&1 || true
+  fi
+fi
+
 log "Installed to $dest"
 
 # -- PATH hint ---------------------------------------------------------------

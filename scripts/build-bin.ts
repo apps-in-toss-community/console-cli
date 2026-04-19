@@ -44,6 +44,14 @@ for (const { target, out } of selected) {
     --target=${target} \
     --define AIT_CONSOLE_VERSION=${JSON.stringify(version)} \
     --outfile=dist-bin/${out}`;
+
+  if (target.startsWith('bun-darwin-') && process.platform === 'darwin') {
+    console.log(`Ad-hoc signing ${out}...`);
+    await $`codesign --force --sign - \
+      --options runtime \
+      --entitlements scripts/macos-entitlements.plist \
+      dist-bin/${out}`;
+  }
 }
 
 console.log('Done.');
