@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { ExitCode } from './exit.js';
 
 // End-to-end smoke for the built CLI binary. Skipped when `dist/cli.mjs` is
 // absent so plain `pnpm test` still passes without a prior `pnpm build`.
@@ -47,6 +48,108 @@ describe.runIf(hasDist)('ait-console login (integration)', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.reason).toBe('invalid-timeout');
   });
+
+  it('refuses to write a session when the callback carries no identity', async () => {
+    const configRoot = mkdtempSync(join(tmpdir(), 'ait-console-cli-it-'));
+    const env = { ...process.env };
+    delete env.AIT_CONSOLE_OAUTH_CLIENT_ID;
+    delete env.AIT_CONSOLE_OAUTH_SCOPE;
+    env.AIT_CONSOLE_OAUTH_URL = 'https://example.com/oauth/authorize';
+    env.AIT_CONSOLE_NO_BROWSER = '1';
+    env.XDG_CONFIG_HOME = configRoot;
+
+    const child = spawn(process.execPath, [distCli, 'login', '--json', '--timeout=10'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c: Buffer) => {
+      stdout += c.toString('utf8');
+    });
+    child.stderr.on('data', (c: Buffer) => {
+      stderr += c.toString('utf8');
+    });
+
+    const authUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('no URL on stderr')), 5000);
+      const check = () => {
+        const m = stderr.match(/https:\/\/example\.com\/oauth\/authorize\?[^\s]+/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(m[0]);
+        }
+      };
+      child.stderr.on('data', check);
+      check();
+    });
+    const u = new URL(authUrl);
+    const redirect = u.searchParams.get('redirect_uri');
+    const state = u.searchParams.get('state');
+
+    // Callback with only `code` and valid `state` — no user_id, no email.
+    await fetch(`${redirect}?code=c&state=${state}`);
+
+    const exit = await new Promise<number>((r) => child.on('exit', (c) => r(c ?? -1)));
+    expect(exit).toBe(ExitCode.Generic);
+    const payload = JSON.parse(stdout.trim()) as { ok: boolean; reason: string };
+    expect(payload.ok).toBe(false);
+    expect(payload.reason).toBe('oauth-identity-missing');
+    // No session file should have been written.
+    expect(existsSync(join(configRoot, 'ait-console', 'session.json'))).toBe(false);
+  }, 15000);
+
+  it('routes a writeSession failure through emitError', async () => {
+    // Point XDG_CONFIG_HOME at a *file* (not a directory) so writeSession's
+    // `mkdir` with that parent path fails with ENOTDIR.
+    const configRoot = mkdtempSync(join(tmpdir(), 'ait-console-cli-it-'));
+    const blockingFile = join(configRoot, 'blocking');
+    writeFileSync(blockingFile, 'x');
+
+    const env = { ...process.env };
+    delete env.AIT_CONSOLE_OAUTH_CLIENT_ID;
+    delete env.AIT_CONSOLE_OAUTH_SCOPE;
+    env.AIT_CONSOLE_OAUTH_URL = 'https://example.com/oauth/authorize';
+    env.AIT_CONSOLE_NO_BROWSER = '1';
+    env.XDG_CONFIG_HOME = blockingFile;
+
+    const child = spawn(process.execPath, [distCli, 'login', '--json', '--timeout=10'], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c: Buffer) => {
+      stdout += c.toString('utf8');
+    });
+    child.stderr.on('data', (c: Buffer) => {
+      stderr += c.toString('utf8');
+    });
+
+    const authUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('no URL on stderr')), 5000);
+      const check = () => {
+        const m = stderr.match(/https:\/\/example\.com\/oauth\/authorize\?[^\s]+/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(m[0]);
+        }
+      };
+      child.stderr.on('data', check);
+      check();
+    });
+    const u = new URL(authUrl);
+    const redirect = u.searchParams.get('redirect_uri');
+    const state = u.searchParams.get('state');
+
+    await fetch(`${redirect}?code=c&state=${state}&user_id=u_1&email=a%40b.co`);
+
+    const exit = await new Promise<number>((r) => child.on('exit', (c) => r(c ?? -1)));
+    expect(exit).toBe(ExitCode.Generic);
+    const payload = JSON.parse(stdout.trim()) as { ok: boolean; reason: string };
+    expect(payload.ok).toBe(false);
+    expect(payload.reason).toBe('session-write-failed');
+  }, 15000);
 
   it('completes the callback round-trip and writes a session file', async () => {
     const configRoot = mkdtempSync(join(tmpdir(), 'ait-console-cli-it-'));

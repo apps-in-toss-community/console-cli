@@ -257,14 +257,24 @@ export async function startCallbackServer(
     // a bad callback first (it'll reject with state-mismatch), and a noisy
     // browser reload after success can't re-render a login page.
     const onFlushed = () => {
-      if (result.kind === 'state-mismatch') {
-        finish({ kind: 'err', e: new CallbackStateMismatchError() });
-      } else if (result.kind === 'missing-code') {
-        finish({ kind: 'err', e: new CallbackMissingCodeError() });
-      } else if (result.kind === 'malformed') {
-        finish({ kind: 'err', e: new Error(message) });
+      switch (result.kind) {
+        case 'state-mismatch':
+          finish({ kind: 'err', e: new CallbackStateMismatchError() });
+          return;
+        case 'missing-code':
+          finish({ kind: 'err', e: new CallbackMissingCodeError() });
+          return;
+        case 'malformed':
+          finish({ kind: 'err', e: new Error(message) });
+          return;
+        case 'not-found':
+          // Intentional no-op: a /favicon.ico probe shouldn't end the flow.
+          return;
+        default:
+          // Exhaustiveness check — a new ParseResult kind will fail to
+          // compile here because `result` is narrowed to `never`.
+          ((_: never) => {})(result);
       }
-      // `not-found` does not settle; the waiter keeps running.
     };
     res.end(errorHtml(message), onFlushed);
   });

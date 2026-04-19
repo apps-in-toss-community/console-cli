@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 import { openBrowser } from '../browser.js';
 import { ExitCode } from '../exit.js';
+import { exitAfterFlush } from '../flush.js';
 import {
   CallbackMissingCodeError,
   type CallbackQuery,
@@ -99,15 +100,6 @@ export const loginCommand = defineCommand({
     const clientId = process.env.AIT_CONSOLE_OAUTH_CLIENT_ID;
     const scope = process.env.AIT_CONSOLE_OAUTH_SCOPE;
 
-    // Flush-safe exit: wait for stdout to drain before calling
-    // `process.exit` so a pipe consumer never loses the final JSON line.
-    // The returned Promise never resolves, so `await exitAfterFlush(...)`
-    // halts execution while the drain callback fires `process.exit`.
-    const exitAfterFlush = async (code: number): Promise<never> => {
-      await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-      process.exit(code);
-    };
-
     const emitError = (payload: Record<string, unknown>, human: string) => {
       if (args.json) {
         process.stdout.write(`${JSON.stringify({ ok: false, ...payload })}\n`);
@@ -168,17 +160,20 @@ export const loginCommand = defineCommand({
 
     let query: CallbackQuery;
     try {
-      query = await server.waitForCallback();
-    } catch (err) {
+      try {
+        query = await server.waitForCallback();
+      } catch (err) {
+        // Emit diagnostics first; the (idempotent) close lands in finally.
+        const { reason, exitCode } = classifyCallbackError(err as Error);
+        emitError(
+          { reason, message: (err as Error).message },
+          `Login failed: ${(err as Error).message}`,
+        );
+        return exitAfterFlush(exitCode);
+      }
+    } finally {
       await server.close();
-      const { reason, exitCode } = classifyCallbackError(err as Error);
-      emitError(
-        { reason, message: (err as Error).message },
-        `Login failed: ${(err as Error).message}`,
-      );
-      return exitAfterFlush(exitCode);
     }
-    await server.close();
 
     // Token exchange / session capture is pending Toss console OAuth
     // discovery (tracked in TODO.md and CLAUDE.md § "Open questions").

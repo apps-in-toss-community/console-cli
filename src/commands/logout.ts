@@ -1,5 +1,6 @@
 import { defineCommand } from 'citty';
 import { ExitCode } from '../exit.js';
+import { exitAfterFlush } from '../flush.js';
 import { clearSession, sessionPathForDiagnostics } from '../session.js';
 
 export const logoutCommand = defineCommand({
@@ -16,13 +17,6 @@ export const logoutCommand = defineCommand({
   },
   async run({ args }) {
     const path = sessionPathForDiagnostics();
-
-    // Same flush-safe exit pattern as `login`: drain stdout before calling
-    // process.exit so a piped consumer can't lose the final JSON line.
-    const exitAfterFlush = async (code: number): Promise<never> => {
-      await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-      process.exit(code);
-    };
 
     let existed: boolean;
     try {
