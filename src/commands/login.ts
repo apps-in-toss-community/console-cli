@@ -189,9 +189,26 @@ export const loginCommand = defineCommand({
     // flow will POST to a token endpoint and capture a Playwright
     // `storageState` — at which point `cookies` and `origins` become
     // non-empty and this sanitization goes away.
-    const userId = sanitizeField(query.raw.user_id) ?? PENDING_USER_ID;
-    const email = sanitizeField(query.raw.email) ?? '';
+    const rawUserId = sanitizeField(query.raw.user_id);
+    const rawEmail = sanitizeField(query.raw.email);
     const displayName = sanitizeField(query.raw.display_name);
+    if (!rawUserId && !rawEmail) {
+      // Refuse to write a phantom session during the OAuth-discovery
+      // placeholder phase: with no identity we'd have nothing meaningful
+      // to show in `whoami`. The real flow will always provide an
+      // identity via the token endpoint; this branch goes away then.
+      emitError(
+        { reason: 'oauth-identity-missing' },
+        [
+          'The callback did not carry user_id or email.',
+          'This is expected until Toss console OAuth discovery lands.',
+          'No session was written.',
+        ].join('\n'),
+      );
+      return exitAfterFlush(ExitCode.Generic);
+    }
+    const userId = rawUserId ?? PENDING_USER_ID;
+    const email = rawEmail ?? '';
 
     const session: Session = {
       schemaVersion: 1,
@@ -201,7 +218,15 @@ export const loginCommand = defineCommand({
       origins: [],
       capturedAt: new Date().toISOString(),
     };
-    await writeSession(session);
+    try {
+      await writeSession(session);
+    } catch (err) {
+      emitError(
+        { reason: 'session-write-failed', message: (err as Error).message },
+        `Failed to write session file: ${(err as Error).message}`,
+      );
+      return exitAfterFlush(ExitCode.Generic);
+    }
 
     if (args.json) {
       process.stdout.write(
@@ -212,10 +237,12 @@ export const loginCommand = defineCommand({
           capturedAt: session.capturedAt,
         })}\n`,
       );
-      return;
+    } else {
+      const label = displayName ? `${displayName} <${email}>` : email || userId;
+      process.stdout.write(`Logged in as ${label}\n`);
     }
-
-    const label = displayName ? `${displayName} <${email}>` : email || userId;
-    process.stdout.write(`Logged in as ${label}\n`);
+    // Flush on the success path too — pipe consumers reading the JSON line
+    // shouldn't be subject to truncation from a natural-exit race.
+    return exitAfterFlush(ExitCode.Ok);
   },
 });

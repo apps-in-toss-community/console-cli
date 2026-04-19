@@ -2,7 +2,11 @@
 
 ## High Priority
 - [ ] Discover the real Toss developer console OAuth authorize URL, client id, and scopes so `ait-console login` can work without the `AIT_CONSOLE_OAUTH_URL` override. The callback server + state + browser-open + session-write scaffold is in place; what's missing is the outbound endpoint. Track in CLAUDE.md § "Open questions".
-- [ ] Replace the placeholder "callback query carries user_id/email/display_name" path in `login` with a real token-exchange + Playwright `storageState` capture once the OAuth endpoint is known. `src/commands/login.ts` around the `query.raw.user_id ?? query.code` line.
+- [ ] Replace the placeholder "callback query carries user_id/email/display_name" path in `login` with a real token-exchange + Playwright `storageState` capture once the OAuth endpoint is known. `src/commands/login.ts` around the `rawUserId`/`rawEmail` block.
+
+## Notes on session schema
+
+`readSession` now type-checks `user.email` and `user.displayName`. Pre-login scaffold sessions from before this branch had only `user.id`, which would now read as "no session" and silently fall back to the login flow. Pre-1.0, this is fine — no stable users exist. If a migration is ever needed, widen `readSession` to tolerate missing `email` and write a back-fill on next `login`.
 
 ## Medium Priority
 - [ ] Implement `ait-console deploy [path]` — headless Playwright driving the console's deploy flow with the stored session. Include `--dry-run` from day one.

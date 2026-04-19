@@ -210,6 +210,10 @@ export async function startCallbackServer(
   });
   // Attach a noop catch so an early rejection (e.g. state mismatch fired
   // before the caller calls waitForCallback) is not treated as unhandled.
+  // The real error surface is the Promise returned from waitForCallback(),
+  // which re-receives the same rejection via its rejectCb. Don't route
+  // diagnostics through this handler — it exists solely to appease the
+  // runtime's unhandled-rejection tracker.
   waiter.catch(() => {});
 
   const finish = (outcome: { kind: 'ok'; q: CallbackQuery } | { kind: 'err'; e: Error }) => {
@@ -233,15 +237,17 @@ export async function startCallbackServer(
     if (result.kind === 'ok') {
       res.statusCode = 200;
       res.setHeader('content-type', 'text/html; charset=utf-8');
-      res.end(SUCCESS_HTML);
-      finish({ kind: 'ok', q: result.query });
+      // Settle only after the response body has actually been flushed to
+      // the client — otherwise `server.close()` / `closeAllConnections()`
+      // on the caller's side can tear the socket down mid-write and the
+      // user sees "connection reset" instead of the success page.
+      res.end(SUCCESS_HTML, () => finish({ kind: 'ok', q: result.query }));
       return;
     }
     const status = ERROR_STATUS[result.kind];
     const message = ERROR_MESSAGES[result.kind];
     res.statusCode = status;
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.end(errorHtml(message));
     // Don't settle on arbitrary 404s — the user might have a noisy
     // extension or favicon probe. Only settle on structural errors at the
     // /callback path itself. Once we settle (success or structural error),
@@ -250,17 +256,23 @@ export async function startCallbackServer(
     // is intentional: a CSRF attacker can't race a real redirect by firing
     // a bad callback first (it'll reject with state-mismatch), and a noisy
     // browser reload after success can't re-render a login page.
-    if (result.kind === 'state-mismatch') {
-      finish({ kind: 'err', e: new CallbackStateMismatchError() });
-    } else if (result.kind === 'missing-code') {
-      finish({ kind: 'err', e: new CallbackMissingCodeError() });
-    } else if (result.kind === 'malformed') {
-      finish({ kind: 'err', e: new Error(message) });
-    }
+    const onFlushed = () => {
+      if (result.kind === 'state-mismatch') {
+        finish({ kind: 'err', e: new CallbackStateMismatchError() });
+      } else if (result.kind === 'missing-code') {
+        finish({ kind: 'err', e: new CallbackMissingCodeError() });
+      } else if (result.kind === 'malformed') {
+        finish({ kind: 'err', e: new Error(message) });
+      }
+      // `not-found` does not settle; the waiter keeps running.
+    };
+    res.end(errorHtml(message), onFlushed);
   });
 
   const timer = setTimeout(() => {
-    finish({ kind: 'err', e: new CallbackTimeoutError(Math.round(timeoutMs / 1000)) });
+    // Ceil so the reported number is an upper bound on the real cap —
+    // a `timeoutMs` of 1500 ms reports "after 2s", never "after 1s".
+    finish({ kind: 'err', e: new CallbackTimeoutError(Math.ceil(timeoutMs / 1000)) });
   }, timeoutMs);
   if (typeof timer.unref === 'function') timer.unref();
 

@@ -51,6 +51,10 @@ describe.runIf(hasDist)('ait-console login (integration)', () => {
   it('completes the callback round-trip and writes a session file', async () => {
     const configRoot = mkdtempSync(join(tmpdir(), 'ait-console-cli-it-'));
     const env = { ...process.env };
+    // Strip any ambient OAuth config from the developer's shell so the test
+    // asserts on values we control.
+    delete env.AIT_CONSOLE_OAUTH_CLIENT_ID;
+    delete env.AIT_CONSOLE_OAUTH_SCOPE;
     env.AIT_CONSOLE_OAUTH_URL = 'https://example.com/oauth/authorize';
     env.AIT_CONSOLE_NO_BROWSER = '1';
     env.XDG_CONFIG_HOME = configRoot;
@@ -93,7 +97,11 @@ describe.runIf(hasDist)('ait-console login (integration)', () => {
 
     const res = await fetch(
       `${redirectUri}?code=authcode&state=${state}&user_id=u_1&email=alice%40example.com&display_name=Alice`,
-    );
+    ).catch((err: Error) => {
+      // Surface the child's stderr on fetch failure so test output points
+      // at the real cause rather than a generic ECONNREFUSED.
+      throw new Error(`Callback fetch failed: ${err.message}\n--- child stderr ---\n${stderr}`);
+    });
     expect(res.status).toBe(200);
 
     const exitCode = await new Promise<number>((resolve) => {

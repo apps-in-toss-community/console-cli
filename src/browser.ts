@@ -15,6 +15,18 @@ export function openBrowser(url: string): Promise<OpenBrowserResult> {
     return Promise.resolve({ launched: false });
   }
 
+  // Refuse anything that isn't a plain http(s) URL — belt-and-suspenders
+  // against accidentally feeding `file://`, `javascript:`, or a shell
+  // metacharacter-laden input into the platform opener.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return Promise.resolve({ launched: false });
+    }
+  } catch {
+    return Promise.resolve({ launched: false });
+  }
+
   return new Promise((resolve) => {
     try {
       if (process.platform === 'win32') {

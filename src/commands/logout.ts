@@ -17,14 +17,18 @@ export const logoutCommand = defineCommand({
   async run({ args }) {
     const path = sessionPathForDiagnostics();
 
+    // Same flush-safe exit pattern as `login`: drain stdout before calling
+    // process.exit so a piped consumer can't lose the final JSON line.
+    const exitAfterFlush = async (code: number): Promise<never> => {
+      await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+      process.exit(code);
+    };
+
     let existed: boolean;
     try {
       const result = await clearSession();
       existed = result.existed;
     } catch (err) {
-      // Permission / filesystem errors (EACCES / EPERM / EBUSY) must not
-      // produce an unhandled rejection — route through the same structured
-      // error pattern the rest of the CLI uses.
       const message = (err as Error).message;
       if (args.json) {
         process.stdout.write(
@@ -32,20 +36,18 @@ export const logoutCommand = defineCommand({
         );
       }
       process.stderr.write(`Failed to remove session file at ${path}: ${message}\n`);
-      process.exit(ExitCode.Generic);
+      return exitAfterFlush(ExitCode.Generic);
     }
 
     if (args.json) {
       process.stdout.write(
         `${JSON.stringify({ ok: true, status: existed ? 'logged-out' : 'no-session', path })}\n`,
       );
-      return;
-    }
-
-    if (existed) {
+    } else if (existed) {
       process.stdout.write(`Logged out. Session removed from ${path}\n`);
     } else {
       process.stdout.write(`No active session at ${path}.\n`);
     }
+    return exitAfterFlush(ExitCode.Ok);
   },
 });
