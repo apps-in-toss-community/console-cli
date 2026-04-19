@@ -9,16 +9,34 @@ export interface OpenBrowserResult {
   readonly launched: boolean;
 }
 
-export async function openBrowser(url: string): Promise<OpenBrowserResult> {
+export function openBrowser(url: string): Promise<OpenBrowserResult> {
   // Allow tests and headless environments to skip the spawn entirely.
   if (process.env.AIT_CONSOLE_NO_BROWSER === '1') {
-    return { launched: false };
+    return Promise.resolve({ launched: false });
   }
 
-  const { command, args } = browserCommand(url);
   return new Promise((resolve) => {
     try {
-      const child = spawn(command, args, {
+      if (process.platform === 'win32') {
+        // `cmd /c start` needs the `""` window-title placeholder so a URL
+        // containing `&` isn't reinterpreted. `windowsVerbatimArguments`
+        // keeps Node from re-quoting our already-quoted arguments, which
+        // would otherwise corrupt URLs with special characters.
+        const child = spawn('cmd', ['/c', 'start', '""', url], {
+          stdio: 'ignore',
+          detached: true,
+          windowsHide: true,
+          windowsVerbatimArguments: true,
+        });
+        child.once('error', () => resolve({ launched: false }));
+        child.once('spawn', () => {
+          child.unref();
+          resolve({ launched: true });
+        });
+        return;
+      }
+      const command = process.platform === 'darwin' ? 'open' : 'xdg-open';
+      const child = spawn(command, [url], {
         stdio: 'ignore',
         detached: true,
       });
@@ -31,16 +49,4 @@ export async function openBrowser(url: string): Promise<OpenBrowserResult> {
       resolve({ launched: false });
     }
   });
-}
-
-function browserCommand(url: string): { command: string; args: string[] } {
-  if (process.platform === 'darwin') {
-    return { command: 'open', args: [url] };
-  }
-  if (process.platform === 'win32') {
-    // `start` is a cmd.exe builtin; the empty "" is the window title
-    // placeholder so a URL containing `&` isn't interpreted as a title.
-    return { command: 'cmd', args: ['/c', 'start', '""', url] };
-  }
-  return { command: 'xdg-open', args: [url] };
 }

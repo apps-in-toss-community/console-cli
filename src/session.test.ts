@@ -30,12 +30,16 @@ describe('session file IO', () => {
     else process.env.XDG_CONFIG_HOME = originalXdg;
   });
 
-  it('writes the session file with 0600 perms on POSIX', async () => {
+  it('writes the session file with 0600 perms on POSIX (exists on Windows)', async () => {
     await writeSession(sample);
     const path = join(root, 'ait-console', 'session.json');
     const st = statSync(path);
-    if (process.platform !== 'win32') {
-      // Mask to the permission bits only.
+    if (process.platform === 'win32') {
+      // Windows: POSIX mode is best-effort; at minimum the file must exist
+      // and be non-empty so we have a positive signal on that platform.
+      expect(st.isFile()).toBe(true);
+      expect(st.size).toBeGreaterThan(0);
+    } else {
       expect((st.mode & 0o777).toString(8)).toBe('600');
     }
   });

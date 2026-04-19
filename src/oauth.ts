@@ -1,11 +1,11 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 // Localhost OAuth callback server. Binds to 127.0.0.1 on an ephemeral port,
 // waits for exactly one request to `/callback`, validates the `state`
 // parameter, and resolves with the query fields. The server is single-use —
-// any second request is rejected and the server shuts down on resolution.
+// subsequent requests receive 410 Gone and the server closes on settle.
 //
 // The Toss developer console OAuth URL and token-exchange flow are not
 // publicly documented (see CLAUDE.md § "Open questions"), so this module is
@@ -34,39 +34,94 @@ export interface StartCallbackServerOptions {
   readonly preferredPort?: number;
 }
 
+export class CallbackTimeoutError extends Error {
+  constructor(seconds: number) {
+    super(`Login timed out after ${seconds}s`);
+    this.name = 'CallbackTimeoutError';
+  }
+}
+
+export class CallbackStateMismatchError extends Error {
+  constructor() {
+    super('Invalid or missing state parameter');
+    this.name = 'CallbackStateMismatchError';
+  }
+}
+
+export class CallbackMissingCodeError extends Error {
+  constructor() {
+    super('Missing code parameter');
+    this.name = 'CallbackMissingCodeError';
+  }
+}
+
 export function randomState(): string {
   // 32 bytes → 43 chars base64url. Sufficient for CSRF.
   return randomBytes(32).toString('base64url');
 }
 
-function parseCallbackUrl(
-  reqUrl: string | undefined,
-  expectedState: string,
-): { kind: 'ok'; query: CallbackQuery } | { kind: 'error'; status: number; message: string } {
-  if (!reqUrl) {
-    return { kind: 'error', status: 400, message: 'Missing request URL' };
-  }
+// Constant-time string comparison. Falls back to a simple `false` when the
+// lengths differ, matching `crypto.timingSafeEqual`'s own precondition.
+function constantTimeStringEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+type ParseResult =
+  | { kind: 'ok'; query: CallbackQuery }
+  | { kind: 'state-mismatch' }
+  | { kind: 'missing-code' }
+  | { kind: 'malformed' }
+  | { kind: 'not-found' };
+
+function parseCallbackUrl(reqUrl: string | undefined, expectedState: string): ParseResult {
+  if (!reqUrl) return { kind: 'malformed' };
   let parsed: URL;
   try {
     parsed = new URL(reqUrl, 'http://127.0.0.1');
   } catch {
-    return { kind: 'error', status: 400, message: 'Malformed request URL' };
+    return { kind: 'malformed' };
   }
   if (parsed.pathname !== '/callback') {
-    return { kind: 'error', status: 404, message: 'Not found' };
+    return { kind: 'not-found' };
   }
   const raw: Record<string, string> = {};
   for (const [k, v] of parsed.searchParams) raw[k] = v;
   const state = raw.state ?? '';
   const code = raw.code ?? '';
-  if (!state || state !== expectedState) {
-    return { kind: 'error', status: 400, message: 'Invalid or missing state parameter' };
+  if (!state || !constantTimeStringEqual(state, expectedState)) {
+    return { kind: 'state-mismatch' };
   }
   if (!code) {
-    return { kind: 'error', status: 400, message: 'Missing code parameter' };
+    return { kind: 'missing-code' };
   }
   return { kind: 'ok', query: { code, state, raw } };
 }
+
+const ERROR_MESSAGES: Record<Exclude<ParseResult['kind'], 'ok'>, string> = {
+  'state-mismatch': 'Invalid or missing state parameter',
+  'missing-code': 'Missing code parameter',
+  malformed: 'Malformed request URL',
+  'not-found': 'Not found',
+};
+
+const ERROR_STATUS: Record<Exclude<ParseResult['kind'], 'ok'>, number> = {
+  'state-mismatch': 400,
+  'missing-code': 400,
+  malformed: 400,
+  'not-found': 404,
+};
 
 const SUCCESS_HTML = `<!doctype html>
 <html lang="en">
@@ -78,16 +133,57 @@ const SUCCESS_HTML = `<!doctype html>
 <p>You can close this window and return to your terminal.</p>
 </body></html>`;
 
-const ERROR_HTML = (msg: string) => `<!doctype html>
+const GONE_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ait-console</title>
+<style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}h1{font-size:1.25rem}</style>
+</head>
+<body>
+<h1>This login flow is already complete</h1>
+<p>Return to your terminal.</p>
+</body></html>`;
+
+function errorHtml(message: string): string {
+  // Messages are currently a fixed enum (see ERROR_MESSAGES) but we escape
+  // unconditionally so future callers can't introduce a reflected-XSS hole.
+  return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>ait-console — error</title>
 <style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222}h1{font-size:1.25rem;color:#b00020}</style>
 </head>
 <body>
 <h1>Login failed</h1>
-<p>${msg}</p>
+<p>${escapeHtml(message)}</p>
 <p>Return to your terminal for details.</p>
 </body></html>`;
+}
+
+async function bindServer(server: Server, preferredPort: number | undefined): Promise<number> {
+  const tryListen = (port: number): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const onError = (err: Error) => {
+        server.removeListener('error', onError);
+        reject(err);
+      };
+      server.once('error', onError);
+      server.listen(port, '127.0.0.1', () => {
+        server.removeListener('error', onError);
+        const addr = server.address() as AddressInfo | null;
+        if (!addr) reject(new Error('Failed to bind callback server'));
+        else resolve(addr.port);
+      });
+    });
+
+  if (preferredPort && preferredPort !== 0) {
+    try {
+      return await tryListen(preferredPort);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+      // Fall through to ephemeral port.
+    }
+  }
+  return tryListen(0);
+}
 
 export async function startCallbackServer(
   options: StartCallbackServerOptions = {},
@@ -98,41 +194,21 @@ export async function startCallbackServer(
   const server: Server = createServer();
   // Bind to 127.0.0.1 only — never expose the callback on a routable address.
   // Try `preferredPort` first; on EADDRINUSE fall back to ephemeral (0).
-  const boundPort = await new Promise<number>((resolve, reject) => {
-    const onError = (err: NodeJS.ErrnoException) => {
-      if (options.preferredPort && options.preferredPort !== 0 && err.code === 'EADDRINUSE') {
-        server.removeListener('error', onError);
-        server.listen(0, '127.0.0.1', () => {
-          const addr = server.address() as AddressInfo | null;
-          if (!addr) reject(new Error('Failed to bind callback server'));
-          else resolve(addr.port);
-        });
-        return;
-      }
-      server.removeListener('error', onError);
-      reject(err);
-    };
-    server.on('error', onError);
-    server.listen(options.preferredPort ?? 0, '127.0.0.1', () => {
-      const addr = server.address() as AddressInfo | null;
-      if (!addr) {
-        reject(new Error('Failed to bind callback server'));
-        return;
-      }
-      server.removeListener('error', onError);
-      resolve(addr.port);
-    });
-  });
+  const boundPort = await bindServer(server, options.preferredPort);
 
   const redirectUri = `http://127.0.0.1:${boundPort}/callback`;
 
   let settled = false;
-  let resolveCb: (q: CallbackQuery) => void = () => {};
-  let rejectCb: (e: Error) => void = () => {};
+  let closed = false;
+  let resolveCb!: (q: CallbackQuery) => void;
+  let rejectCb!: (e: Error) => void;
   const waiter = new Promise<CallbackQuery>((resolve, reject) => {
     resolveCb = resolve;
     rejectCb = reject;
   });
+  // Attach a noop catch so an early rejection (e.g. state mismatch fired
+  // before the caller calls waitForCallback) is not treated as unhandled.
+  waiter.catch(() => {});
 
   const finish = (outcome: { kind: 'ok'; q: CallbackQuery } | { kind: 'err'; e: Error }) => {
     if (settled) return;
@@ -142,35 +218,62 @@ export async function startCallbackServer(
   };
 
   server.on('request', (req: IncomingMessage, res: ServerResponse) => {
-    const result = parseCallbackUrl(req.url, expectedState);
-    if (result.kind === 'error') {
-      res.statusCode = result.status;
+    // Once the flow is settled, further hits (duplicate redirects, noisy
+    // extensions) get 410 Gone rather than another success page. This
+    // prevents a late attacker-crafted callback from rendering as "logged in".
+    if (settled) {
+      res.statusCode = 410;
       res.setHeader('content-type', 'text/html; charset=utf-8');
-      res.end(ERROR_HTML(result.message));
-      // Don't settle on arbitrary 404s — the user might have a noisy
-      // extension. Only settle on structural errors at /callback itself.
-      if (result.status !== 404) {
-        finish({ kind: 'err', e: new Error(result.message) });
-      }
+      res.end(GONE_HTML);
       return;
     }
-    res.statusCode = 200;
+    const result = parseCallbackUrl(req.url, expectedState);
+    if (result.kind === 'ok') {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.end(SUCCESS_HTML);
+      finish({ kind: 'ok', q: result.query });
+      return;
+    }
+    const status = ERROR_STATUS[result.kind];
+    const message = ERROR_MESSAGES[result.kind];
+    res.statusCode = status;
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.end(SUCCESS_HTML);
-    finish({ kind: 'ok', q: result.query });
+    res.end(errorHtml(message));
+    // Don't settle on arbitrary 404s — the user might have a noisy
+    // extension or favicon probe. Only settle on structural errors at the
+    // /callback path itself.
+    if (result.kind === 'state-mismatch') {
+      finish({ kind: 'err', e: new CallbackStateMismatchError() });
+    } else if (result.kind === 'missing-code') {
+      finish({ kind: 'err', e: new CallbackMissingCodeError() });
+    } else if (result.kind === 'malformed') {
+      finish({ kind: 'err', e: new Error(message) });
+    }
   });
 
   const timer = setTimeout(() => {
-    finish({ kind: 'err', e: new Error(`Login timed out after ${Math.round(timeoutMs / 1000)}s`) });
+    finish({ kind: 'err', e: new CallbackTimeoutError(Math.round(timeoutMs / 1000)) });
   }, timeoutMs);
   if (typeof timer.unref === 'function') timer.unref();
 
   const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
     clearTimeout(timer);
+    // Race `server.close()` against a 1s timeout — a misbehaving keep-alive
+    // client shouldn't be able to hold the CLI from exiting.
     await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-      // Dangling keep-alive sockets would block close(); force them down.
+      let done = false;
+      const finishClose = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      server.close(() => finishClose());
       server.closeAllConnections?.();
+      const fallback = setTimeout(finishClose, 1000);
+      if (typeof fallback.unref === 'function') fallback.unref();
     });
   };
 
@@ -178,13 +281,7 @@ export async function startCallbackServer(
     port: boundPort,
     redirectUri,
     expectedState,
-    async waitForCallback() {
-      try {
-        return await waiter;
-      } finally {
-        clearTimeout(timer);
-      }
-    },
+    waitForCallback: () => waiter,
     close,
   };
 }

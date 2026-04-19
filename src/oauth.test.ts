@@ -1,7 +1,13 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { randomState, startCallbackServer } from './oauth.js';
+import {
+  CallbackMissingCodeError,
+  CallbackStateMismatchError,
+  CallbackTimeoutError,
+  randomState,
+  startCallbackServer,
+} from './oauth.js';
 
 describe('randomState', () => {
   it('produces base64url strings with high entropy', () => {
@@ -47,33 +53,71 @@ describe('startCallbackServer', () => {
 
   it('rejects a callback with a mismatched state', async () => {
     const server = await startCallbackServer({ timeoutMs: 5000 });
-    // Attach the expectation before firing the request so the rejection is
-    // never orphaned (avoids a PromiseRejectionHandledWarning under vitest).
-    const expectation = expect(server.waitForCallback()).rejects.toThrow(/state/i);
+    const expectation = expect(server.waitForCallback()).rejects.toBeInstanceOf(
+      CallbackStateMismatchError,
+    );
     const res = await hit(`${server.redirectUri}?code=abc&state=WRONG`);
     expect(res.status).toBe(400);
     await expectation;
     await server.close();
   });
 
-  it('returns 404 for paths other than /callback without settling', async () => {
-    const server = await startCallbackServer({ timeoutMs: 500 });
-    const expectation = expect(server.waitForCallback()).rejects.toThrow(/timed out/i);
-    const res = await hit(`http://127.0.0.1:${server.port}/favicon.ico`);
-    expect(res.status).toBe(404);
-    // The waiter should still be alive; it will timeout shortly.
+  it('rejects a callback missing the code parameter', async () => {
+    const server = await startCallbackServer({ timeoutMs: 5000 });
+    const expectation = expect(server.waitForCallback()).rejects.toBeInstanceOf(
+      CallbackMissingCodeError,
+    );
+    const res = await hit(`${server.redirectUri}?state=${server.expectedState}`);
+    expect(res.status).toBe(400);
     await expectation;
     await server.close();
   });
 
-  it('times out if no callback arrives', async () => {
-    const server = await startCallbackServer({ timeoutMs: 100 });
-    await expect(server.waitForCallback()).rejects.toThrow(/timed out/i);
+  it('returns 404 for non-callback paths and stays alive for the real callback', async () => {
+    const server = await startCallbackServer({ timeoutMs: 5000 });
+    // A noisy probe hits /favicon.ico — must not settle the waiter.
+    const noise = await hit(`http://127.0.0.1:${server.port}/favicon.ico`);
+    expect(noise.status).toBe(404);
+
+    // The real callback arriving afterwards still resolves cleanly — proving
+    // the 404 did not poison the flow.
+    const waiter = server.waitForCallback();
+    const ok = await hit(`${server.redirectUri}?code=ok&state=${server.expectedState}`);
+    expect(ok.status).toBe(200);
+    const q = await waiter;
+    expect(q.code).toBe('ok');
     await server.close();
   });
 
-  it('falls back to an ephemeral port if the preferred one is in use', async () => {
-    // Occupy an ephemeral port, then ask the callback server to prefer it.
+  it('times out with CallbackTimeoutError if no callback arrives', async () => {
+    const server = await startCallbackServer({ timeoutMs: 100 });
+    await expect(server.waitForCallback()).rejects.toBeInstanceOf(CallbackTimeoutError);
+    await server.close();
+  });
+
+  it('returns 410 Gone for duplicate callbacks after success', async () => {
+    const server = await startCallbackServer({ timeoutMs: 5000 });
+    const waiter = server.waitForCallback();
+    const first = await hit(`${server.redirectUri}?code=first&state=${server.expectedState}`);
+    expect(first.status).toBe(200);
+    await waiter;
+
+    // A second callback — possibly attacker-crafted with the now-observed
+    // state — must NOT render as a fresh success page.
+    const second = await hit(`${server.redirectUri}?code=second&state=${server.expectedState}`);
+    expect(second.status).toBe(410);
+    expect(second.body).not.toContain('Logged in to ait-console');
+    await server.close();
+  });
+
+  it('close() is idempotent', async () => {
+    const server = await startCallbackServer({ timeoutMs: 100 });
+    await server.close();
+    // Must not throw on second call.
+    await expect(server.close()).resolves.toBeUndefined();
+  });
+
+  it('falls back to an ephemeral port when the preferred one is occupied', async () => {
     const blocker = createServer();
     await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', () => resolve()));
     const addr = blocker.address() as AddressInfo;
@@ -82,6 +126,7 @@ describe('startCallbackServer', () => {
         timeoutMs: 100,
         preferredPort: addr.port,
       });
+      // Fallback kicked in — the assigned port must not equal the occupied one.
       expect(server.port).not.toBe(addr.port);
       expect(server.port).toBeGreaterThan(0);
       await server.close();

@@ -1,15 +1,36 @@
 import { defineCommand } from 'citty';
 import { openBrowser } from '../browser.js';
 import { ExitCode } from '../exit.js';
-import { startCallbackServer } from '../oauth.js';
+import {
+  CallbackMissingCodeError,
+  type CallbackQuery,
+  CallbackStateMismatchError,
+  CallbackTimeoutError,
+  startCallbackServer,
+} from '../oauth.js';
 import { type Session, writeSession } from '../session.js';
 
 // The Toss developer console OAuth authorize URL and scope are not publicly
 // documented as of 2026-04. Override with `AIT_CONSOLE_OAUTH_URL` (and
 // optionally `AIT_CONSOLE_OAUTH_CLIENT_ID` / `AIT_CONSOLE_OAUTH_SCOPE`) while
-// discovery is in progress. The placeholder scheme is intentionally invalid
-// so we fail loudly rather than silently hit the wrong endpoint.
-const DEFAULT_AUTHORIZE_URL = 'TBD://console.example.com/oauth/authorize';
+// discovery is in progress. Without the env var we refuse to run rather than
+// silently hit a placeholder endpoint.
+
+// Cap raw callback-query fields before writing them to the session file.
+// The real flow will replace this with a token-endpoint POST; until then,
+// accept only short, control-char-free strings for the user label.
+const MAX_FIELD_LENGTH = 512;
+
+function sanitizeField(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  if (raw.length === 0) return undefined;
+  if (raw.length > MAX_FIELD_LENGTH) return undefined;
+  // Reject control chars including CR/LF so a pasted value can't forge a log
+  // line or break JSON emission.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit control-char filter
+  if (/[\x00-\x1f\x7f]/.test(raw)) return undefined;
+  return raw;
+}
 
 function buildAuthorizeUrl(params: {
   readonly authorizeUrl: string;
@@ -25,6 +46,22 @@ function buildAuthorizeUrl(params: {
   if (params.clientId) url.searchParams.set('client_id', params.clientId);
   if (params.scope) url.searchParams.set('scope', params.scope);
   return url.toString();
+}
+
+function classifyCallbackError(err: Error): {
+  reason: 'timeout' | 'state-mismatch' | 'missing-code' | 'other';
+  exitCode: ExitCode;
+} {
+  if (err instanceof CallbackTimeoutError) {
+    return { reason: 'timeout', exitCode: ExitCode.LoginTimeout };
+  }
+  if (err instanceof CallbackStateMismatchError) {
+    return { reason: 'state-mismatch', exitCode: ExitCode.LoginStateMismatch };
+  }
+  if (err instanceof CallbackMissingCodeError) {
+    return { reason: 'missing-code', exitCode: ExitCode.Generic };
+  }
+  return { reason: 'other', exitCode: ExitCode.Generic };
 }
 
 export const loginCommand = defineCommand({
@@ -50,12 +87,22 @@ export const loginCommand = defineCommand({
     },
   },
   async run({ args }) {
-    const authorizeUrl = process.env.AIT_CONSOLE_OAUTH_URL ?? DEFAULT_AUTHORIZE_URL;
+    const rawOauthUrl = process.env.AIT_CONSOLE_OAUTH_URL;
+    const authorizeUrl = rawOauthUrl && rawOauthUrl.length > 0 ? rawOauthUrl : null;
     const clientId = process.env.AIT_CONSOLE_OAUTH_CLIENT_ID;
     const scope = process.env.AIT_CONSOLE_OAUTH_SCOPE;
 
-    const timeoutSec = Number.parseInt(args.timeout, 10);
-    const timeoutMs = (Number.isFinite(timeoutSec) && timeoutSec > 0 ? timeoutSec : 300) * 1000;
+    const timeoutNum = Number(args.timeout);
+    if (!Number.isFinite(timeoutNum) || timeoutNum <= 0) {
+      if (args.json) {
+        process.stdout.write(
+          `${JSON.stringify({ ok: false, reason: 'invalid-timeout', given: args.timeout })}\n`,
+        );
+      }
+      process.stderr.write(`Invalid --timeout value: ${args.timeout}\n`);
+      process.exit(ExitCode.Usage);
+    }
+    const timeoutMs = timeoutNum * 1000;
 
     const emitError = (payload: Record<string, unknown>, human: string) => {
       if (args.json) {
@@ -64,10 +111,7 @@ export const loginCommand = defineCommand({
       process.stderr.write(`${human}\n`);
     };
 
-    if (authorizeUrl === DEFAULT_AUTHORIZE_URL) {
-      // Fail fast — the placeholder URL can't succeed and we don't want to
-      // pretend otherwise. Discovery of the real endpoint is tracked in
-      // CLAUDE.md § "Open questions".
+    if (!authorizeUrl) {
       emitError(
         { reason: 'oauth-url-not-configured', hint: 'set AIT_CONSOLE_OAUTH_URL' },
         [
@@ -88,8 +132,11 @@ export const loginCommand = defineCommand({
       scope,
     });
 
+    // Per the --json contract, stdout in JSON mode is strictly a single
+    // JSON document. Progress/diagnostic chatter always goes to stderr so
+    // behavior is consistent between modes.
     if (!args.json) {
-      process.stdout.write(`Listening for the OAuth callback on ${server.redirectUri}\n`);
+      process.stderr.write(`Listening for the OAuth callback on ${server.redirectUri}\n`);
     }
 
     let launched = false;
@@ -97,36 +144,43 @@ export const loginCommand = defineCommand({
       const result = await openBrowser(authUrl);
       launched = result.launched;
     }
-    if (!launched && !args.json) {
-      process.stdout.write(`Open this URL in your browser to continue:\n  ${authUrl}\n`);
-    } else if (launched && !args.json) {
-      process.stdout.write('Opened your browser. Complete the login there.\n');
+    if (!args.json) {
+      if (launched) {
+        process.stderr.write('Opened your browser. Complete the login there.\n');
+      } else {
+        process.stderr.write(`Open this URL in your browser to continue:\n  ${authUrl}\n`);
+      }
     }
 
-    let query: Awaited<ReturnType<typeof server.waitForCallback>>;
+    let query: CallbackQuery;
     try {
       query = await server.waitForCallback();
     } catch (err) {
       await server.close();
+      const { reason, exitCode } = classifyCallbackError(err as Error);
       emitError(
-        { reason: 'callback-failed', message: (err as Error).message },
+        { reason, message: (err as Error).message },
         `Login failed: ${(err as Error).message}`,
       );
-      process.exit(ExitCode.Generic);
+      process.exit(exitCode);
     }
     await server.close();
 
     // Token exchange / session capture is pending Toss console OAuth
-    // discovery. For now we accept optional user fields from the callback
-    // query — real deployments will replace this with a token-endpoint POST
-    // and a Playwright storageState capture (see console-client.ts).
-    const userId = query.raw.user_id ?? query.code;
-    const email = query.raw.email ?? '';
-    const displayName = query.raw.display_name;
+    // discovery (tracked in TODO.md and CLAUDE.md § "Open questions").
+    // Until then we accept optional user-label fields from the callback
+    // query string, but validate them strictly and fall back to the opaque
+    // `code` as a last resort. The real flow will POST to a token endpoint
+    // and capture a Playwright `storageState` — at which point `cookies`
+    // and `origins` become non-empty and this sanitization goes away.
+    const userId = sanitizeField(query.raw.user_id) ?? query.code;
+    const email = sanitizeField(query.raw.email) ?? '';
+    const displayName = sanitizeField(query.raw.display_name);
 
     const session: Session = {
       schemaVersion: 1,
       user: displayName ? { id: userId, email, displayName } : { id: userId, email },
+      // Left empty pending real token-exchange + Playwright storageState.
       cookies: [],
       origins: [],
       capturedAt: new Date().toISOString(),

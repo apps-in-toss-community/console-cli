@@ -6,6 +6,8 @@ export const ExitCode = {
   Usage: 2,
   NotAuthenticated: 10,
   NetworkError: 11,
+  LoginTimeout: 12,
+  LoginStateMismatch: 13,
   UpgradeUnavailable: 20,
   UpgradeAlreadyLatest: 21,
 } as const;
