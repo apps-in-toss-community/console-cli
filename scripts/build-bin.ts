@@ -46,10 +46,13 @@ for (const { target, out } of selected) {
     --outfile=dist-bin/${out}`;
 
   if (target.startsWith('bun-darwin-') && process.platform === 'darwin') {
-    console.log(`Ad-hoc signing ${out}...`);
-    await $`codesign --force --sign - \
-      --options runtime \
-      --entitlements scripts/macos-entitlements.plist \
+    console.log(`Ad-hoc signing ${out} with rcodesign...`);
+    // Strip Bun's malformed LC_CODE_SIGNATURE stub first so rcodesign
+    // can write a fresh signature. `codesign --remove-signature` exits 0
+    // even if there's nothing to remove.
+    await $`codesign --remove-signature dist-bin/${out}`.nothrow();
+    await $`rcodesign sign \
+      --entitlements-xml-path scripts/macos-entitlements.plist \
       dist-bin/${out}`;
   }
 }
