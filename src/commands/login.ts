@@ -179,11 +179,13 @@ export const loginCommand = defineCommand({
     // discovery (tracked in TODO.md and CLAUDE.md § "Open questions").
     // Until then we accept optional user-label fields from the callback
     // query string but validate them strictly. If no identity field is
-    // present we store a fixed sentinel rather than smuggling the raw
-    // OAuth `code` (a secret) into the user-visible identifier. The real
-    // flow will POST to a token endpoint and capture a Playwright
+    // present we refuse to write the session rather than smuggling the
+    // raw OAuth `code` (a secret) into the user-visible identifier. The
+    // real flow will POST to a token endpoint and capture a Playwright
     // `storageState` — at which point `cookies` and `origins` become
-    // non-empty and this sanitization goes away.
+    // non-empty and the identity fallback goes away. Field sanitization
+    // (length + control-char guards) stays regardless, since display
+    // names and emails still need to be safe to serialize and print.
     const rawUserId = sanitizeField(query.raw.user_id);
     const rawEmail = sanitizeField(query.raw.email);
     const displayName = sanitizeField(query.raw.display_name);

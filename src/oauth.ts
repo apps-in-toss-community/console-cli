@@ -265,10 +265,10 @@ export async function startCallbackServer(
           finish({ kind: 'err', e: new CallbackMissingCodeError() });
           return;
         case 'malformed':
-          finish({ kind: 'err', e: new Error(message) });
-          return;
         case 'not-found':
-          // Intentional no-op: a /favicon.ico probe shouldn't end the flow.
+          // Don't settle on malformed or non-callback paths — a noisy
+          // extension probing `/\x00` or `/favicon.ico` shouldn't end
+          // the flow. The real redirect will still resolve it.
           return;
         default:
           // Exhaustiveness check — a new ParseResult kind will fail to

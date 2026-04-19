@@ -47,6 +47,10 @@ describe.runIf(hasDist)('ait-console login (integration)', () => {
     const parsed = JSON.parse(res.stdout.trim()) as { ok: boolean; reason: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.reason).toBe('invalid-timeout');
+    // Defends against a future refactor that moves the timeout check below
+    // startCallbackServer: the diagnostic must still land before any port
+    // binding happens.
+    expect(res.stderr).toContain('Invalid --timeout');
   });
 
   it('refuses to write a session when the callback carries no identity', async () => {
