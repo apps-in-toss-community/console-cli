@@ -21,3 +21,21 @@ export function configDir(): string {
 export function sessionFilePath(): string {
   return join(configDir(), 'session.json');
 }
+
+// Cache directory — for non-secret, regenerable state. Distinct from
+// `configDir()` so a `rm -rf ~/.cache/aitcc` cannot take the session with
+// it, and so packagers can mount the two on different volumes.
+export function cacheDir(): string {
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData && localAppData.length > 0) return join(localAppData, APP_NAME, 'Cache');
+    return join(homedir() || '.', 'AppData', 'Local', APP_NAME, 'Cache');
+  }
+  const xdg = process.env.XDG_CACHE_HOME;
+  if (xdg && xdg.length > 0) return join(xdg, APP_NAME);
+  return join(homedir() || '.', '.cache', APP_NAME);
+}
+
+export function upgradeCheckPath(): string {
+  return join(cacheDir(), 'upgrade-check.json');
+}

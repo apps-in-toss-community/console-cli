@@ -4,6 +4,7 @@ import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, sessionPathForDiagnostics } from '../session.js';
+import { maybeCheckForUpdate } from '../update-check.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -20,6 +21,28 @@ import { readSession, sessionPathForDiagnostics } from '../session.js';
 //
 // The top-level `ok` is always present and indicates whether the command
 // ran cleanly; `authenticated` is only meaningful when `ok: true`.
+
+// Run the throttled background update check — but bound the wall-clock cost
+// so a slow network never delays the user's whoami output. 500 ms is enough
+// for a 304 (fast path after the first check) and for most 200s; a cold
+// probe that goes long just gets cancelled, and the next whoami within 24h
+// will not retry anyway (cache was written when the probe started).
+//
+// Skipped entirely when `--json` is set — machine consumers (agent-plugin)
+// should never see a "new version available" notice line interleaved with
+// their parsed output. The notice in update-check.ts already targets stderr
+// and checks `isTTY`, but belt-and-suspenders costs nothing here.
+async function runBackgroundUpdateCheck(json: boolean): Promise<void> {
+  if (json) return;
+  const timeoutMs = 500;
+  await Promise.race([
+    maybeCheckForUpdate().catch(() => null),
+    new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), timeoutMs);
+      if (typeof t.unref === 'function') t.unref();
+    }),
+  ]);
+}
 
 export const whoamiCommand = defineCommand({
   meta: {
@@ -69,6 +92,7 @@ export const whoamiCommand = defineCommand({
         : session.user.email;
       process.stdout.write(`Logged in as ${label} (cached)\n`);
       process.stdout.write(`Session captured: ${session.capturedAt}\n`);
+      await runBackgroundUpdateCheck(args.json);
       return exitAfterFlush(ExitCode.Ok);
     }
 
@@ -104,6 +128,7 @@ export const whoamiCommand = defineCommand({
           process.stdout.write(`  - ${w.workspaceName} (id ${w.workspaceId}, ${w.role})\n`);
         }
       }
+      await runBackgroundUpdateCheck(args.json);
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
       if (err instanceof TossApiError && err.isAuthError) {

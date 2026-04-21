@@ -38,6 +38,36 @@ export async function fetchLatestRelease(): Promise<Release> {
   return (await res.json()) as Release;
 }
 
+export type ConditionalReleaseResult =
+  | { readonly status: 'not-modified'; readonly etag: string | undefined }
+  | { readonly status: 'updated'; readonly release: Release; readonly etag: string | undefined };
+
+/**
+ * Conditional GET against `releases/latest`. If the server returns 304 we
+ * learn "no change" without consuming a core rate-limit slot. Intended for
+ * the background update check, which re-runs often; `fetchLatestRelease()`
+ * remains the right call when the upgrade command actually needs the body.
+ */
+export async function fetchLatestReleaseConditional(
+  previousEtag: string | undefined,
+): Promise<ConditionalReleaseResult> {
+  const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+  const headers = defaultHeaders() as Record<string, string>;
+  if (previousEtag && previousEtag.length > 0) {
+    headers['If-None-Match'] = previousEtag;
+  }
+  const res = await fetch(url, { headers });
+  const etag = res.headers.get('etag') ?? undefined;
+  if (res.status === 304) {
+    return { status: 'not-modified', etag };
+  }
+  if (!res.ok) {
+    throw new Error(`GitHub releases/latest returned ${res.status} ${res.statusText}`);
+  }
+  const release = (await res.json()) as Release;
+  return { status: 'updated', release, etag };
+}
+
 // Parse `tag_name` into a comparable semver string. Changesets tags this repo
 // as `@ait-co/console-cli@0.1.2`; older ad-hoc tags may be `v0.1.2`. We
 // accept both.

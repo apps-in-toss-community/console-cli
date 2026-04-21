@@ -75,6 +75,17 @@ The containing directory is created with mode `0700`. Cookies captured during lo
 
 See [CLAUDE.md](./CLAUDE.md) for the rationale behind using a plain `0600` file instead of an OS keychain.
 
+## Update notifications
+
+When running interactively, `aitcc` occasionally checks for a newer release and prints a one-line notice on stderr if one exists. The check is rate-limit friendly:
+
+- At most one network call every 24 hours, no matter how often you run commands.
+- Even a failed check updates the throttle window, so a broken network or a 403 from GitHub does not loop back within minutes.
+- Conditional GET (`If-None-Match`) — a 304 response does not consume the anonymous GitHub rate-limit bucket.
+- The check is skipped entirely when stdout is not a TTY, when `--json` is passed, or when `AITCC_NO_UPDATE_CHECK=1` is set.
+
+Cached state lives at `$XDG_CACHE_HOME/aitcc/upgrade-check.json` (fallback `~/.cache/aitcc/upgrade-check.json`).
+
 ## Machine-readable output (`--json`)
 
 Every command accepts `--json`. When set:
