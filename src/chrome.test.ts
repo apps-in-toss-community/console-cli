@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { __test, chromeCandidates } from './chrome.js';
 
 describe('chromeCandidates', () => {
-  it('honours AIT_CONSOLE_BROWSER first on every platform', () => {
-    const { candidates } = chromeCandidates({ AIT_CONSOLE_BROWSER: '/tmp/my-chrome' }, 'darwin');
+  it('honours AITCC_BROWSER first on every platform', () => {
+    const { candidates } = chromeCandidates({ AITCC_BROWSER: '/tmp/my-chrome' }, 'darwin');
     expect(candidates[0]).toBe('/tmp/my-chrome');
   });
 

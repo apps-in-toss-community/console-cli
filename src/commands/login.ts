@@ -29,7 +29,7 @@ import { type Session, writeSession } from '../session.js';
 //   3. Dump all cookies via `Network.getAllCookies`, resolve the member
 //      user-info from the console API to capture a stable identity, and
 //      persist `{ user, cookies, capturedAt }` at `$XDG_CONFIG_HOME/
-//      ait-console/session.json` (0600).
+//      aitcc/session.json` (0600).
 //   4. Dispose the Chrome process and wipe the ephemeral user-data-dir.
 //
 // The CDP-discovered redirect URL (`https://apps-in-toss.toss.im/workspace`
@@ -94,7 +94,7 @@ export const loginCommand = defineCommand({
     }
     const timeoutMs = timeoutSec * 1000;
 
-    const authorizeUrl = process.env.AIT_CONSOLE_OAUTH_URL ?? DEFAULT_AUTHORIZE_URL;
+    const authorizeUrl = process.env.AITCC_OAUTH_URL ?? DEFAULT_AUTHORIZE_URL;
 
     // Launch Chrome.
     const launched = await launchChrome({ initialUrl: authorizeUrl }).catch((err: Error) => err);

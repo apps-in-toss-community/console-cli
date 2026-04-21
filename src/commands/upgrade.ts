@@ -13,7 +13,7 @@ import { VERSION } from '../version.js';
 // via npm.
 function isStandaloneBinary(): boolean {
   const exe = basename(process.execPath).toLowerCase();
-  return exe.startsWith('ait-console');
+  return exe.startsWith('aitcc');
 }
 
 export const upgradeCommand = defineCommand({
@@ -176,7 +176,7 @@ export const upgradeCommand = defineCommand({
         installedAt: exePath,
         installedIn: dirname(exePath),
       },
-      `Upgraded ait-console: ${current} → ${latest}`,
+      `Upgraded aitcc: ${current} → ${latest}`,
     );
   },
 });

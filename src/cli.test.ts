@@ -37,10 +37,10 @@ describe('platform.detectPlatform', () => {
   it('produces the asset name shape the release workflow emits', () => {
     // We can't override process.platform on every CI runner, but the function
     // must return *something* on supported hosts, and that something must
-    // match the pattern `ait-console-<os>-<arch>[.exe]`.
+    // match the pattern `aitcc-<os>-<arch>[.exe]`.
     const result = detectPlatform();
     if (result === null) return; // unsupported host, skip
-    expect(result.assetName).toMatch(/^ait-console-(linux|darwin|windows)-(x64|arm64)(\.exe)?$/);
+    expect(result.assetName).toMatch(/^aitcc-(linux|darwin|windows)-(x64|arm64)(\.exe)?$/);
     expect(result.assetName.includes(result.os)).toBe(true);
     expect(result.assetName.includes(result.arch)).toBe(true);
   });

@@ -29,7 +29,7 @@ export const whoamiCommand = defineCommand({
       if (args.json) {
         process.stdout.write(`${JSON.stringify({ authenticated: false })}\n`);
       } else {
-        process.stderr.write('Not logged in. Run `ait-console login` to start a session.\n');
+        process.stderr.write('Not logged in. Run `aitcc login` to start a session.\n');
         process.stderr.write(`Session file checked: ${sessionPathForDiagnostics()}\n`);
       }
       return exitAfterFlush(ExitCode.NotAuthenticated);
@@ -98,7 +98,7 @@ export const whoamiCommand = defineCommand({
             })}\n`,
           );
         } else {
-          process.stderr.write('Session is no longer valid. Run `ait-console login` again.\n');
+          process.stderr.write('Session is no longer valid. Run `aitcc login` again.\n');
         }
         return exitAfterFlush(ExitCode.NotAuthenticated);
       }

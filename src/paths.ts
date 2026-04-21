@@ -5,7 +5,7 @@ import { join } from 'node:path';
 // POSIX systems and using %APPDATA% on Windows. Falls back gracefully if
 // environment variables are missing (e.g. minimal containers without HOME).
 
-const APP_NAME = 'ait-console';
+const APP_NAME = 'aitcc';
 
 export function configDir(): string {
   if (process.platform === 'win32') {

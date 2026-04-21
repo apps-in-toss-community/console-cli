@@ -21,7 +21,7 @@ export class ChromeNotFoundError extends Error {
   constructor(readonly candidates: readonly string[]) {
     super(
       `Could not find Chrome or a Chromium-family browser. Tried: ${candidates.join(', ')}.\n` +
-        'Install Chrome, or set AIT_CONSOLE_BROWSER to an executable path.',
+        'Install Chrome, or set AITCC_BROWSER to an executable path.',
     );
     this.name = 'ChromeNotFoundError';
   }
@@ -50,12 +50,12 @@ export class ChromeEndpointTimeoutError extends Error {
 
 // Probe order: the common install paths, favouring the vendor's own packaging
 // over snap/flatpak (those sometimes restrict --remote-debugging-port writes
-// due to sandboxing). Respect $AIT_CONSOLE_BROWSER as an override.
+// due to sandboxing). Respect $AITCC_BROWSER as an override.
 export function chromeCandidates(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): ChromePaths {
-  const override = env.AIT_CONSOLE_BROWSER;
+  const override = env.AITCC_BROWSER;
   const out: string[] = [];
   if (override && override.length > 0) out.push(override);
 
@@ -175,7 +175,7 @@ export async function launchChrome(options: LaunchChromeOptions): Promise<Launch
   const executable = options.executable ?? (await findChrome());
   const endpointTimeoutMs = options.endpointTimeoutMs ?? 15_000;
 
-  const userDataDir = await mkdtemp(join(tmpdir(), 'ait-console-chrome-'));
+  const userDataDir = await mkdtemp(join(tmpdir(), 'aitcc-chrome-'));
 
   // Minimum viable flags:
   //  --remote-debugging-port=0          pick an ephemeral port (printed on stderr)

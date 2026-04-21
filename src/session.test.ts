@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearSession, readSession, type Session, writeSession } from './session.js';
 
 function freshConfigRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'ait-console-test-'));
+  return mkdtempSync(join(tmpdir(), 'aitcc-test-'));
 }
 
 const sample: Session = {
@@ -44,7 +44,7 @@ describe('session file IO', () => {
 
   it('writes the session file with 0600 perms on POSIX (exists on Windows)', async () => {
     await writeSession(sample);
-    const path = join(root, 'ait-console', 'session.json');
+    const path = join(root, 'aitcc', 'session.json');
     const st = statSync(path);
     if (process.platform === 'win32') {
       // Windows: POSIX mode is best-effort; at minimum the file must exist
@@ -72,7 +72,7 @@ describe('session file IO', () => {
   });
 
   it('readSession rejects a session with malformed cookies', async () => {
-    const sessionDir = join(root, 'ait-console');
+    const sessionDir = join(root, 'aitcc');
     await mkdir(sessionDir, { recursive: true });
     writeFileSync(
       join(sessionDir, 'session.json'),

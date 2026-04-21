@@ -8,10 +8,10 @@ import { VERSION } from './version.js';
 
 const main = defineCommand({
   meta: {
-    name: 'ait-console',
+    name: 'aitcc',
     version: VERSION,
     description:
-      'Community CLI for the Apps in Toss developer console (unofficial; not affiliated with Toss).',
+      'aitcc — Apps in Toss Community Console CLI. Unofficial, not affiliated with Toss.',
   },
   subCommands: {
     whoami: whoamiCommand,
