@@ -181,25 +181,25 @@ describe('maybeCheckForUpdate', () => {
   it('writes a placeholder cache BEFORE the network call so concurrent runs do not both probe', async () => {
     const now = new Date('2026-04-21T00:00:00Z').getTime();
     const realFetch = globalThis.fetch;
-    // Hold fetch open so we can observe the pre-fetch cache state.
+    // Deterministic handshake: `started` resolves the instant fetch is
+    // entered, `release` lets the caller let fetch finish. No polling.
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((r) => {
+      markStarted = r;
+    });
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    let fetchStarted = false;
     globalThis.fetch = (async () => {
-      fetchStarted = true;
+      markStarted();
       await gate;
       // Return a minimal 304 so the path works through.
       return new Response(null, { status: 304 });
     }) as unknown as typeof fetch;
     try {
       const probe = maybeCheckForUpdate({ env: {}, isTTY: true, now });
-      // Wait for the fetch to actually start, then inspect the cache on disk.
-      for (let i = 0; i < 50 && !fetchStarted; i++) {
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      expect(fetchStarted).toBe(true);
+      await started;
       const midFlight = await readCache();
       // The placeholder must already be stamped with `now` before fetch resolves.
       expect(midFlight?.lastCheckedAt).toBe(new Date(now).toISOString());

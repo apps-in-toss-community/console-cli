@@ -137,10 +137,13 @@ export async function maybeCheckForUpdate(
   if (!isDueForCheck(cache, now, intervalMs)) return null;
 
   // Stamp the cache BEFORE the network call so a concurrent `aitcc whoami`
-  // reading this file mid-probe sees "not due" and doesn't issue a second
-  // request. If the probe crashes the process, this placeholder also
-  // naturally satisfies the "failed probes still update the window"
-  // invariant — the next run is bounded by the interval.
+  // that reads AFTER this write sees "not due" and skips its probe. (Two
+  // racers that both read before either writes will each fire once — the
+  // window is a handful of µs and the anonymous GitHub limit plus the
+  // ETag-based 304 path keep the damage bounded.) If the probe crashes
+  // the process, this placeholder also naturally satisfies the "failed
+  // probes still update the window" invariant — the next run is bounded
+  // by the interval.
   const nowIso = new Date(now).toISOString();
   const placeholder: UpdateCheckCache = {
     lastCheckedAt: nowIso,
@@ -185,6 +188,11 @@ export async function maybeCheckForUpdate(
     // throttle invariant holds — just skip the second write.
   }
 
+  // If the probe failed, `entry` is still the placeholder — so the notice
+  // uses the *previous* known latestTag from cache. That's fine: the
+  // throttle window bounds staleness to 24h and semver doesn't move
+  // backwards, so an out-of-date tag can only under-report a new release,
+  // never falsely suggest a newer one than really exists.
   maybeEmitNotice(entry, env);
   return entry;
 }

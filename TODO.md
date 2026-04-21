@@ -19,6 +19,7 @@ The current schema (`schemaVersion: 1`) stores CDP-native cookies in `cookies: C
 ## Low Priority
 - [ ] Self-host the CLI docs (alongside the `docs` repo or as a subpath).
 - [ ] Extend `install.sh` platform coverage — `/tmp` fallback when `$HOME` is unset, and exponential-backoff retry (up to 30 s) on 404 during the release-asset upload race. (`sha256sum` fallback, root-owned prior-install detection, and `AITCC_QUIET=1` are already implemented.)
+- [ ] Clean up stale `.tmp` siblings under `$XDG_CACHE_HOME/aitcc/` left by a SIGKILL/power-loss crash between `writeFile(tmp)` and `rename(tmp, final)` in `update-check.ts`. Each file is <200 bytes so accumulation is cosmetic, but a "drop `.tmp` older than 7 days" sweep at the top of `writeCache` would be a one-screen fix. Only do this if a user reports it or if we start writing larger cached bodies.
 
 ## Performance
 - [ ] Binary size (~60 MB on Bun 1.3.12). `--minify --sourcemap=none` is already on in `scripts/build-bin.ts` but only shaves ~2 MB — the remaining ~58 MB is the bundled Bun runtime floor. Realistic levers, from lowest to highest rewrite cost:
