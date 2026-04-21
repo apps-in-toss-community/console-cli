@@ -4,7 +4,8 @@ import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import { fetchWorkspaceDetail } from '../api/workspaces.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { readSession, sessionPathForDiagnostics, setCurrentWorkspaceId } from '../session.js';
+import { readSession, setCurrentWorkspaceId } from '../session.js';
+import { emitApiError, emitJson, emitNetworkError, emitNotAuthenticated } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -22,53 +23,8 @@ import { readSession, sessionPathForDiagnostics, setCurrentWorkspaceId } from '.
 //
 // Every workspace subcommand inherits the standard auth failure modes from
 // whoami: { ok: true, authenticated: false } exit 10, network-error exit 11,
-// api-error exit 17. All JSON writes go through `emitJson` so the
+// api-error exit 17. All JSON writes go through the shared `emitJson` so the
 // single-line-with-trailing-newline invariant is enforced in one place.
-
-interface NotAuthenticatedPayload {
-  readonly ok: true;
-  readonly authenticated: false;
-  readonly reason?: 'session-expired';
-}
-
-function emitJson(payload: unknown): void {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
-}
-
-function emitNotAuthenticated(json: boolean, reason?: 'session-expired'): void {
-  if (json) {
-    // `exactOptionalPropertyTypes` forbids `reason: undefined`, so the key
-    // has to be omitted entirely when we don't have a value — hence the
-    // branch rather than a single object literal.
-    const payload: NotAuthenticatedPayload = reason
-      ? { ok: true, authenticated: false, reason }
-      : { ok: true, authenticated: false };
-    emitJson(payload);
-  } else {
-    process.stderr.write(
-      reason === 'session-expired'
-        ? 'Session is no longer valid. Run `aitcc login` again.\n'
-        : 'Not logged in. Run `aitcc login` to start a session.\n',
-    );
-    process.stderr.write(`Session file checked: ${sessionPathForDiagnostics()}\n`);
-  }
-}
-
-function emitNetworkError(json: boolean, message: string): void {
-  if (json) {
-    emitJson({ ok: false, reason: 'network-error', message });
-  } else {
-    process.stderr.write(`Network error reaching the console API: ${message}.\n`);
-  }
-}
-
-function emitApiError(json: boolean, message: string): void {
-  if (json) {
-    emitJson({ ok: false, reason: 'api-error', message });
-  } else {
-    process.stderr.write(`Unexpected error: ${message}\n`);
-  }
-}
 
 // Parse a CLI-provided workspace id strictly: only the form `^[1-9]\d*$`
 // is accepted. `Number.parseInt('36577x', 10)` returns 36577, so the CLI

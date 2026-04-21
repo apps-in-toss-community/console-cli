@@ -53,6 +53,10 @@ describe('fetchMiniApps', () => {
       extra: { status: 'APPROVED', version: '1.0.0' },
     });
     expect(apps[1]).toMatchObject({ id: 999, name: 'alt keys' });
+    // Pin the exclusion list for the alt-key family too — if someone drops
+    // `miniAppName`/`miniAppId` from the rest-destructure in the normaliser
+    // they'd show up as leftover keys in `extra`.
+    expect(apps[1]?.extra).toEqual({});
   });
 
   it('throws when the response is not an array', async () => {

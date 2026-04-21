@@ -3,7 +3,8 @@ import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchMiniApps, fetchReviewStatus } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { readSession, sessionPathForDiagnostics } from '../session.js';
+import { readSession } from '../session.js';
+import { emitApiError, emitJson, emitNetworkError, emitNotAuthenticated } from './_shared.js';
 import { parsePositiveInt } from './workspace.js';
 
 // --json contract (consumed by agent-plugin):
@@ -16,51 +17,14 @@ import { parsePositiveInt } from './workspace.js';
 //   Auth/network/api failures follow the shared contract from workspace/whoami
 //   (ok: true authenticated: false exit 10, network-error exit 11, api-error exit 17).
 
-function emitJson(payload: unknown): void {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
-}
-
-function emitNotAuthenticated(json: boolean, reason?: 'session-expired'): void {
-  if (json) {
-    // exactOptionalPropertyTypes forbids `reason: undefined`, so omit the
-    // key entirely when we don't have a value.
-    const payload = reason
-      ? { ok: true as const, authenticated: false as const, reason }
-      : { ok: true as const, authenticated: false as const };
-    emitJson(payload);
-  } else {
-    process.stderr.write(
-      reason === 'session-expired'
-        ? 'Session is no longer valid. Run `aitcc login` again.\n'
-        : 'Not logged in. Run `aitcc login` to start a session.\n',
-    );
-    process.stderr.write(`Session file checked: ${sessionPathForDiagnostics()}\n`);
-  }
-}
-
-function emitNetworkError(json: boolean, message: string): void {
-  if (json) {
-    emitJson({ ok: false, reason: 'network-error', message });
-  } else {
-    process.stderr.write(`Network error reaching the console API: ${message}.\n`);
-  }
-}
-
-function emitApiError(json: boolean, message: string): void {
-  if (json) {
-    emitJson({ ok: false, reason: 'api-error', message });
-  } else {
-    process.stderr.write(`Unexpected error: ${message}\n`);
-  }
-}
-
 // Best-effort match of review-status entries against mini-app summaries.
 // The list endpoint and the review-status endpoint key off the same id,
 // but we don't assume the field name is uniform — we compare by `.id` on
-// each record, falling back to string equality. Returns `null` if no
-// plausible match; callers render that as "no review status" in the
-// output rather than a failure.
-function findReviewEntry(
+// each record, falling back to `miniAppId` / `appId` (same order as the
+// list normaliser). Exported so the join semantics are unit-testable.
+// Returns `null` if no plausible match; callers render that as "no review
+// status" in the output rather than a failure.
+export function findReviewEntry(
   reviewEntries: readonly Readonly<Record<string, unknown>>[],
   appId: string | number,
 ): Readonly<Record<string, unknown>> | null {
@@ -72,7 +36,9 @@ function findReviewEntry(
   return null;
 }
 
-function reviewStateFor(entry: Readonly<Record<string, unknown>> | null): string | undefined {
+export function reviewStateFor(
+  entry: Readonly<Record<string, unknown>> | null,
+): string | undefined {
   if (!entry) return undefined;
   const raw = entry.reviewState ?? entry.status;
   return typeof raw === 'string' ? raw : undefined;
@@ -156,18 +122,21 @@ const lsCommand = defineCommand({
       if (apps.length === 0) {
         process.stdout.write(`No apps in workspace ${workspaceId}.\n`);
         if (review.hasPolicyViolation) {
-          process.stderr.write('Note: workspace has a policy violation flag set.\n');
+          process.stderr.write('Note: workspace-wide policy violation flag is set.\n');
         }
         return exitAfterFlush(ExitCode.Ok);
       }
       for (const app of apps) {
         const entry = findReviewEntry(review.miniApps, app.id);
         const reviewState = reviewStateFor(entry) ?? '-';
+        // Defensive: the upstream mini-app payload shape is not yet fully
+        // observed (no registered apps in our workspaces). Tighten this
+        // once sdk-example is registered and `name` is confirmed required.
         const name = app.name ?? '(unnamed)';
         process.stdout.write(`${app.id}\t${name}\t${reviewState}\n`);
       }
       if (review.hasPolicyViolation) {
-        process.stderr.write('Note: workspace has a policy violation flag set.\n');
+        process.stderr.write('Note: workspace-wide policy violation flag is set.\n');
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
