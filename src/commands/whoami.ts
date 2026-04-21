@@ -5,6 +5,22 @@ import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, sessionPathForDiagnostics } from '../session.js';
 
+// --json contract (consumed by agent-plugin):
+//
+//   Success (session present + — for live mode — reachable):
+//     { ok: true, authenticated: true, source: 'live'|'cache', user, capturedAt, ... }
+//   Session missing:
+//     { ok: true, authenticated: false }                                  exit 10
+//   Session expired (console rejected our cookies):
+//     { ok: true, authenticated: false, reason: 'session-expired' }       exit 10
+//   Network failure talking to the console:
+//     { ok: false, reason: 'network-error', message }                     exit 11
+//   Any other API / unexpected error:
+//     { ok: false, reason: 'api-error', message }                         exit 17
+//
+// The top-level `ok` is always present and indicates whether the command
+// ran cleanly; `authenticated` is only meaningful when `ok: true`.
+
 export const whoamiCommand = defineCommand({
   meta: {
     name: 'whoami',
@@ -27,7 +43,7 @@ export const whoamiCommand = defineCommand({
 
     if (!session) {
       if (args.json) {
-        process.stdout.write(`${JSON.stringify({ authenticated: false })}\n`);
+        process.stdout.write(`${JSON.stringify({ ok: true, authenticated: false })}\n`);
       } else {
         process.stderr.write('Not logged in. Run `aitcc login` to start a session.\n');
         process.stderr.write(`Session file checked: ${sessionPathForDiagnostics()}\n`);
@@ -39,6 +55,7 @@ export const whoamiCommand = defineCommand({
       if (args.json) {
         process.stdout.write(
           `${JSON.stringify({
+            ok: true,
             authenticated: true,
             source: 'cache',
             user: session.user,
@@ -60,6 +77,7 @@ export const whoamiCommand = defineCommand({
       if (args.json) {
         process.stdout.write(
           `${JSON.stringify({
+            ok: true,
             authenticated: true,
             source: 'live',
             user: {
@@ -92,6 +110,7 @@ export const whoamiCommand = defineCommand({
         if (args.json) {
           process.stdout.write(
             `${JSON.stringify({
+              ok: true,
               authenticated: false,
               reason: 'session-expired',
               errorCode: err.errorCode,

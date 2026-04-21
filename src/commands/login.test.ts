@@ -75,40 +75,39 @@ describe('resolveUserWithRetry', () => {
     },
   ];
 
+  const successBody = {
+    resultType: 'SUCCESS' as const,
+    success: {
+      id: 1,
+      bizUserNo: 1,
+      name: 'N',
+      email: 'e@x',
+      role: 'MEMBER',
+      workspaces: [],
+      isAdult: true,
+      isOverseasBusiness: false,
+      minorConsents: [],
+    },
+  };
+
+  const authFailBody = {
+    resultType: 'FAIL' as const,
+    success: null,
+    error: { errorType: 0, errorCode: '4010', reason: 'not yet', data: {}, title: null },
+  };
+
   it('returns the parsed user on the first successful response', async () => {
     let calls = 0;
     const fetchImpl: FetchLike = async () => {
       calls++;
-      return new Response(
-        JSON.stringify({
-          resultType: 'SUCCESS',
-          success: {
-            id: 1,
-            bizUserNo: 1,
-            name: 'N',
-            email: 'e@x',
-            role: 'MEMBER',
-            workspaces: [],
-            isAdult: true,
-            isOverseasBusiness: false,
-            minorConsents: [],
-          },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
+      return new Response(JSON.stringify(successBody), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
     };
-    // Can't easily inject fetch into fetchConsoleMemberUserInfo from here
-    // without re-exporting — instead, monkey-patch globalThis.fetch for
-    // the duration of the test.
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = fetchImpl as typeof fetch;
-    try {
-      const result = await resolveUserWithRetry(cookies);
-      expect(result.email).toBe('e@x');
-      expect(calls).toBe(1);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
+    const result = await resolveUserWithRetry(cookies, { fetchImpl });
+    expect(result.email).toBe('e@x');
+    expect(calls).toBe(1);
   });
 
   it('retries once on TossApiError isAuthError, calls onRetry, then succeeds', async () => {
@@ -116,46 +115,30 @@ describe('resolveUserWithRetry', () => {
     const fetchImpl: FetchLike = async () => {
       calls++;
       if (calls === 1) {
-        return new Response(
-          JSON.stringify({
-            resultType: 'FAIL',
-            success: null,
-            error: { errorType: 0, errorCode: '4010', reason: 'not yet', data: {}, title: null },
-          }),
-          { status: 401, headers: { 'content-type': 'application/json' } },
-        );
+        return new Response(JSON.stringify(authFailBody), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
       }
       return new Response(
         JSON.stringify({
-          resultType: 'SUCCESS',
-          success: {
-            id: 2,
-            bizUserNo: 2,
-            name: 'N2',
-            email: 'e2@x',
-            role: 'MEMBER',
-            workspaces: [],
-            isAdult: true,
-            isOverseasBusiness: false,
-            minorConsents: [],
-          },
+          ...successBody,
+          success: { ...successBody.success, id: 2, email: 'e2@x' },
         }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
       );
     };
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = fetchImpl as typeof fetch;
     const retryDelays: number[] = [];
-    try {
-      const result = await resolveUserWithRetry(cookies, {
-        onRetry: (ms) => retryDelays.push(ms),
-      });
-      expect(result.id).toBe(2);
-      expect(calls).toBe(2);
-      expect(retryDelays).toEqual([AUTH_SETTLE_DELAY_MS]);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
+    const result = await resolveUserWithRetry(cookies, {
+      fetchImpl,
+      onRetry: (ms) => retryDelays.push(ms),
+    });
+    expect(result.id).toBe(2);
+    expect(calls).toBe(2);
+    expect(retryDelays).toEqual([AUTH_SETTLE_DELAY_MS]);
   });
 
   it('does not retry non-auth errors', async () => {
@@ -171,13 +154,7 @@ describe('resolveUserWithRetry', () => {
         { status: 500, headers: { 'content-type': 'application/json' } },
       );
     };
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = fetchImpl as typeof fetch;
-    try {
-      await expect(resolveUserWithRetry(cookies)).rejects.toBeInstanceOf(TossApiError);
-      expect(calls).toBe(1);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
+    await expect(resolveUserWithRetry(cookies, { fetchImpl })).rejects.toBeInstanceOf(TossApiError);
+    expect(calls).toBe(1);
   });
 });

@@ -53,22 +53,34 @@ export async function readSession(): Promise<Session | null> {
     process.stderr.write(`warning: could not read session file at ${path}: ${code ?? 'unknown'}\n`);
     return null;
   }
+  let parsed: Session;
   try {
-    const parsed = JSON.parse(raw) as Session;
-    if (parsed.schemaVersion !== 1) return null;
-    if (!parsed.user || typeof parsed.user.id !== 'string') return null;
-    if (typeof parsed.user.email !== 'string') return null;
-    if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
-      return null;
-    }
-    if (!Array.isArray(parsed.cookies)) return null;
-    return parsed;
+    parsed = JSON.parse(raw) as Session;
   } catch {
     // Malformed JSON — warn once, then fall back to "not logged in". The
     // user can re-run `aitcc login` to replace the broken file.
     process.stderr.write(`warning: session file at ${path} is corrupt and will be ignored\n`);
     return null;
   }
+  const schemaReason = validateSessionShape(parsed);
+  if (schemaReason) {
+    process.stderr.write(
+      `warning: session file at ${path} ignored (${schemaReason}); re-run \`aitcc login\`\n`,
+    );
+    return null;
+  }
+  return parsed;
+}
+
+function validateSessionShape(parsed: Session): string | null {
+  if (parsed.schemaVersion !== 1) return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+  if (!parsed.user || typeof parsed.user.id !== 'string') return 'missing user.id';
+  if (typeof parsed.user.email !== 'string') return 'missing user.email';
+  if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
+    return 'user.displayName has wrong type';
+  }
+  if (!Array.isArray(parsed.cookies)) return 'cookies is not an array';
+  return null;
 }
 
 export async function readSessionSummary(): Promise<SessionSummary | null> {

@@ -112,17 +112,26 @@ async function resolveOnPath(
   if (path.length === 0) return null;
   const sep = platform === 'win32' ? ';' : ':';
   const fs = await import('node:fs/promises');
+  // Windows picks the matching executable based on PATHEXT — we reproduce
+  // the common case so a bare AITCC_BROWSER=chrome still resolves to
+  // chrome.exe on disk.
+  const extensions =
+    platform === 'win32'
+      ? ['', ...(env.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').filter((e) => e.length > 0)]
+      : [''];
   for (const dir of path.split(sep)) {
     if (dir.length === 0) continue;
-    const candidate = join(dir, name);
-    try {
-      // Require executable access, not just presence — otherwise a shell
-      // alias file or a build artefact sitting on PATH could be picked
-      // up as "Chrome".
-      await fs.access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // try next
+    for (const ext of extensions) {
+      const candidate = join(dir, name + ext);
+      try {
+        // Require executable access, not just presence — otherwise a shell
+        // alias file or a build artefact sitting on PATH could be picked
+        // up as "Chrome".
+        await fs.access(candidate, fsConstants.X_OK);
+        return candidate;
+      } catch {
+        // try next
+      }
     }
   }
   return null;

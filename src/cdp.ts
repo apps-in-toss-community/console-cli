@@ -322,7 +322,7 @@ function validateCookie(raw: unknown, index: number): CdpCookie {
     if (typeof v !== 'boolean') throw new Error(`Cookie #${index}.${field} is not a boolean`);
     return v;
   };
-  const cookie: CdpCookie = {
+  const base = {
     name: str('name'),
     value: str('value'),
     domain: str('domain'),
@@ -334,7 +334,7 @@ function validateCookie(raw: unknown, index: number): CdpCookie {
   };
   const sameSite = c.sameSite;
   if (sameSite === 'Strict' || sameSite === 'Lax' || sameSite === 'None') {
-    (cookie as { sameSite: 'Strict' | 'Lax' | 'None' }).sameSite = sameSite;
+    return { ...base, sameSite };
   }
-  return cookie;
+  return base;
 }

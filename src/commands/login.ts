@@ -1,5 +1,5 @@
 import { defineCommand } from 'citty';
-import { TossApiError } from '../api/http.js';
+import { type FetchLike, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import {
   attachToFirstPage,
@@ -62,7 +62,10 @@ export function isAllowedAuthorizeHost(host: string): boolean {
 export function isLoginLanding(url: string): boolean {
   try {
     const u = new URL(url);
-    if (u.host !== LOGIN_LANDING_HOST) return false;
+    // Use hostname (no port) so a same-host landing on a non-default port
+    // still matches — the console hasn't shipped a custom port in the
+    // wild but we shouldn't trip on one if it appears.
+    if (u.hostname !== LOGIN_LANDING_HOST) return false;
     if (
       u.pathname !== LOGIN_LANDING_PATH_PREFIX &&
       !u.pathname.startsWith(`${LOGIN_LANDING_PATH_PREFIX}/`)
@@ -128,10 +131,10 @@ export const loginCommand = defineCommand({
         );
         return exitAfterFlush(ExitCode.Usage);
       }
-      if (!isAllowedAuthorizeHost(parsed.host)) {
+      if (!isAllowedAuthorizeHost(parsed.hostname)) {
         emitError(
-          { reason: 'authorize-host-not-allowed', host: parsed.host },
-          `Refusing to open ${parsed.host}: only *.toss.im hosts are allowed for sign-in.`,
+          { reason: 'authorize-host-not-allowed', host: parsed.hostname },
+          `Refusing to open ${parsed.hostname}: only *.toss.im hosts are allowed for sign-in.`,
         );
         return exitAfterFlush(ExitCode.Usage);
       }
@@ -395,10 +398,14 @@ export const AUTH_SETTLE_DELAY_MS = 750;
 
 export async function resolveUserWithRetry(
   cookies: readonly CdpCookie[],
-  opts: { onRetry?: (delayMs: number) => void } = {},
+  opts: {
+    onRetry?: (delayMs: number) => void;
+    fetchImpl?: FetchLike;
+  } = {},
 ): Promise<Awaited<ReturnType<typeof fetchConsoleMemberUserInfo>>> {
+  const callArgs = opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {};
   try {
-    return await fetchConsoleMemberUserInfo(cookies);
+    return await fetchConsoleMemberUserInfo(cookies, callArgs);
   } catch (err) {
     if (err instanceof TossApiError && err.isAuthError) {
       opts.onRetry?.(AUTH_SETTLE_DELAY_MS);
@@ -406,7 +413,7 @@ export async function resolveUserWithRetry(
         const t = setTimeout(r, AUTH_SETTLE_DELAY_MS);
         if (typeof t.unref === 'function') t.unref();
       });
-      return await fetchConsoleMemberUserInfo(cookies);
+      return await fetchConsoleMemberUserInfo(cookies, callArgs);
     }
     throw err;
   }
