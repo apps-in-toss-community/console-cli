@@ -3,14 +3,20 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearSession, readSession, type Session, writeSession } from './session.js';
+import {
+  clearSession,
+  readSession,
+  type Session,
+  setCurrentWorkspaceId,
+  writeSession,
+} from './session.js';
 
 function freshConfigRoot(): string {
   return mkdtempSync(join(tmpdir(), 'aitcc-test-'));
 }
 
 const sample: Session = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   user: { id: 'u_1', email: 'a@b.co', displayName: 'Tester' },
   cookies: [
     {
@@ -115,6 +121,61 @@ describe('session file IO', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('readSession accepts a v1 file and reports it as v2 in memory', async () => {
+    const sessionDir = join(root, 'aitcc');
+    await mkdir(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, 'session.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        user: { id: 'u', email: 'x@y.z' },
+        cookies: [],
+        origins: [],
+        capturedAt: '2026-04-19T00:00:00.000Z',
+      }),
+    );
+    const got = await readSession();
+    expect(got).not.toBeNull();
+    expect(got?.schemaVersion).toBe(2);
+    expect(got?.currentWorkspaceId).toBeUndefined();
+  });
+
+  it('readSession rejects a non-integer currentWorkspaceId', async () => {
+    const sessionDir = join(root, 'aitcc');
+    await mkdir(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, 'session.json'),
+      JSON.stringify({
+        schemaVersion: 2,
+        user: { id: 'u', email: 'x@y.z' },
+        cookies: [],
+        origins: [],
+        capturedAt: '2026-04-19T00:00:00.000Z',
+        currentWorkspaceId: 'not-a-number',
+      }),
+    );
+    const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      expect(await readSession()).toBeNull();
+      const joined = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(joined).toContain('currentWorkspaceId');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('setCurrentWorkspaceId persists on top of an existing session', async () => {
+    await writeSession(sample);
+    const updated = await setCurrentWorkspaceId(36577);
+    expect(updated?.currentWorkspaceId).toBe(36577);
+    const reread = await readSession();
+    expect(reread?.currentWorkspaceId).toBe(36577);
+  });
+
+  it('setCurrentWorkspaceId returns null when there is no session', async () => {
+    expect(await setCurrentWorkspaceId(36577)).toBeNull();
   });
 
   it('readSession warns and returns null on malformed JSON', async () => {

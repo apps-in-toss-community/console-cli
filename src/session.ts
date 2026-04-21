@@ -18,7 +18,7 @@ export interface SessionUser {
 }
 
 export interface Session {
-  schemaVersion: 1;
+  schemaVersion: 2;
   user: SessionUser;
   // CDP-native cookie list from `Network.getAllCookies`. Treat as opaque
   // secret material outside the login/http code paths.
@@ -27,6 +27,12 @@ export interface Session {
   // empty until a feature needs it.
   origins: unknown[];
   capturedAt: string; // ISO-8601
+  // Workspace context. Unset until the user runs `aitcc workspace use <id>`
+  // or provides `--workspace` on first use. Writes are explicit — we never
+  // guess a default (e.g. "first workspace the user has access to") because
+  // a silent guess is exactly the class of bug that causes a deploy to land
+  // in the wrong account.
+  currentWorkspaceId?: number;
 }
 
 // Public-safe projection for `whoami` and other diagnostics.
@@ -69,17 +75,41 @@ export async function readSession(): Promise<Session | null> {
     );
     return null;
   }
+  // In-memory migration from v1 to v2: we accept v1 files but upgrade the
+  // version tag so downstream code sees a uniform shape. The file itself is
+  // only rewritten on the next explicit write (login, workspace use, etc).
+  if ((parsed.schemaVersion as number) === 1) {
+    parsed = { ...parsed, schemaVersion: 2 };
+  }
   return parsed;
 }
 
-function validateSessionShape(parsed: Session): string | null {
-  if (parsed.schemaVersion !== 1) return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+// v1 → v2 migration: v1 files are still valid, we just treat the absent
+// `currentWorkspaceId` as "no workspace selected yet". The next write (e.g.
+// from `workspace use`) bumps the stored schemaVersion. The validator input
+// is deliberately loose (`unknown`-ish) so we can inspect old-schema files
+// without the TS type narrowing away the v1 branch.
+function validateSessionShape(parsed: {
+  schemaVersion?: unknown;
+  user?: { id?: unknown; email?: unknown; displayName?: unknown };
+  cookies?: unknown;
+  currentWorkspaceId?: unknown;
+}): string | null {
+  if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) {
+    return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+  }
   if (!parsed.user || typeof parsed.user.id !== 'string') return 'missing user.id';
   if (typeof parsed.user.email !== 'string') return 'missing user.email';
   if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
     return 'user.displayName has wrong type';
   }
   if (!Array.isArray(parsed.cookies)) return 'cookies is not an array';
+  if (
+    parsed.currentWorkspaceId !== undefined &&
+    (typeof parsed.currentWorkspaceId !== 'number' || !Number.isInteger(parsed.currentWorkspaceId))
+  ) {
+    return 'currentWorkspaceId has wrong type';
+  }
   return null;
 }
 
@@ -100,6 +130,19 @@ export async function writeSession(session: Session): Promise<void> {
   } catch {
     // Windows / exotic FS: best-effort only.
   }
+}
+
+/**
+ * Persist a new `currentWorkspaceId` on an existing session. Returns the
+ * updated session, or `null` if there is no session to update (callers
+ * should surface "not logged in" in that case).
+ */
+export async function setCurrentWorkspaceId(workspaceId: number): Promise<Session | null> {
+  const session = await readSession();
+  if (!session) return null;
+  const updated: Session = { ...session, currentWorkspaceId: workspaceId };
+  await writeSession(updated);
+  return updated;
 }
 
 export async function clearSession(): Promise<{ existed: boolean }> {
