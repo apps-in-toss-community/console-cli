@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePositiveInt } from './workspace.js';
+import { parsePositiveInt } from './_shared.js';
 
 // Regression guard for the strict workspace-id parser used by
 // `workspace use` and `workspace show --workspace`. `Number.parseInt` alone

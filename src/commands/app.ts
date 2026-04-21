@@ -3,9 +3,13 @@ import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchMiniApps, fetchReviewStatus } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { readSession } from '../session.js';
-import { emitApiError, emitJson, emitNetworkError, emitNotAuthenticated } from './_shared.js';
-import { parsePositiveInt } from './workspace.js';
+import {
+  emitApiError,
+  emitJson,
+  emitNetworkError,
+  emitNotAuthenticated,
+  resolveWorkspaceContext,
+} from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -57,36 +61,9 @@ const lsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const session = await readSession();
-    if (!session) {
-      emitNotAuthenticated(args.json);
-      return exitAfterFlush(ExitCode.NotAuthenticated);
-    }
-
-    let workspaceId: number | undefined;
-    if (args.workspace) {
-      const raw = String(args.workspace);
-      const parsed = parsePositiveInt(raw);
-      if (parsed === null) {
-        const message = `--workspace must be a positive integer (got ${raw})`;
-        if (args.json) emitJson({ ok: false, reason: 'invalid-id', message });
-        else process.stderr.write(`${message}\n`);
-        return exitAfterFlush(ExitCode.Usage);
-      }
-      workspaceId = parsed;
-    } else {
-      workspaceId = session.currentWorkspaceId;
-    }
-
-    if (workspaceId === undefined) {
-      if (args.json) emitJson({ ok: false, reason: 'no-workspace-selected' });
-      else {
-        process.stderr.write(
-          'No workspace selected. Pass `--workspace <id>` or run `aitcc workspace use <id>`.\n',
-        );
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
 
     try {
       // List + review-status are independent read endpoints. Fire in parallel

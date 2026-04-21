@@ -5,7 +5,13 @@ import { fetchWorkspaceDetail } from '../api/workspaces.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, setCurrentWorkspaceId } from '../session.js';
-import { emitApiError, emitJson, emitNetworkError, emitNotAuthenticated } from './_shared.js';
+import {
+  emitApiError,
+  emitJson,
+  emitNetworkError,
+  emitNotAuthenticated,
+  parsePositiveInt,
+} from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -25,18 +31,6 @@ import { emitApiError, emitJson, emitNetworkError, emitNotAuthenticated } from '
 // whoami: { ok: true, authenticated: false } exit 10, network-error exit 11,
 // api-error exit 17. All JSON writes go through the shared `emitJson` so the
 // single-line-with-trailing-newline invariant is enforced in one place.
-
-// Parse a CLI-provided workspace id strictly: only the form `^[1-9]\d*$`
-// is accepted. `Number.parseInt('36577x', 10)` returns 36577, so the CLI
-// would otherwise silently accept `workspace use 36577x` and persist the
-// wrong thing on a typo. Returning `null` triggers the caller's usage-error
-// path. Exported so the unit test can guard against "just use parseInt"
-// simplification regressions.
-export function parsePositiveInt(raw: string): number | null {
-  if (!/^[1-9]\d*$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) ? n : null;
-}
 
 // Formatting helper for the plain-text `show` output. `--json` is the
 // structured consumption path; this is a crude fallback so a human can
