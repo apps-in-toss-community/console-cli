@@ -6,13 +6,13 @@ Rename the CLI to `aitcc`, replace the OAuth-callback login scaffold with a Chro
 
 ## Breaking: CLI renamed
 
-The executable is now `aitcc` (Apps in Toss Community Console). Shorter than the previous `ait-console`, matches the organization's short name, and leaves `ait-console` free in case the official Toss team ever ships their own tool. The npm package name (`@ait-co/console-cli`) is unchanged.
+The executable is now `aitcc` (Apps in Toss Community Console). Shorter than the previous `ait-console`, matches the organization's short name, and leaves `ait-console` free in case the Toss team ever ships their own tool. The npm package name (`@ait-co/console-cli`) is unchanged.
 
 - Binary: `ait-console-<os>-<arch>[.exe]` → `aitcc-<os>-<arch>[.exe]`.
 - Session directory: `$XDG_CONFIG_HOME/ait-console/` → `$XDG_CONFIG_HOME/aitcc/`. Existing sessions read as "no session" — re-run `aitcc login` once.
 - Env vars: `AIT_CONSOLE_*` → `AITCC_*` (`AITCC_BROWSER`, `AITCC_OAUTH_URL`, `AITCC_VERSION` build-time define, `AITCC_INSTALL_DIR`, `AITCC_QUIET`).
 
-Binary users: re-run `install.sh` to pick up the renamed asset. npm users: reinstall the package so the new `bin` entry lands in your `$PATH`.
+Binary users: re-run `install.sh` to pick up the renamed asset. The installer does not touch the old `ait-console` binary — delete `$HOME/.local/bin/ait-console` (or wherever you installed it) manually once you've confirmed `aitcc` works. npm users: reinstall the package so the new `bin` entry lands in your `$PATH`.
 
 ## `aitcc login` now captures cookies via CDP
 

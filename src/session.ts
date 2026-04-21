@@ -40,8 +40,20 @@ function summarize(session: Session): SessionSummary {
 }
 
 export async function readSession(): Promise<Session | null> {
+  const path = sessionFilePath();
+  let raw: string;
   try {
-    const raw = await readFile(sessionFilePath(), 'utf8');
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    // Some other IO error — surface one-line diagnostic on stderr so the
+    // user can tell "permission denied" from "no session". The command
+    // still falls back to "not logged in" behaviour.
+    process.stderr.write(`warning: could not read session file at ${path}: ${code ?? 'unknown'}\n`);
+    return null;
+  }
+  try {
     const parsed = JSON.parse(raw) as Session;
     if (parsed.schemaVersion !== 1) return null;
     if (!parsed.user || typeof parsed.user.id !== 'string') return null;
@@ -51,11 +63,10 @@ export async function readSession(): Promise<Session | null> {
     }
     if (!Array.isArray(parsed.cookies)) return null;
     return parsed;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return null;
-    // Malformed / unreadable file — treat as no session so commands emit a
-    // clean "not logged in" error instead of a stack trace.
+  } catch {
+    // Malformed JSON — warn once, then fall back to "not logged in". The
+    // user can re-run `aitcc login` to replace the broken file.
+    process.stderr.write(`warning: session file at ${path} is corrupt and will be ignored\n`);
     return null;
   }
 }

@@ -103,18 +103,18 @@ export const whoamiCommand = defineCommand({
         return exitAfterFlush(ExitCode.NotAuthenticated);
       }
       if (err instanceof NetworkError) {
+        // Network failures are surfaced as hard errors — we don't silently
+        // fall back to the cache because agent-plugin callers branching on
+        // exit code would miss the degradation. Users who explicitly want
+        // the cached identity have `--offline` for that.
         if (args.json) {
           process.stdout.write(
-            `${JSON.stringify({ authenticated: true, source: 'cache', reason: 'network-error', user: session.user, capturedAt: session.capturedAt })}\n`,
+            `${JSON.stringify({ ok: false, reason: 'network-error', message: err.message })}\n`,
           );
         } else {
           process.stderr.write(
-            `Network error reaching the console API: ${err.message}. Falling back to cached identity.\n`,
+            `Network error reaching the console API: ${err.message}. Use \`aitcc whoami --offline\` for the cached identity.\n`,
           );
-          const label = session.user.displayName
-            ? `${session.user.displayName} <${session.user.email}>`
-            : session.user.email;
-          process.stdout.write(`Logged in as ${label} (cached)\n`);
         }
         return exitAfterFlush(ExitCode.NetworkError);
       }

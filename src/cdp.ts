@@ -22,13 +22,6 @@ type JsonValue =
   | readonly JsonValue[]
   | { readonly [k: string]: JsonValue };
 
-interface CdpRequest {
-  readonly id: number;
-  readonly method: string;
-  readonly params?: Record<string, JsonValue>;
-  readonly sessionId?: string;
-}
-
 interface CdpSuccess {
   readonly id: number;
   readonly result: Record<string, unknown>;
@@ -154,13 +147,12 @@ export class CdpClient {
   ): Promise<T> {
     if (this.closed) throw new CdpConnectionClosedError();
     const id = this.nextId++;
-    const req: CdpRequest = sessionId
-      ? params
-        ? { id, method, params, sessionId }
-        : { id, method, sessionId }
-      : params
-        ? { id, method, params }
-        : { id, method };
+    // Assemble as a plain record and let the JSON serialiser drop keys
+    // that are absent — matches the exactOptionalPropertyTypes contract
+    // without the triple-nested ternary.
+    const req: Record<string, unknown> = { id, method };
+    if (params) req.params = params;
+    if (sessionId) req.sessionId = sessionId;
     const waiter = new Promise<Record<string, unknown>>((resolve, reject) => {
       this.pending.set(id, { resolve, reject, method });
     });
@@ -293,15 +285,56 @@ export async function watchMainFrameNavigations(
  * `Network.getAllCookies` is scoped to a target session — Chrome rejects it
  * on the browser-level endpoint with `method not found`. Requiring sessionId
  * here surfaces that constraint at compile time.
+ *
+ * The response shape is fixed in the CDP spec, but we still validate every
+ * cookie's required string/number fields at runtime so a malformed entry
+ * (from a future Chrome change, say) fails loud instead of propagating
+ * `undefined` into the Cookie: header or the on-disk session file.
  */
 export async function getAllCookies(
   client: CdpClient,
   sessionId: string,
 ): Promise<readonly CdpCookie[]> {
-  const { cookies } = await client.send<{ cookies: CdpCookie[] }>(
-    'Network.getAllCookies',
-    {},
-    sessionId,
-  );
-  return cookies;
+  const result = await client.send<{ cookies: unknown }>('Network.getAllCookies', {}, sessionId);
+  if (!Array.isArray(result.cookies)) {
+    throw new Error('Network.getAllCookies returned a non-array payload');
+  }
+  return result.cookies.map((raw, index) => validateCookie(raw, index));
+}
+
+function validateCookie(raw: unknown, index: number): CdpCookie {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`Cookie #${index} is not an object`);
+  }
+  const c = raw as Record<string, unknown>;
+  const str = (field: string): string => {
+    const v = c[field];
+    if (typeof v !== 'string') throw new Error(`Cookie #${index}.${field} is not a string`);
+    return v;
+  };
+  const num = (field: string): number => {
+    const v = c[field];
+    if (typeof v !== 'number') throw new Error(`Cookie #${index}.${field} is not a number`);
+    return v;
+  };
+  const bool = (field: string): boolean => {
+    const v = c[field];
+    if (typeof v !== 'boolean') throw new Error(`Cookie #${index}.${field} is not a boolean`);
+    return v;
+  };
+  const cookie: CdpCookie = {
+    name: str('name'),
+    value: str('value'),
+    domain: str('domain'),
+    path: str('path'),
+    expires: num('expires'),
+    httpOnly: bool('httpOnly'),
+    secure: bool('secure'),
+    session: bool('session'),
+  };
+  const sameSite = c.sameSite;
+  if (sameSite === 'Strict' || sameSite === 'Lax' || sameSite === 'None') {
+    (cookie as { sameSite: 'Strict' | 'Lax' | 'None' }).sameSite = sameSite;
+  }
+  return cookie;
 }

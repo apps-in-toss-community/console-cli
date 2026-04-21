@@ -69,8 +69,10 @@ export class MalformedResponseError extends Error {
     readonly url: string,
     readonly status: number,
     message: string,
+    readonly bodyPreview?: string,
   ) {
-    super(`Malformed response from ${url} (HTTP ${status}): ${message}`);
+    const suffix = bodyPreview ? ` (body: ${bodyPreview})` : '';
+    super(`Malformed response from ${url} (HTTP ${status}): ${message}${suffix}`);
     this.name = 'MalformedResponseError';
   }
 }
@@ -97,17 +99,52 @@ export function domainMatches(cookieDomain: string, hostname: string): boolean {
 }
 
 /**
+ * RFC 6265 §5.1.4 path match. A cookie Path C matches a request path P iff
+ * C and P are identical, OR C is a prefix of P and either C already ends
+ * with '/' or the character in P immediately after C is '/'. Notably
+ * "/foo" does NOT match "/foobar".
+ */
+export function pathMatches(cookiePath: string, requestPath: string): boolean {
+  if (!cookiePath) return true;
+  if (cookiePath === requestPath) return true;
+  if (!requestPath.startsWith(cookiePath)) return false;
+  return cookiePath.endsWith('/') || requestPath.charAt(cookiePath.length) === '/';
+}
+
+// Cookie name/value must not contain control characters or separators that
+// would let an attacker smuggle header fields via CRLF injection. CDP
+// returns cookie values verbatim, so we defend at the serialisation edge.
+function isSafeCookiePart(s: string): boolean {
+  // Reject CR, LF, NUL, and ';' (cookie separator). Tabs and spaces are
+  // technically allowed but we block them too to avoid header confusion.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: explicit control-char filter
+  return !/[\x00-\x1f;\x7f]/.test(s);
+}
+
+/**
  * Build a `Cookie:` header value for the given URL from a captured cookie
  * set. Returns `null` when no cookies match — the caller should skip the
  * header entirely rather than emit `Cookie: ` with an empty value.
+ *
+ * Ordering follows RFC 6265 §5.4: cookies with longer paths come before
+ * cookies with shorter paths; ties break on earliest creation time, which
+ * we don't track, so we preserve capture order as a stable tiebreaker.
  */
 export function cookieHeaderFor(url: URL, cookies: readonly CdpCookie[]): string | null {
-  const matching = cookies.filter((c) => {
-    if (!domainMatches(c.domain, url.hostname)) return false;
-    if (c.path && !url.pathname.startsWith(c.path)) return false;
-    if (c.secure && url.protocol !== 'https:') return false;
-    return true;
-  });
+  const matching = cookies
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => {
+      if (!isSafeCookiePart(c.name) || !isSafeCookiePart(c.value)) return false;
+      if (!domainMatches(c.domain, url.hostname)) return false;
+      if (!pathMatches(c.path, url.pathname)) return false;
+      if (c.secure && url.protocol !== 'https:') return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const byPath = b.c.path.length - a.c.path.length;
+      return byPath !== 0 ? byPath : a.i - b.i;
+    })
+    .map(({ c }) => c);
   if (matching.length === 0) return null;
   return matching.map((c) => `${c.name}=${c.value}`).join('; ');
 }
@@ -162,11 +199,21 @@ export async function requestConsoleApi<T>(options: RequestOptions): Promise<T> 
     throw new NetworkError(url.toString(), err as Error);
   }
 
-  let parsed: TossEnvelope<T>;
+  // Read the body as text first so a parse failure can include a preview
+  // in the error. Empty responses or non-JSON WAF pages are a lot easier
+  // to diagnose when you can see the first few hundred bytes.
+  let text: string;
   try {
-    parsed = (await res.json()) as TossEnvelope<T>;
+    text = await res.text();
   } catch (err) {
     throw new MalformedResponseError(url.toString(), res.status, (err as Error).message);
+  }
+  let parsed: TossEnvelope<T>;
+  try {
+    parsed = JSON.parse(text) as TossEnvelope<T>;
+  } catch (err) {
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ').trim();
+    throw new MalformedResponseError(url.toString(), res.status, (err as Error).message, preview);
   }
 
   if (parsed.resultType === 'SUCCESS') {

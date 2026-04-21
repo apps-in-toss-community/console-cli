@@ -1,8 +1,8 @@
 // Single source of truth for the embedded CLI version.
 //
 // The value is replaced at build time:
-//   - tsdown   → via `--define AITCC_VERSION=...` (see `scripts/build-define.ts`)
-//   - bun       → via `--define AITCC_VERSION=...` (see `scripts/build-bin.ts`)
+//   - tsdown → via the `define` block in `tsdown.config.ts`
+//   - bun    → via `--define AITCC_VERSION=...` in `scripts/build-bin.ts`
 //
 // During `pnpm test` / `ts-node` execution the define isn't applied, so we fall
 // back to reading `package.json` at runtime. That path is never hit in the

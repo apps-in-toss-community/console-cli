@@ -1,7 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 as winPath } from 'node:path';
 
 // Thin cross-platform launcher for an existing Chrome/Chromium-family
 // browser with the Chrome DevTools Protocol enabled. We drive the session
@@ -69,19 +70,18 @@ export function chromeCandidates(
       '/Applications/Arc.app/Contents/MacOS/Arc',
     );
   } else if (platform === 'win32') {
-    // Build Windows-style paths explicitly. We can't use `path.join` here
-    // because Node uses the host OS's path module (so on a POSIX test
-    // runner it would produce `/`-separated strings that never exist on
-    // Windows).
+    // `path.win32.join` produces backslash-separated paths even when the
+    // test/build runner is POSIX, so the candidate list matches what
+    // Windows actually uses on disk.
     const pf = env.PROGRAMFILES ?? 'C:\\Program Files';
     const pf86 = env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)';
-    const local = env.LOCALAPPDATA ?? `${homedir() || 'C:\\'}\\AppData\\Local`;
+    const local = env.LOCALAPPDATA ?? winPath.join(homedir() || 'C:\\', 'AppData', 'Local');
     out.push(
-      `${pf}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${pf86}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${local}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${pf}\\Microsoft\\Edge\\Application\\msedge.exe`,
-      `${pf86}\\Microsoft\\Edge\\Application\\msedge.exe`,
+      winPath.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      winPath.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      winPath.join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      winPath.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      winPath.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
     );
   } else {
     // Linux and the rest: rely on PATH lookup via plain command names.
@@ -116,7 +116,10 @@ async function resolveOnPath(
     if (dir.length === 0) continue;
     const candidate = join(dir, name);
     try {
-      await fs.access(candidate);
+      // Require executable access, not just presence — otherwise a shell
+      // alias file or a build artefact sitting on PATH could be picked
+      // up as "Chrome".
+      await fs.access(candidate, fsConstants.X_OK);
       return candidate;
     } catch {
       // try next
@@ -134,7 +137,7 @@ export async function findChrome(
   for (const candidate of candidates) {
     if (isAbsolutePath(candidate, platform)) {
       try {
-        await fs.access(candidate);
+        await fs.access(candidate, fsConstants.X_OK);
         return candidate;
       } catch {
         // try next
@@ -201,6 +204,14 @@ export async function launchChrome(options: LaunchChromeOptions): Promise<Launch
   } catch (err) {
     await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
     throw new ChromeLaunchError(executable, err as Error);
+  }
+  // Don't block Node's exit on the Chrome child — dispose() kills it
+  // explicitly on the happy path; on a hard parent exit we'd rather drop
+  // Chrome than hang.
+  try {
+    child.unref();
+  } catch {
+    // best-effort
   }
 
   const dispose = async (): Promise<void> => {

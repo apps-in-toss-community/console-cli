@@ -79,6 +79,36 @@ describe('cookieHeaderFor', () => {
     expect(cookieHeaderFor(new URL('https://example.com/console/x'), scoped)).toBe('p=1');
     expect(cookieHeaderFor(new URL('https://example.com/other'), scoped)).toBeNull();
   });
+
+  it('does not over-match a cookie path against a longer request path (RFC 6265 §5.1.4)', () => {
+    // Cookie Path "/foo" must NOT match request path "/foobar" — that's a
+    // classic mis-implementation that lets a path-scoped cookie leak to an
+    // unrelated sibling path.
+    const scoped: CdpCookie[] = [
+      cookie({ name: 'p', value: '1', domain: 'example.com', path: '/foo' }),
+    ];
+    expect(cookieHeaderFor(new URL('https://example.com/foo'), scoped)).toBe('p=1');
+    expect(cookieHeaderFor(new URL('https://example.com/foo/bar'), scoped)).toBe('p=1');
+    expect(cookieHeaderFor(new URL('https://example.com/foobar'), scoped)).toBeNull();
+  });
+
+  it('sorts by longest cookie path first (RFC 6265 §5.4)', () => {
+    const both: CdpCookie[] = [
+      cookie({ name: 'a', value: '1', domain: 'example.com', path: '/' }),
+      cookie({ name: 'b', value: '2', domain: 'example.com', path: '/deep' }),
+    ];
+    expect(cookieHeaderFor(new URL('https://example.com/deep/page'), both)).toBe('b=2; a=1');
+  });
+
+  it('drops cookies with unsafe characters in name or value', () => {
+    const malicious: CdpCookie[] = [
+      cookie({ name: 'ok', value: 'fine', domain: 'example.com' }),
+      cookie({ name: 'evil', value: 'a\r\nSet-Cookie: pwned=1', domain: 'example.com' }),
+      cookie({ name: 'with-semi', value: 'x;y', domain: 'example.com' }),
+      cookie({ name: 'null\0byte', value: 'x', domain: 'example.com' }),
+    ];
+    expect(cookieHeaderFor(new URL('https://example.com/'), malicious)).toBe('ok=fine');
+  });
 });
 
 describe('requestConsoleApi', () => {
