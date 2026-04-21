@@ -14,9 +14,15 @@ import {
 // --json contract (consumed by agent-plugin):
 //
 //   keys ls [--workspace <id>]:
-//     { ok: true, workspaceId, keys: [{id, name, extra}] } exit 0
-//     { ok: false, reason: 'no-workspace-selected' }       exit 2
-//     { ok: false, reason: 'invalid-id', message }         exit 2
+//     { ok: true, workspaceId, keys: [{id, name, extra}], needsKey? } exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
+//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//
+//   `needsKey: true` is emitted when the key list is empty. The flag is
+//   there so `/ait deploy` (and similar agent-plugin skills) can bail
+//   with a friendly "issue a key first" message instead of attempting a
+//   deploy that will 401 server-side. We keep the UI-specific Korean
+//   wording out of JSON (it lives on stderr plain output only).
 //
 //   Auth/network/api failures follow the shared contract (exit 10/11/17).
 //
@@ -49,6 +55,7 @@ const lsCommand = defineCommand({
           ok: true,
           workspaceId,
           keys: keys.map((k) => ({ id: k.id, name: k.name ?? null, extra: k.extra })),
+          ...(keys.length === 0 ? { needsKey: true } : {}),
         });
         return exitAfterFlush(ExitCode.Ok);
       }
@@ -59,6 +66,7 @@ const lsCommand = defineCommand({
         );
         return exitAfterFlush(ExitCode.Ok);
       }
+      process.stdout.write(`${keys.length} API key(s) in workspace ${workspaceId}:\n`);
       for (const k of keys) {
         const name = k.name ?? '(unnamed)';
         process.stdout.write(`${k.id}\t${name}\n`);

@@ -3,9 +3,17 @@ import { exitAfterFlush } from '../flush.js';
 import { readSession, type Session, sessionPathForDiagnostics } from '../session.js';
 
 // Shared output helpers used by every session-scoped subcommand
-// (`workspace`, `app`, and the in-flight `deploy`/`logs`/`members`/`keys`).
+// (`workspace`, `app`, `members`, `keys`, and the in-flight `deploy`/`logs`).
 // Kept in one place so all commands agree on the `--json` contract — one
 // line, trailing \n, stdout for structured output, stderr for diagnostics.
+//
+// Auth / network / API failure shapes are identical across every command:
+// { ok: true, authenticated: false } (exit 10), { ok: false,
+// reason: 'network-error', message } (exit 11), { ok: false,
+// reason: 'api-error', message } (exit 17). See any per-command
+// `--json contract` block (e.g. `commands/workspace.ts`) for the full
+// exit-code legend plus the success-shape specific to that command —
+// those per-command blocks are the source of truth for success payloads.
 
 export interface NotAuthenticatedPayload {
   readonly ok: true;
@@ -71,9 +79,11 @@ export function parsePositiveInt(raw: string): number | null {
  * three common failure branches (`no session`, `invalid id`, `no workspace
  * selected`). On success, the caller gets the session + resolved id back.
  *
- * Returns `null` when it has already written output + called
- * `exitAfterFlush` — the command's `run` should simply `return` in that
- * case (citty accepts a resolved Promise-of-undefined).
+ * The return type is `Promise<... | null>` but the `null` branch is never
+ * observed at runtime: every failure path `await`s `exitAfterFlush` which
+ * calls `process.exit(...)` and doesn't return. The `| null` is a type-
+ * level handshake that forces callers to add `if (!ctx) return;`, keeping
+ * the bail-out readable.
  */
 export async function resolveWorkspaceContext(args: {
   workspace?: string | undefined;

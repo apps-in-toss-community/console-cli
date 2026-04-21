@@ -40,6 +40,13 @@ const lsCommand = defineCommand({
     try {
       const members = await fetchWorkspaceMembers(workspaceId, session.cookies);
       if (args.json) {
+        // `workspaceId` is omitted per-member (redundant with top level)
+        // and `isAdult` is intentionally dropped — it is a Korean-specific
+        // age-verification flag (성인 인증) classed as PII under local
+        // compliance. Owners see *all* co-members, not just themselves, so
+        // default-emitting it would leak every member's adult-verification
+        // bit through `--json`. No CLI automation use case justifies
+        // exposing it; if one ever arises, an opt-in flag is safer.
         emitJson({
           ok: true,
           workspaceId,
