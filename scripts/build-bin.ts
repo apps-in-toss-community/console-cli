@@ -39,9 +39,15 @@ await $`mkdir -p dist-bin`;
 
 for (const { target, out } of selected) {
   console.log(`Building ${out} (version ${version})...`);
+  // --minify + --sourcemap=none trims the userland JS payload. Most of the
+  // binary is the bundled Bun runtime (~55 MB floor) so we're not going to
+  // get dramatic savings, but every MB shaved helps the install.sh UX and
+  // GitHub Release asset size.
   await $`bun build ./src/cli.ts \
     --compile \
     --target=${target} \
+    --minify \
+    --sourcemap=none \
     --define AITCC_VERSION=${JSON.stringify(version)} \
     --outfile=dist-bin/${out}`;
 

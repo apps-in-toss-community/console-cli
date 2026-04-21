@@ -21,9 +21,13 @@ The current schema (`schemaVersion: 1`) stores CDP-native cookies in `cookies: C
 - [ ] Extend `install.sh` platform coverage — `/tmp` fallback when `$HOME` is unset, and exponential-backoff retry (up to 30 s) on 404 during the release-asset upload race. (`sha256sum` fallback, root-owned prior-install detection, and `AITCC_QUIET=1` are already implemented.)
 
 ## Performance
-(None)
+- [ ] Binary size (~60 MB on Bun 1.3.12). `--minify --sourcemap=none` is already on in `scripts/build-bin.ts` but only shaves ~2 MB — the remaining ~58 MB is the bundled Bun runtime floor. Realistic levers, from lowest to highest rewrite cost:
+  - UPX-compress the release asset (~60 MB → ~20 MB). Trade-offs: ~0.5–1 s startup decompression, some AVs flag UPX binaries, and the macOS ad-hoc signature has to be reapplied AFTER `upx` (UPX rewrites the Mach-O). Worth a dedicated experimental PR once there's demand.
+  - Switch runtime to Deno compile / Node SEA / @yao-pkg/pkg — all still 50–80 MB; not worth the migration.
+  - Rewrite in Go / Rust / Zig — 2–5 MB binary, rewrite cost is everything. 1.0+ item.
 
 ## Backlog
+- [ ] **Revisit `rcodesign` dependency** — the release pipeline downloads rcodesign 0.29.0 on every macOS job because stock `codesign` has historically rejected Bun-compiled binaries with `invalid or unsupported format for signature`. Upstream probed as of Bun 1.3.13 (2026-04-20): the regression is acknowledged in issues like [oven-sh/bun#29276](https://github.com/oven-sh/bun/issues/29276), [#29120](https://github.com/oven-sh/bun/issues/29120), [#29306](https://github.com/oven-sh/bun/issues/29306), and [#29361](https://github.com/oven-sh/bun/issues/29361) (still open). Locally on 1.3.12 + macOS 26.x, `codesign --remove-signature` followed by `codesign --sign - --force` succeeds — but only after the strip step, and robustness across all targets is unverified. Action: when a future Bun release explicitly calls out the Mach-O / LC_CODE_SIGNATURE fix in its blog, re-run the release-binaries matrix without rcodesign and delete the rcodesign install step + CLAUDE.md note.
 - [ ] OS keychain session storage (macOS Keychain / Windows Credential Manager / Secret Service) behind a flag — blocked by `bun build --compile` not bundling native deps like `keytar` cleanly across platforms. Can be added later without migrating data: move `cookies`/`origins` into the keychain, keep the rest in `session.json`.
 - [ ] `aitcc mcp` — expose the same ops as an MCP stdio server. Deferred per the umbrella MCP strategy matrix.
 - [ ] macOS binary signing / notarization — users currently `chmod +x` and `xattr -d com.apple.quarantine` if Gatekeeper complains. Proper notarization is a 1.0 item.
