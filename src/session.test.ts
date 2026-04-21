@@ -1,4 +1,5 @@
-import { mkdtempSync, statSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +12,18 @@ function freshConfigRoot(): string {
 const sample: Session = {
   schemaVersion: 1,
   user: { id: 'u_1', email: 'a@b.co', displayName: 'Tester' },
-  cookies: [],
+  cookies: [
+    {
+      name: 'auth',
+      value: 'opaque',
+      domain: 'apps-in-toss.toss.im',
+      path: '/',
+      expires: -1,
+      httpOnly: true,
+      secure: true,
+      session: true,
+    },
+  ],
   origins: [],
   capturedAt: '2026-04-19T00:00:00.000Z',
 };
@@ -56,6 +68,22 @@ describe('session file IO', () => {
     expect(first.existed).toBe(true);
     const second = await clearSession();
     expect(second.existed).toBe(false);
+    expect(await readSession()).toBeNull();
+  });
+
+  it('readSession rejects a session with malformed cookies', async () => {
+    const sessionDir = join(root, 'ait-console');
+    await mkdir(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, 'session.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        user: { id: 'u', email: 'x@y.z' },
+        cookies: 'not-an-array',
+        origins: [],
+        capturedAt: '2026-04-19T00:00:00.000Z',
+      }),
+    );
     expect(await readSession()).toBeNull();
   });
 });

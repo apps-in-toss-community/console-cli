@@ -1,10 +1,11 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { CdpCookie } from './cdp.js';
 import { configDir, sessionFilePath } from './paths.js';
 
-// Minimal, forward-compatible session shape. `cookies` and `origins` mirror
-// Playwright's `storageState` so a future `login` command can hand them
-// straight to a headless context.
+// Minimal, forward-compatible session shape. `cookies` mirrors the CDP
+// `Network.getAllCookies` payload so the login command can drop it in
+// directly and the http layer can replay it against the console API.
 //
 // SECURITY: this module is the only place that touches the secret material.
 // - Never log raw cookies / origins.
@@ -19,9 +20,11 @@ export interface SessionUser {
 export interface Session {
   schemaVersion: 1;
   user: SessionUser;
-  // Opaque Playwright storageState slots. Kept `unknown` to discourage
-  // destructuring / logging anywhere except the login/deploy code paths.
-  cookies: unknown[];
+  // CDP-native cookie list from `Network.getAllCookies`. Treat as opaque
+  // secret material outside the login/http code paths.
+  cookies: readonly CdpCookie[];
+  // Reserved for Playwright `storageState`-style `localStorage` snapshots;
+  // empty until a feature needs it.
   origins: unknown[];
   capturedAt: string; // ISO-8601
 }
@@ -46,6 +49,7 @@ export async function readSession(): Promise<Session | null> {
     if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
       return null;
     }
+    if (!Array.isArray(parsed.cookies)) return null;
     return parsed;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;

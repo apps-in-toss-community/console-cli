@@ -7,7 +7,14 @@ export const ExitCode = {
   NotAuthenticated: 10,
   NetworkError: 11,
   LoginTimeout: 12,
+  // Reserved historical slot (was LoginStateMismatch under the OAuth
+  // callback flow). Unused by the CDP login path but kept stable so the
+  // agent-plugin side doesn't need to renumber.
   LoginStateMismatch: 13,
+  LoginBrowserNotFound: 14,
+  LoginBrowserFailed: 15,
+  LoginCookieCaptureFailed: 16,
+  ApiError: 17,
   UpgradeUnavailable: 20,
   UpgradeAlreadyLatest: 21,
 } as const;
