@@ -59,42 +59,55 @@ export async function readSession(): Promise<Session | null> {
     process.stderr.write(`warning: could not read session file at ${path}: ${code ?? 'unknown'}\n`);
     return null;
   }
-  let parsed: Session;
+  let raw_parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as Session;
+    raw_parsed = JSON.parse(raw);
   } catch {
     // Malformed JSON — warn once, then fall back to "not logged in". The
     // user can re-run `aitcc login` to replace the broken file.
     process.stderr.write(`warning: session file at ${path} is corrupt and will be ignored\n`);
     return null;
   }
-  const schemaReason = validateSessionShape(parsed);
+  const schemaReason = validateSessionShape(raw_parsed);
   if (schemaReason) {
     process.stderr.write(
       `warning: session file at ${path} ignored (${schemaReason}); re-run \`aitcc login\`\n`,
     );
     return null;
   }
-  // In-memory migration from v1 to v2: we accept v1 files but upgrade the
-  // version tag so downstream code sees a uniform shape. The file itself is
-  // only rewritten on the next explicit write (login, workspace use, etc).
-  if ((parsed.schemaVersion as number) === 1) {
-    parsed = { ...parsed, schemaVersion: 2 };
+  // Post-validation: the shape is trusted. `schemaVersion` is now 1 or 2;
+  // v1 files are transparently upgraded to v2 in memory. We best-effort
+  // rewrite the file so long-lived v1-on-disk sessions eventually migrate
+  // without requiring the user to run a write-shaped command; failure to
+  // rewrite is non-fatal because the in-memory shape is already correct.
+  // We await the rewrite (rather than fire-and-forget) so subsequent reads
+  // and tests see a consistent on-disk state.
+  const validated = raw_parsed as { schemaVersion: 1 | 2 } & Omit<Session, 'schemaVersion'>;
+  if (validated.schemaVersion === 1) {
+    const upgraded: Session = { ...validated, schemaVersion: 2 };
+    try {
+      await writeSession(upgraded);
+    } catch {
+      // Not fatal — next write will persist v2.
+    }
+    return upgraded;
   }
-  return parsed;
+  return validated as Session;
 }
 
 // v1 → v2 migration: v1 files are still valid, we just treat the absent
 // `currentWorkspaceId` as "no workspace selected yet". The next write (e.g.
 // from `workspace use`) bumps the stored schemaVersion. The validator input
-// is deliberately loose (`unknown`-ish) so we can inspect old-schema files
-// without the TS type narrowing away the v1 branch.
-function validateSessionShape(parsed: {
-  schemaVersion?: unknown;
-  user?: { id?: unknown; email?: unknown; displayName?: unknown };
-  cookies?: unknown;
-  currentWorkspaceId?: unknown;
-}): string | null {
+// is `unknown` so we can inspect raw JSON without the TS type narrowing
+// away the v1 branch.
+function validateSessionShape(input: unknown): string | null {
+  if (input === null || typeof input !== 'object') return 'root is not an object';
+  const parsed = input as {
+    schemaVersion?: unknown;
+    user?: { id?: unknown; email?: unknown; displayName?: unknown };
+    cookies?: unknown;
+    currentWorkspaceId?: unknown;
+  };
   if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) {
     return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
   }

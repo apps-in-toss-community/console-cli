@@ -29,7 +29,9 @@ export async function fetchWorkspaceDetail(
   cookies: readonly CdpCookie[],
   opts: { fetchImpl?: FetchLike } = {},
 ): Promise<WorkspaceDetail> {
-  const url = `${WORKSPACES_BASE}/workspaces/${encodeURIComponent(String(workspaceId))}`;
+  // workspaceId is a number at compile time — `encodeURIComponent` on the
+  // stringified form would be a no-op, so we inline the interpolation.
+  const url = `${WORKSPACES_BASE}/workspaces/${workspaceId}`;
   const raw = await requestConsoleApi<Record<string, unknown>>({
     url,
     cookies,
@@ -37,7 +39,7 @@ export async function fetchWorkspaceDetail(
   });
   const id = raw.id;
   const name = raw.name;
-  if (typeof id !== 'number' || typeof name !== 'string') {
+  if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0 || typeof name !== 'string') {
     throw new Error(`Unexpected workspace detail shape for id=${workspaceId}`);
   }
   const { id: _id, name: _name, ...extra } = raw;

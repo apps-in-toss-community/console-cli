@@ -24,8 +24,10 @@ Apps in Toss 콘솔을 Playwright로 로그인 후 훑어 확인한 API 표면. 
 | GET | `workspaces/:id/members/me` | 현재 유저의 워크스페이스 역할(OWNER/…) |
 | GET | `workspaces/:id/api-keys` | 워크스페이스 API 키 목록 |
 | GET | `workspaces/:id/configs` | 워크스페이스 설정 |
-| GET | `workspaces/:id/mini-app` | 미니앱 목록 |
-| GET | `workspaces/:id/mini-apps/review-status` | 미니앱 심사 상태 요약 |
+| GET | `workspaces/:id/mini-app` | 미니앱 목록 (**단수** `mini-app`) |
+| GET | `workspaces/:id/mini-apps/review-status` | 미니앱 심사 상태 요약 (**복수** `mini-apps`) |
+
+> **주의**: `mini-app`(단수)와 `mini-apps`(복수)가 같은 API 안에 공존한다. 오타가 아니라 콘솔 API가 실제로 그렇게 설계됨. 하나를 다른 쪽에 맞춰 "고치지" 말 것.
 | GET | `workspaces/:id/console-workspace-terms/:termType/skip-permission` | 기능별 약관 건너뛰기 권한 (`BIZ_WORKSPACE`, `IAA`, `IAP`, `TOSS_LOGIN`, `TOSS_PROMOTION_MONEY`) |
 
 ### Mini-app detail (추가 탐색 필요)
@@ -85,15 +87,21 @@ Apps in Toss 콘솔을 Playwright로 로그인 후 훑어 확인한 API 표면. 
 ## Low Priority
 
 - [ ] **Workspace init wizard** — `aitcc init` 같은 명령으로 sdk-example에서 확인한 등록 flow를 CLI로 자동화. API가 확정된 뒤 별도 마일스톤.
+- [ ] **Workspace/app/members 명령 subprocess 테스트** — 현재 각 command의 `--json` 계약은 코드 주석과 사람 눈 외엔 보증이 없다. `vitest` harness에서 `cli.mjs`를 spawn해 `workspace ls --json`, `workspace use <bad-id> --json`, `workspace show --json` 등을 돌려 stdout이 single-line JSON + trailing `\n`인지 구조적으로 검증. 쉬운 follow-up이지만 당장 blocking은 아니라 deferred.
 - [ ] Self-host the CLI docs (alongside the `docs` repo or as a subpath).
 - [ ] Extend `install.sh` platform coverage — `/tmp` fallback when `$HOME` is unset, and exponential-backoff retry (up to 30 s) on 404 during the release-asset upload race. (`sha256sum` fallback, root-owned prior-install detection, and `AITCC_QUIET=1` are already implemented.)
 - [ ] Clean up stale `.tmp` siblings under `$XDG_CACHE_HOME/aitcc/` left by a SIGKILL/power-loss crash between `writeFile(tmp)` and `rename(tmp, final)` in `update-check.ts`. Each file is <200 bytes so accumulation is cosmetic, but a "drop `.tmp` older than 7 days" sweep at the top of `writeCache` would be a one-screen fix. Only do this if a user reports it or if we start writing larger cached bodies.
 
 ## Notes on session schema
 
-The current schema (`schemaVersion: 1`) stores CDP-native cookies in `cookies: CdpCookie[]`. Pre-CDP sessions written by the old OAuth-callback scaffold had `cookies: []` and no auth material, so they read back as "session exists but any live API call 401s" — the user is prompted to re-run `login`. Pre-1.0, no back-fill is needed; on `1.0` we'll bump `schemaVersion` if the shape ever changes.
+The current schema is **`schemaVersion: 2`**. Shape:
 
-Workspace context(`currentWorkspaceId`)는 schemaVersion 2로 올릴 때 추가한다. 마이그레이션은 "필드 없으면 처음 `workspace use` 호출 시 생성" 한 줄이면 충분.
+- `user`, `cookies`(CDP-native `Network.getAllCookies` payload), `origins`, `capturedAt` — same as v1.
+- `currentWorkspaceId?: number` — the workspace selected by `aitcc workspace use <id>`. Optional; unset means "no workspace selected yet" and multi-tenant commands must either accept `--workspace <id>` or error out.
+
+v1 files are transparently accepted (`readSession` upgrades them to v2 in memory and best-effort rewrites the file). The rewrite is non-fatal: if it fails, the in-memory shape is correct and the next explicit write persists v2.
+
+Pre-CDP sessions written by the old OAuth-callback scaffold had `cookies: []` and no auth material, so they read back as "session exists but any live API call 401s" — the user is prompted to re-run `login`. On `1.0` we'll bump `schemaVersion` if the shape changes further.
 
 ## Performance
 
