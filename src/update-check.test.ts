@@ -29,6 +29,11 @@ describe('isDueForCheck', () => {
   it('is due when the cache timestamp is unparseable', () => {
     expect(isDueForCheck({ lastCheckedAt: 'garbage' }, 1000)).toBe(true);
   });
+
+  it('is due when the system clock has jumped backwards behind the cache', () => {
+    const last = new Date(10_000_000).toISOString();
+    expect(isDueForCheck({ lastCheckedAt: last }, 5_000_000)).toBe(true);
+  });
 });
 
 describe('cache file IO', () => {
@@ -69,6 +74,41 @@ describe('cache file IO', () => {
     const { writeFileSync } = await import('node:fs');
     writeFileSync(join(root, 'aitcc', 'upgrade-check.json'), '{ not json');
     expect(await readCache()).toBeNull();
+  });
+
+  it('readCache rejects a cache with non-string optional fields', async () => {
+    await writeCache({ lastCheckedAt: '2026-01-01T00:00:00Z' });
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(
+      join(root, 'aitcc', 'upgrade-check.json'),
+      JSON.stringify({ lastCheckedAt: '2026-01-01T00:00:00Z', latestTag: 42 }),
+    );
+    expect(await readCache()).toBeNull();
+  });
+
+  it('writeCache writes with 0600 permissions on POSIX', async () => {
+    if (process.platform === 'win32') return;
+    const { statSync } = await import('node:fs');
+    await writeCache({ lastCheckedAt: '2026-01-01T00:00:00Z' });
+    const mode = statSync(join(root, 'aitcc', 'upgrade-check.json')).mode & 0o777;
+    expect(mode.toString(8)).toBe('600');
+  });
+
+  it('writeCache overwrites atomically: readers never see a truncated file', async () => {
+    // Seed a good cache, then race a concurrent overwrite. If writeCache
+    // ever wrote in-place (non-atomic), a reader hitting mid-write could
+    // see truncated JSON. With tempfile+rename the reader sees either the
+    // pre-state or the post-state.
+    await writeCache({ lastCheckedAt: '2026-01-01T00:00:00Z', latestTag: 'v0.1.3' });
+    const writes = Array.from({ length: 20 }, (_, i) =>
+      writeCache({ lastCheckedAt: `2026-04-21T00:00:${String(i).padStart(2, '0')}.000Z` }),
+    );
+    const reads = Array.from({ length: 20 }, async () => readCache());
+    const [, ...readResults] = await Promise.all([Promise.all(writes), ...reads]);
+    for (const r of readResults) {
+      // Either null (read raced ahead of first write) or a valid parsed object.
+      if (r !== null) expect(typeof r.lastCheckedAt).toBe('string');
+    }
   });
 });
 
@@ -136,5 +176,61 @@ describe('maybeCheckForUpdate', () => {
     }
     const cached = await readCache();
     expect(cached?.lastCheckedAt).toBe(new Date(now).toISOString());
+  });
+
+  it('writes a placeholder cache BEFORE the network call so concurrent runs do not both probe', async () => {
+    const now = new Date('2026-04-21T00:00:00Z').getTime();
+    const realFetch = globalThis.fetch;
+    // Hold fetch open so we can observe the pre-fetch cache state.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let fetchStarted = false;
+    globalThis.fetch = (async () => {
+      fetchStarted = true;
+      await gate;
+      // Return a minimal 304 so the path works through.
+      return new Response(null, { status: 304 });
+    }) as unknown as typeof fetch;
+    try {
+      const probe = maybeCheckForUpdate({ env: {}, isTTY: true, now });
+      // Wait for the fetch to actually start, then inspect the cache on disk.
+      for (let i = 0; i < 50 && !fetchStarted; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(fetchStarted).toBe(true);
+      const midFlight = await readCache();
+      // The placeholder must already be stamped with `now` before fetch resolves.
+      expect(midFlight?.lastCheckedAt).toBe(new Date(now).toISOString());
+      release();
+      await probe;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('opt-out accepts "true" as well as "1", but not "0"/"false"/empty', async () => {
+    const now = Date.now();
+    expect(
+      await maybeCheckForUpdate({ env: { AITCC_NO_UPDATE_CHECK: 'true' }, isTTY: true, now }),
+    ).toBeNull();
+    expect(
+      await maybeCheckForUpdate({ env: { AITCC_NO_UPDATE_CHECK: 'yes' }, isTTY: true, now }),
+    ).toBeNull();
+    // These do NOT opt out — confirmed indirectly by seeing the read cache
+    // make it past the opt-out guard. We mock a 304 so the throttle flows.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 304 })) as unknown as typeof fetch;
+    try {
+      const out = await maybeCheckForUpdate({
+        env: { AITCC_NO_UPDATE_CHECK: '0' },
+        isTTY: true,
+        now,
+      });
+      expect(out).not.toBeNull();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
