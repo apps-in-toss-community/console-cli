@@ -26,9 +26,9 @@ Apps in Toss 콘솔을 Playwright로 로그인 후 훑어 확인한 API 표면. 
 | GET | `workspaces/:id/configs` | 워크스페이스 설정 |
 | GET | `workspaces/:id/mini-app` | 미니앱 목록 (**단수** `mini-app`) |
 | GET | `workspaces/:id/mini-apps/review-status` | 미니앱 심사 상태 요약 (**복수** `mini-apps`) |
+| GET | `workspaces/:id/console-workspace-terms/:termType/skip-permission` | 기능별 약관 건너뛰기 권한 (`BIZ_WORKSPACE`, `IAA`, `IAP`, `TOSS_LOGIN`, `TOSS_PROMOTION_MONEY`) |
 
 > **주의**: `mini-app`(단수)와 `mini-apps`(복수)가 같은 API 안에 공존한다. 오타가 아니라 콘솔 API가 실제로 그렇게 설계됨. 하나를 다른 쪽에 맞춰 "고치지" 말 것.
-| GET | `workspaces/:id/console-workspace-terms/:termType/skip-permission` | 기능별 약관 건너뛰기 권한 (`BIZ_WORKSPACE`, `IAA`, `IAP`, `TOSS_LOGIN`, `TOSS_PROMOTION_MONEY`) |
 
 ### Mini-app detail (추가 탐색 필요)
 

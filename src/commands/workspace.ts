@@ -37,6 +37,9 @@ function emitJson(payload: unknown): void {
 
 function emitNotAuthenticated(json: boolean, reason?: 'session-expired'): void {
   if (json) {
+    // `exactOptionalPropertyTypes` forbids `reason: undefined`, so the key
+    // has to be omitted entirely when we don't have a value — hence the
+    // branch rather than a single object literal.
     const payload: NotAuthenticatedPayload = reason
       ? { ok: true, authenticated: false, reason }
       : { ok: true, authenticated: false };
@@ -192,7 +195,10 @@ const useCommand = defineCommand({
       // `setCurrentWorkspaceId` returns null only if the session disappeared
       // between our `readSession` above and here (e.g. concurrent logout).
       // Surface that as "not logged in" for consistency with other commands
-      // instead of silently pretending the write landed.
+      // instead of silently pretending the write landed. For v1 sessions
+      // this is a double-read (readSession migrates, then this helper reads
+      // again before writing) — benign, and preferable to threading the
+      // already-loaded session through a new parameter just to save one IO.
       const updated = await setCurrentWorkspaceId(parsed);
       if (updated === null) {
         emitNotAuthenticated(args.json);

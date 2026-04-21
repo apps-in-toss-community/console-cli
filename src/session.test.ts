@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,11 +123,12 @@ describe('session file IO', () => {
     }
   });
 
-  it('readSession accepts a v1 file and reports it as v2 in memory', async () => {
+  it('readSession accepts a v1 file, reports v2 in memory, and rewrites v2 on disk', async () => {
     const sessionDir = join(root, 'aitcc');
     await mkdir(sessionDir, { recursive: true });
+    const filePath = join(sessionDir, 'session.json');
     writeFileSync(
-      join(sessionDir, 'session.json'),
+      filePath,
       JSON.stringify({
         schemaVersion: 1,
         user: { id: 'u', email: 'x@y.z' },
@@ -140,6 +141,34 @@ describe('session file IO', () => {
     expect(got).not.toBeNull();
     expect(got?.schemaVersion).toBe(2);
     expect(got?.currentWorkspaceId).toBeUndefined();
+    // On-disk rewrite: the file should now parse as v2 without needing
+    // another migration pass.
+    const onDisk = JSON.parse(readFileSync(filePath, 'utf8')) as { schemaVersion: number };
+    expect(onDisk.schemaVersion).toBe(2);
+  });
+
+  it('readSession rejects currentWorkspaceId of 0 or negative', async () => {
+    for (const bad of [0, -1]) {
+      const sessionDir = join(root, 'aitcc');
+      await mkdir(sessionDir, { recursive: true });
+      writeFileSync(
+        join(sessionDir, 'session.json'),
+        JSON.stringify({
+          schemaVersion: 2,
+          user: { id: 'u', email: 'x@y.z' },
+          cookies: [],
+          origins: [],
+          capturedAt: '2026-04-19T00:00:00.000Z',
+          currentWorkspaceId: bad,
+        }),
+      );
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+      try {
+        expect(await readSession()).toBeNull();
+      } finally {
+        spy.mockRestore();
+      }
+    }
   });
 
   it('readSession rejects a non-integer currentWorkspaceId', async () => {
