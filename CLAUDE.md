@@ -189,8 +189,17 @@ pnpm format         # biome format --write .
 
 ## Open questions
 
-- macOS 바이너리 서명: **0.1.x에서 ad-hoc 서명 적용**. Apple stock `codesign`은 Bun-compiled 바이너리의 비표준 `LC_CODE_SIGNATURE` stub 때문에 `invalid or unsupported format for signature`로 거부하므로, **`rcodesign`** (https://github.com/indygreg/apple-platform-rs)을 사용. `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서: (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명. 워크플로(`release-binaries.yml`)의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드. `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도(이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과). Bun 1.3.13+ stable이 root cause를 fix하므로, 그때 setup-bun을 pin하고 rcodesign 의존성을 제거. 정식 Apple notarization (Developer Program $99/년)은 1.0 item.
 - `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
+
+## macOS 바이너리 서명 (현행)
+
+Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple stock `codesign`이 `invalid or unsupported format for signature`로 거부하는 경우가 있다. `0.1.x`에서는 **ad-hoc 서명**을 적용하며, CI는 `rcodesign` (https://github.com/indygreg/apple-platform-rs) 을 사용한다.
+
+- `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서: (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명.
+- `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드.
+- `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도 (이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과).
+
+정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성을 제거할 수 있으나 현재(1.3.13 기준)는 미확인 — TODO.md의 backlog에 추적.
 
 ## Status
 
