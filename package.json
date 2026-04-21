@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "bin": {
-    "ait-console": "./dist/cli.mjs"
+    "aitcc": "./dist/cli.mjs"
   },
   "main": "./dist/cli.mjs",
   "types": "./dist/cli.d.mts",

@@ -19,17 +19,17 @@
 
 ### 동작 방식
 
-1. 최초 실행 시 브라우저를 열어 사용자가 직접 로그인.
-2. 세션 쿠키/스토리지를 로컬 XDG 경로(`$XDG_CONFIG_HOME/ait-console/session.json`, fallback `~/.config/ait-console/session.json`)에 `0600`으로 저장.
-3. 이후 명령은 headless Playwright로 저장된 세션을 로드해 실행.
-4. `ait-console whoami | upgrade`가 MVP. `login | deploy | logs | status`는 TODO.md 참고.
+1. 최초 실행 시 사용자의 시스템 Chrome(또는 Chromium-family)을 CDP로 spawn해 사용자가 직접 로그인.
+2. 로그인 완료 감지 즉시 `Network.getAllCookies`로 HttpOnly 포함 세션 쿠키 전체를 로컬 XDG 경로(`$XDG_CONFIG_HOME/aitcc/session.json`, fallback `~/.config/aitcc/session.json`)에 `0600`으로 저장.
+3. 이후 명령은 저장된 쿠키를 `Cookie:` 헤더로 직렬화해 `fetch()`로 콘솔 API 직접 호출. Playwright 등 브라우저 재기동 없음.
+4. `aitcc login | logout | whoami | upgrade`가 현재 MVP. `deploy | logs | status`는 TODO.md 참고.
 5. `agent-plugin`이 이 CLI를 Bash로 호출 (MCP wrapping 없음).
 
 ### 보안 고려
 
-- 세션 토큰(쿠키/origins)은 **절대 로그/stdout에 출력 금지**. `--verbose`도 민감 정보 redact.
-- `whoami`가 노출하는 건 `user.email` / `displayName`만.
-- Playwright 스크린샷은 기본 off (디버그 시 opt-in).
+- 세션 쿠키는 **절대 로그/stdout에 출력 금지**. `--verbose`도 민감 정보 redact.
+- `whoami` 라이브 호출이 노출하는 건 `user.name` / `email` / `role` / `workspaces`뿐.
+- Chrome은 ephemeral `--user-data-dir`에서 spawn되어 사용자의 일상 브라우저 프로필과 완전히 격리. 세션 캡처 후 temp 디렉토리 삭제.
 
 ## 아키텍처
 
@@ -41,12 +41,12 @@ MVP (0.1.x scaffold에서 다룬 범위):
 
 | Command | Status | Purpose |
 | --- | --- | --- |
-| `ait-console --version` | ✅ | build time에 `package.json`의 `version`을 `AIT_CONSOLE_VERSION` define으로 주입. |
-| `ait-console --help` | ✅ | `citty` 자동 생성. |
-| `ait-console whoami` | ✅ | 로컬 세션에서 현재 로그인 유저 표시. 세션 없으면 non-zero exit. 세션 모듈의 첫 실제 consumer. |
-| `ait-console login` | ✅ (scaffold) | `127.0.0.1` ephemeral 포트에 `node:http` 콜백 서버를 띄우고, 랜덤 `state`로 CSRF 방지, 5분 timeout 후 세션을 `0600`으로 저장. **실제 Toss OAuth URL은 discovery 전** — `AIT_CONSOLE_OAUTH_URL` 환경변수로 override하지 않으면 usage error. |
-| `ait-console logout` | ✅ | `session.json` 삭제. 파일이 없어도 no-op (exit 0). |
-| `ait-console upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
+| `aitcc --version` | ✅ | build time에 `package.json`의 `version`을 `AITCC_VERSION` define으로 주입. |
+| `aitcc --help` | ✅ | `citty` 자동 생성. |
+| `aitcc whoami` | ✅ | 세션 쿠키로 콘솔 `members/me/user-info`를 호출해 라이브 데이터 반환. `--offline`로 캐시된 정체만 읽기. 세션 없으면 exit 10. |
+| `aitcc login` | ✅ | CDP로 시스템 Chrome을 격리된 `--user-data-dir`에 띄우고 Toss 비즈니스 sign-in URL로 이동. 메인 프레임이 `apps-in-toss.toss.im/workspace*`에 도달하면 `Network.getAllCookies`로 HttpOnly 포함 모든 쿠키 덤프, 세션 저장. |
+| `aitcc logout` | ✅ | `session.json` 삭제. 파일이 없어도 no-op (exit 0). |
+| `aitcc upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
@@ -65,7 +65,7 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `l
 
 ### Session storage
 
-- **위치**: XDG Base Directory. `$XDG_CONFIG_HOME/ait-console/session.json` → fallback `~/.config/ait-console/session.json` (Linux/macOS), `%APPDATA%\ait-console\session.json` (Windows).
+- **위치**: XDG Base Directory. `$XDG_CONFIG_HOME/aitcc/session.json` → fallback `~/.config/aitcc/session.json` (Linux/macOS), `%APPDATA%\aitcc\session.json` (Windows).
 - **권한**: 디렉토리 `0700`, 파일 `0600`. `fs.mkdir({ mode: 0o700 })` + `fs.writeFile({ mode: 0o600 })`. Windows에선 mode 호출이 best-effort no-op, 유저 프로필 ACL에 의존.
 - **Shape**: `schemaVersion: 1`, `user`, `cookies`, `origins`, `capturedAt`. `cookies`/`origins`은 Playwright `storageState` 그대로.
 
@@ -77,22 +77,32 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `l
 - XDG 디렉토리 안 `0600` 파일은 첫 릴리즈의 **pragmatic floor**. `gh`/`gcloud`/`firebase` CLI 모두 과거에 거쳐 온 형태.
 - **나중에 keychain으로 마이그레이션이 쉬움**: `cookies`/`origins`만 keychain으로 옮기고 나머지는 `session.json`에 남긴다. 기존 데이터 migration 없음. Backlog 아이템.
 
-### Login 선택 근거 (localhost callback vs copy-paste)
+### Login 선택 근거 (CDP capture vs OAuth callback server)
 
-**결정: localhost callback server + PKCE-style one-shot code capture.** (0.1.x 스캐폴드에 실제 구현됨, 단 OAuth 엔드포인트는 placeholder.)
+**결정: CDP로 시스템 Chrome을 spawn해 사용자 로그인 완료 감지 후 쿠키 덤프.** 초기 스캐폴드는 localhost OAuth callback server였는데 다음 이유로 폐기됨:
 
-- `login`은 `server.listen(0, '127.0.0.1', ...)`으로 ephemeral port에 `node:http` 서버를 띄우고, Toss OAuth URL을 `redirect_uri=http://127.0.0.1:<port>/callback`과 random `state` (32 bytes base64url)로 열어 callback을 기다린 뒤 `state` 검증 → 서버 종료 → 세션 기록.
-- **Copy-paste code를 쓰지 않는 이유**: UX가 실제로 더 나쁨(focus 잃음, 잘못된 토큰 붙여넣기). 보안 경계가 사용자가 code를 복사한 앱으로 옮겨감. `127.0.0.1` localhost callback은 `gh auth login --web`, `gcloud auth login`, `firebase login`이 모두 쓰는 바로 그 패턴이고, 시크릿을 **single-use redirect**로 좁힌다.
-- **agent-plugin 호환성**: `login`은 agent-plugin skill이 **절대** 호출하지 않는다. plugin은 `whoami --json`이 세션 없음을 보이면 deploy를 거부하고, 사용자에게 터미널에서 직접 `ait-console login`을 돌리라고 안내한다. 인터랙티브 단계를 agent 바깥으로 뺀다.
+- 공개된 `client_id=4uktpjgqd0cp9txybqzuxc2y6w0cuupb`에 등록된 redirect_uri는 production `apps-in-toss.toss.im/sign-up` 고정. `http://127.0.0.1:<port>/callback`은 허용되지 않음.
+- 인증 쿠키는 **HttpOnly**라 브라우저 JS로 capture 불가능. 반드시 CDP 레벨에서 `Network.getAllCookies`를 호출해야 함.
+- Playwright 번들(~300 MB)을 끌어오면 `bun build --compile` 사이즈가 무너짐. 대신 시스템에 이미 설치된 Chrome/Edge/Chromium을 spawn해 CDP로 드라이빙함으로써 **바이너리에 브라우저가 포함되지 않는다**.
 
-#### 구현 세부 결정 (0.1.x scaffold)
+흐름:
+1. `src/chrome.ts`가 OS별 Chrome 경로(override: `AITCC_BROWSER`)를 찾아 ephemeral `--user-data-dir`로 spawn. `--remote-debugging-port=0`으로 OS가 고른 포트를 stderr의 `DevTools listening on ws://…` 배너에서 파싱.
+2. `src/cdp.ts`의 minimal CDP client(순수 WHATWG WebSocket, 외부 의존 없음)가 `Target.attachToTarget` → `Page.frameNavigated`를 구독.
+3. 메인 프레임 URL이 `apps-in-toss.toss.im/workspace[/*]`에 도달하면 login 완료로 간주.
+4. `Network.getAllCookies`로 브라우저 세션의 쿠키(HttpOnly 포함) 전체 덤프.
+5. `src/api/me.ts`의 `fetchConsoleMemberUserInfo`가 쿠키로 `/console/api-public/v3/appsintossconsole/members/me/user-info` 호출해 실 사용자 정보를 확보 — 쿠키 liveness check 겸 whoami 기본값 채움.
+6. Chrome kill + user-data-dir 삭제.
 
-- **포트 선택**: 기본은 `listen(0)` — OS-assigned ephemeral. `StartCallbackServerOptions.preferredPort`가 지정되면 한 번 시도하고, `EADDRINUSE`면 곧바로 0으로 fallback. 고정 포트 range(예: 8765–8775)를 쓰지 않는 이유 — 로컬 앱 하나가 이미 점유했을 때 user에게 추가 원인을 주기만 함. 공격자가 localhost에서 경쟁을 노려도 `state` 미일치로 막힘.
-- **Timeout**: 기본 5분 (`--timeout <sec>`로 override). 타이머는 `unref()` 처리해서 테스트·CI가 행에 걸리지 않게.
-- **브라우저 자동 열기**: `open` npm 패키지 의존성 없이 플랫폼별 `spawn`으로 직접 실행 — macOS `open`, Windows `cmd /c start "" <url>`, 그 외 `xdg-open`. 실패하면 silent fallback으로 URL을 stdout에 찍고, 사용자는 직접 복사. `AIT_CONSOLE_NO_BROWSER=1` 또는 `--no-browser`로 강제 off (CI·테스트·headless 환경에서 사용).
-- **Toss OAuth 엔드포인트 부재 대응**: `AIT_CONSOLE_OAUTH_URL`이 없으면 login은 `TBD://...` placeholder를 쓰지 않고 **usage error(exit 2)로 즉시 실패**. 선택적으로 `AIT_CONSOLE_OAUTH_CLIENT_ID`, `AIT_CONSOLE_OAUTH_SCOPE`도 override 가능. 실제 URL이 discovery되면 코드에서 default 상수를 업데이트하고 env-var는 escape hatch로 유지.
-- **세션 shape (임시)**: OAuth 엔드포인트가 확정되기 전까지는 `user_id` / `email` / `display_name`를 callback query string에서 그대로 받아 `session.json`에 기록. Playwright storageState capture(`cookies`/`origins`)은 `deploy` 구현과 함께 채워질 예정이며, 그때 `login` 내부도 token-exchange POST로 교체한다.
-- **Logout**: 세션 파일을 `unlink`. `ENOENT`면 "no active session"으로 exit 0 — idempotent. Agent plugin이 `logout`을 여러 번 호출해도 안전.
+agent-plugin 호환성은 동일: 인터랙티브 login은 skill 안에서 절대 호출하지 않고, `whoami --json`이 `authenticated: false`면 사용자에게 `aitcc login`을 직접 돌리라고 안내한다.
+
+### 구현 세부
+
+- **Chrome 탐지**: `chromeCandidates()`가 `$AITCC_BROWSER` → OS별 기본 경로(macOS는 `/Applications/*.app/Contents/MacOS/...`, Windows는 `PROGRAMFILES*/Google/Chrome/Application/chrome.exe`, Linux는 PATH 상의 `google-chrome`/`chromium`/`microsoft-edge`) 순으로 시도. 전부 실패 시 `ChromeNotFoundError` → exit 14.
+- **WebSocket 의존성 없음**: Node 22+ / Bun 둘 다 `globalThis.WebSocket`을 제공하므로 `ws` 패키지는 쓰지 않는다. `bun build --compile`에 native peer 문제 없이 들어간다.
+- **Toss 공용 envelope**: `src/api/http.ts`가 `{ resultType: 'SUCCESS'|'FAIL', success, error? }` 래퍼를 unwrap하고, 실패는 `TossApiError`(401 or `errorCode: '4010'`이면 `isAuthError === true`)로 변환.
+- **Timeout**: `--timeout <sec>`(기본 300). 내부 타이머는 `unref()` 처리.
+- **세션 shape**: `{ schemaVersion: 1, user: { id, email, displayName }, cookies: CdpCookie[], origins: [], capturedAt }`. `cookies`는 CDP `Network.getAllCookies` 응답 그대로 저장해 http 레이어가 `Cookie:` 헤더로 그대로 직렬화.
+- **Logout**: 세션 파일을 `unlink`. `ENOENT`면 "no active session"으로 exit 0 — idempotent.
 
 ## 기술 스택
 
@@ -111,8 +121,8 @@ Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `l
 
 - **Dev 의존성 관리**: pnpm 10.33.0. `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 - **Node dist (npm 경로)**: `tsdown`으로 `dist/cli.mjs` + `.d.mts` 산출. `@ait-co/console-cli` npm 패키지가 이걸 싣는다.
-- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/ait-console-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 아직 partial이라 제외).
-- **버전 임베딩**: build-time define `AIT_CONSOLE_VERSION`이 `package.json`의 `version`을 읽어 tsdown / Bun 양쪽 경로에 주입.
+- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/aitcc-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 아직 partial이라 제외).
+- **버전 임베딩**: build-time define `AITCC_VERSION`이 `package.json`의 `version`을 읽어 tsdown / Bun 양쪽 경로에 주입.
 
 ### 명령어
 
@@ -131,7 +141,7 @@ pnpm format         # biome format --write .
 
 사용자 설치 경로 3가지:
 
-1. **GitHub Releases 바이너리** (primary) — `install.sh` one-liner로 플랫폼 감지 + 다운로드. Node 불필요. `$HOME/.local/bin/ait-console` (0755)에 설치. `AIT_CONSOLE_VERSION=v0.1.1`로 pin 가능.
+1. **GitHub Releases 바이너리** (primary) — `install.sh` one-liner로 플랫폼 감지 + 다운로드. Node 불필요. `$HOME/.local/bin/aitcc` (0755)에 설치. `AITCC_VERSION=v0.1.1`로 pin 가능.
 2. **npm global** — `npm i -g @ait-co/console-cli`. `dist/cli.mjs`를 싣고 Node 24+ 런타임 필요. `agent-plugin`이 이 경로를 사용(개발 환경엔 보통 Node가 이미 있음).
 3. **Homebrew tap** — deferred, 0.1.x 범위 밖.
 
@@ -141,7 +151,7 @@ pnpm format         # biome format --write .
 
 두 경로는 Changesets로 동기화 — version bump는 한 번, `npm publish`와 바이너리 release가 같은 tag에서 돈다.
 
-### Self-update (`ait-console upgrade`)
+### Self-update (`aitcc upgrade`)
 
 알고리즘:
 1. `GET https://api.github.com/repos/apps-in-toss-community/console-cli/releases/latest` (공개 repo라 인증 불필요; 익명 rate limit 회피를 위해 `GITHUB_TOKEN` env 있으면 존중).
@@ -154,10 +164,10 @@ pnpm format         # biome format --write .
 
 ### `install.sh`
 
-- `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `ait-console-<os>-<arch>`.
+- `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `aitcc-<os>-<arch>`.
 - Download: `releases/latest/download/<name>` + `SHA256SUMS`. `SHA256SUMS`에서 바이너리 이름에 해당하는 라인만 필터링 후 `shasum -a 256 -c` 또는 `sha256sum -c`로 검증 (둘 중 사용 가능한 쪽).
-- 설치 위치: `${AIT_CONSOLE_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v ait-console`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
-- 엣지 케이스 (TODO.md 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AIT_CONSOLE_QUIET=1`.
+- 설치 위치: `${AITCC_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v aitcc`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
+- 엣지 케이스 (TODO.md 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AITCC_QUIET=1`.
 
 ### Release flow (Type A per umbrella)
 
@@ -168,7 +178,7 @@ pnpm format         # biome format --write .
   2. `npm publish --provenance --access public`.
   3. GitHub Release 생성, tag `@ait-co/console-cli@x.y.z`.
 - **이어서** `release-binaries.yml`이 Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 파일 생성 → `gh release upload`로 방금 만든 release에 asset 붙임.
-- `install.sh`는 `releases/latest`를 읽으므로, `AIT_CONSOLE_VERSION`으로 pin하지 않으면 항상 최신.
+- `install.sh`는 `releases/latest`를 읽으므로, `AITCC_VERSION`으로 pin하지 않으면 항상 최신.
 
 ### Release policy
 
@@ -179,12 +189,11 @@ pnpm format         # biome format --write .
 
 ## Open questions
 
-- `login`이 실제로 사용자를 어느 페이지에 떨구는가? 개발자 콘솔 로그인 페이지 URL과 OAuth scope는 아직 discovery 중. 그때까지 `login`은 `AIT_CONSOLE_OAUTH_URL` env-var 없이 실행하면 usage error로 실패하도록 해두었다 (콜백 서버/`state`/세션 파일 쪽 scaffold는 완성).
 - macOS 바이너리 서명: **0.1.x에서 ad-hoc 서명 적용**. Apple stock `codesign`은 Bun-compiled 바이너리의 비표준 `LC_CODE_SIGNATURE` stub 때문에 `invalid or unsupported format for signature`로 거부하므로, **`rcodesign`** (https://github.com/indygreg/apple-platform-rs)을 사용. `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서: (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명. 워크플로(`release-binaries.yml`)의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드. `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도(이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과). Bun 1.3.13+ stable이 root cause를 fix하므로, 그때 setup-bun을 pin하고 rcodesign 의존성을 제거. 정식 Apple notarization (Developer Program $99/년)은 1.0 item.
 - `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
 
 ## Status
 
-scaffold 완료 (`whoami`/`login`/`logout`/`upgrade` 동작; `login`은 callback server + state + session write까지 끝났고 실제 OAuth 엔드포인트는 `AIT_CONSOLE_OAUTH_URL`로 override). 나머지 command는 TODO.md 참고.
+`login` / `logout` / `whoami` / `upgrade` 모두 end-to-end 동작. `login`은 CDP로 시스템 Chrome을 띄워 세션 쿠키 캡처, `whoami`는 `members/me/user-info` 라이브 호출. `deploy` / `logs` / `status` 등 나머지는 TODO.md. 각 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현한다.
 
 전체 로드맵은 [landing page](https://apps-in-toss-community.github.io/) 참고.

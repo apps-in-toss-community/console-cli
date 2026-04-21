@@ -10,6 +10,6 @@ export default defineConfig({
   clean: true,
   platform: 'node',
   define: {
-    AIT_CONSOLE_VERSION: JSON.stringify(pkg.version),
+    AITCC_VERSION: JSON.stringify(pkg.version),
   },
 });

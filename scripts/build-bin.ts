@@ -18,11 +18,11 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { target: 'bun-linux-x64', out: 'ait-console-linux-x64' },
-  { target: 'bun-linux-arm64', out: 'ait-console-linux-arm64' },
-  { target: 'bun-darwin-x64', out: 'ait-console-darwin-x64' },
-  { target: 'bun-darwin-arm64', out: 'ait-console-darwin-arm64' },
-  { target: 'bun-windows-x64', out: 'ait-console-windows-x64.exe' },
+  { target: 'bun-linux-x64', out: 'aitcc-linux-x64' },
+  { target: 'bun-linux-arm64', out: 'aitcc-linux-arm64' },
+  { target: 'bun-darwin-x64', out: 'aitcc-darwin-x64' },
+  { target: 'bun-darwin-arm64', out: 'aitcc-darwin-arm64' },
+  { target: 'bun-windows-x64', out: 'aitcc-windows-x64.exe' },
 ];
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string };
@@ -42,7 +42,7 @@ for (const { target, out } of selected) {
   await $`bun build ./src/cli.ts \
     --compile \
     --target=${target} \
-    --define AIT_CONSOLE_VERSION=${JSON.stringify(version)} \
+    --define AITCC_VERSION=${JSON.stringify(version)} \
     --outfile=dist-bin/${out}`;
 
   if (target.startsWith('bun-darwin-') && process.platform === 'darwin') {

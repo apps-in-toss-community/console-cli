@@ -39,5 +39,5 @@ export function detectPlatform(): PlatformTarget | null {
   if (os === 'windows' && arch === 'arm64') return null;
 
   const suffix = os === 'windows' ? '.exe' : '';
-  return { os, arch, assetName: `ait-console-${os}-${arch}${suffix}` };
+  return { os, arch, assetName: `aitcc-${os}-${arch}${suffix}` };
 }

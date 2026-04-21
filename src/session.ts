@@ -1,10 +1,11 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { CdpCookie } from './cdp.js';
 import { configDir, sessionFilePath } from './paths.js';
 
-// Minimal, forward-compatible session shape. `cookies` and `origins` mirror
-// Playwright's `storageState` so a future `login` command can hand them
-// straight to a headless context.
+// Minimal, forward-compatible session shape. `cookies` mirrors the CDP
+// `Network.getAllCookies` payload so the login command can drop it in
+// directly and the http layer can replay it against the console API.
 //
 // SECURITY: this module is the only place that touches the secret material.
 // - Never log raw cookies / origins.
@@ -19,9 +20,11 @@ export interface SessionUser {
 export interface Session {
   schemaVersion: 1;
   user: SessionUser;
-  // Opaque Playwright storageState slots. Kept `unknown` to discourage
-  // destructuring / logging anywhere except the login/deploy code paths.
-  cookies: unknown[];
+  // CDP-native cookie list from `Network.getAllCookies`. Treat as opaque
+  // secret material outside the login/http code paths.
+  cookies: readonly CdpCookie[];
+  // Reserved for Playwright `storageState`-style `localStorage` snapshots;
+  // empty until a feature needs it.
   origins: unknown[];
   capturedAt: string; // ISO-8601
 }
@@ -37,23 +40,47 @@ function summarize(session: Session): SessionSummary {
 }
 
 export async function readSession(): Promise<Session | null> {
+  const path = sessionFilePath();
+  let raw: string;
   try {
-    const raw = await readFile(sessionFilePath(), 'utf8');
-    const parsed = JSON.parse(raw) as Session;
-    if (parsed.schemaVersion !== 1) return null;
-    if (!parsed.user || typeof parsed.user.id !== 'string') return null;
-    if (typeof parsed.user.email !== 'string') return null;
-    if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
-      return null;
-    }
-    return parsed;
+    raw = await readFile(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return null;
-    // Malformed / unreadable file — treat as no session so commands emit a
-    // clean "not logged in" error instead of a stack trace.
+    // Some other IO error — surface one-line diagnostic on stderr so the
+    // user can tell "permission denied" from "no session". The command
+    // still falls back to "not logged in" behaviour.
+    process.stderr.write(`warning: could not read session file at ${path}: ${code ?? 'unknown'}\n`);
     return null;
   }
+  let parsed: Session;
+  try {
+    parsed = JSON.parse(raw) as Session;
+  } catch {
+    // Malformed JSON — warn once, then fall back to "not logged in". The
+    // user can re-run `aitcc login` to replace the broken file.
+    process.stderr.write(`warning: session file at ${path} is corrupt and will be ignored\n`);
+    return null;
+  }
+  const schemaReason = validateSessionShape(parsed);
+  if (schemaReason) {
+    process.stderr.write(
+      `warning: session file at ${path} ignored (${schemaReason}); re-run \`aitcc login\`\n`,
+    );
+    return null;
+  }
+  return parsed;
+}
+
+function validateSessionShape(parsed: Session): string | null {
+  if (parsed.schemaVersion !== 1) return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+  if (!parsed.user || typeof parsed.user.id !== 'string') return 'missing user.id';
+  if (typeof parsed.user.email !== 'string') return 'missing user.email';
+  if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
+    return 'user.displayName has wrong type';
+  }
+  if (!Array.isArray(parsed.cookies)) return 'cookies is not an array';
+  return null;
 }
 
 export async function readSessionSummary(): Promise<SessionSummary | null> {

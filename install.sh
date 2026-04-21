@@ -1,30 +1,30 @@
 #!/bin/sh
-# ait-console installer
+# aitcc installer
 #
-# Downloads the latest ait-console binary for your OS/arch from GitHub
+# Downloads the latest aitcc binary for your OS/arch from GitHub
 # Releases, verifies its SHA-256, and installs it to $HOME/.local/bin.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | sh
 #
 # Environment variables:
-#   AIT_CONSOLE_VERSION    Pin to a specific tag (e.g. "v0.1.1"). Default: latest.
-#   AIT_CONSOLE_INSTALL_DIR  Install location. Default: $HOME/.local/bin.
-#   AIT_CONSOLE_QUIET=1    Suppress non-error output.
+#   AITCC_VERSION        Pin to a specific tag (e.g. "v0.1.1"). Default: latest.
+#   AITCC_INSTALL_DIR    Install location. Default: $HOME/.local/bin.
+#   AITCC_QUIET=1        Suppress non-error output.
 
 set -eu
 
 REPO="apps-in-toss-community/console-cli"
-INSTALL_DIR="${AIT_CONSOLE_INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${AIT_CONSOLE_VERSION:-latest}"
-QUIET="${AIT_CONSOLE_QUIET:-0}"
+INSTALL_DIR="${AITCC_INSTALL_DIR:-$HOME/.local/bin}"
+VERSION="${AITCC_VERSION:-latest}"
+QUIET="${AITCC_QUIET:-0}"
 
 log() {
   [ "$QUIET" = "1" ] || printf '%s\n' "$*"
 }
 
 err() {
-  printf 'ait-console installer: %s\n' "$*" >&2
+  printf 'aitcc installer: %s\n' "$*" >&2
 }
 
 die() {
@@ -52,7 +52,7 @@ case "$uname_m" in
     ;;
 esac
 
-binary="ait-console-${os}-${arch}"
+binary="aitcc-${os}-${arch}"
 
 # -- resolve download URLs ---------------------------------------------------
 if [ "$VERSION" = "latest" ]; then
@@ -81,7 +81,7 @@ else
 fi
 
 # -- stage to a temp dir -----------------------------------------------------
-tmp=$(mktemp -d 2>/dev/null || mktemp -d -t aitconsole)
+tmp=$(mktemp -d 2>/dev/null || mktemp -d -t aitcc)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 log "Downloading $binary..."
@@ -111,7 +111,7 @@ log "Checksum OK."
 
 # -- install -----------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
-dest="$INSTALL_DIR/ait-console"
+dest="$INSTALL_DIR/aitcc"
 
 # If an existing binary is root-owned and we're not root, bail with guidance.
 if [ -f "$dest" ] && [ ! -w "$dest" ]; then
@@ -138,7 +138,7 @@ log "Installed to $dest"
 # -- PATH hint ---------------------------------------------------------------
 case ":$PATH:" in
   *":$INSTALL_DIR:"*)
-    log "ait-console is on your PATH. Run: ait-console --version"
+    log "aitcc is on your PATH. Run: aitcc --version"
     ;;
   *)
     log ""

@@ -26,19 +26,19 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: linux-x64
-            out: ait-console-linux-x64
+            out: aitcc-linux-x64
           - runner: ubuntu-latest
             target: linux-arm64
-            out: ait-console-linux-arm64
+            out: aitcc-linux-arm64
           - runner: macos-latest
             target: darwin-x64
-            out: ait-console-darwin-x64
+            out: aitcc-darwin-x64
           - runner: macos-latest
             target: darwin-arm64
-            out: ait-console-darwin-arm64
+            out: aitcc-darwin-arm64
           - runner: windows-latest
             target: windows-x64
-            out: ait-console-windows-x64.exe
+            out: aitcc-windows-x64.exe
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
