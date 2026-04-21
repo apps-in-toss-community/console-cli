@@ -272,7 +272,7 @@ export const loginCommand = defineCommand({
     }
 
     const session: Session = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       user: {
         id: String(user.id),
         email: user.email,

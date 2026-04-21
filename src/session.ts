@@ -18,7 +18,7 @@ export interface SessionUser {
 }
 
 export interface Session {
-  schemaVersion: 1;
+  schemaVersion: 2;
   user: SessionUser;
   // CDP-native cookie list from `Network.getAllCookies`. Treat as opaque
   // secret material outside the login/http code paths.
@@ -27,6 +27,12 @@ export interface Session {
   // empty until a feature needs it.
   origins: unknown[];
   capturedAt: string; // ISO-8601
+  // Workspace context. Unset until the user runs `aitcc workspace use <id>`
+  // or provides `--workspace` on first use. Writes are explicit — we never
+  // guess a default (e.g. "first workspace the user has access to") because
+  // a silent guess is exactly the class of bug that causes a deploy to land
+  // in the wrong account.
+  currentWorkspaceId?: number;
 }
 
 // Public-safe projection for `whoami` and other diagnostics.
@@ -39,6 +45,17 @@ function summarize(session: Session): SessionSummary {
   return { user: session.user, capturedAt: session.capturedAt };
 }
 
+/**
+ * Read the persisted session. Returns `null` when no session exists, when
+ * the file is corrupt, or when the shape fails validation — each of those
+ * emits a one-line warning on stderr for diagnostics.
+ *
+ * **Side effect**: a v1 session file is transparently rewritten to v2 on
+ * the first successful read of this process. This keeps read-only callers
+ * (`whoami`, `workspace ls`) from stranding users on an old schema. If the
+ * rewrite fails, we warn once per process and continue with the in-memory
+ * v2 value so the calling command still succeeds.
+ */
 export async function readSession(): Promise<Session | null> {
   const path = sessionFilePath();
   let raw: string;
@@ -53,33 +70,90 @@ export async function readSession(): Promise<Session | null> {
     process.stderr.write(`warning: could not read session file at ${path}: ${code ?? 'unknown'}\n`);
     return null;
   }
-  let parsed: Session;
+  let rawParsed: unknown;
   try {
-    parsed = JSON.parse(raw) as Session;
+    rawParsed = JSON.parse(raw);
   } catch {
     // Malformed JSON — warn once, then fall back to "not logged in". The
     // user can re-run `aitcc login` to replace the broken file.
     process.stderr.write(`warning: session file at ${path} is corrupt and will be ignored\n`);
     return null;
   }
-  const schemaReason = validateSessionShape(parsed);
+  const schemaReason = validateSessionShape(rawParsed);
   if (schemaReason) {
     process.stderr.write(
       `warning: session file at ${path} ignored (${schemaReason}); re-run \`aitcc login\`\n`,
     );
     return null;
   }
-  return parsed;
+  // Post-validation: the shape is trusted. `schemaVersion` is now 1 or 2;
+  // v1 files are transparently upgraded to v2 in memory. We best-effort
+  // rewrite the file so long-lived v1-on-disk sessions eventually migrate
+  // without requiring the user to run a write-shaped command. A failed
+  // rewrite is non-fatal (the in-memory shape is correct) but we still
+  // emit a one-line stderr warning once per process so a read-only mount
+  // or permission issue does not silently persist. We await rather than
+  // fire-and-forget so concurrent callers observe consistent on-disk state.
+  const validated = rawParsed as { schemaVersion: 1 | 2 } & Omit<Session, 'schemaVersion'>;
+  if (validated.schemaVersion === 1) {
+    const upgraded: Session = { ...validated, schemaVersion: 2 };
+    try {
+      await writeSession(upgraded);
+    } catch (err) {
+      warnMigrationOnce(path, (err as NodeJS.ErrnoException).code);
+    }
+    return upgraded;
+  }
+  return validated as Session;
 }
 
-function validateSessionShape(parsed: Session): string | null {
-  if (parsed.schemaVersion !== 1) return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+// One-shot latch so a failing migration doesn't spam stderr on every call
+// inside the same process. Users still get the diagnostic the first time.
+let migrationWarned = false;
+function warnMigrationOnce(path: string, code: string | undefined): void {
+  if (migrationWarned) return;
+  migrationWarned = true;
+  process.stderr.write(
+    `warning: could not migrate session file at ${path} to schemaVersion 2: ${code ?? 'unknown'}\n`,
+  );
+}
+
+// v1 → v2 migration: v1 files are still valid, we just treat the absent
+// `currentWorkspaceId` as "no workspace selected yet". The next write (e.g.
+// from `workspace use`) bumps the stored schemaVersion. The validator input
+// is `unknown` so we can inspect raw JSON without the TS type narrowing
+// away the v1 branch.
+function validateSessionShape(input: unknown): string | null {
+  if (input === null || typeof input !== 'object') return 'root is not an object';
+  const parsed = input as {
+    schemaVersion?: unknown;
+    user?: { id?: unknown; email?: unknown; displayName?: unknown };
+    cookies?: unknown;
+    origins?: unknown;
+    capturedAt?: unknown;
+    currentWorkspaceId?: unknown;
+  };
+  if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) {
+    return `unknown schemaVersion ${String(parsed.schemaVersion)}`;
+  }
   if (!parsed.user || typeof parsed.user.id !== 'string') return 'missing user.id';
   if (typeof parsed.user.email !== 'string') return 'missing user.email';
   if (parsed.user.displayName !== undefined && typeof parsed.user.displayName !== 'string') {
     return 'user.displayName has wrong type';
   }
   if (!Array.isArray(parsed.cookies)) return 'cookies is not an array';
+  if (parsed.origins !== undefined && !Array.isArray(parsed.origins)) {
+    return 'origins is not an array';
+  }
+  if (parsed.capturedAt !== undefined && typeof parsed.capturedAt !== 'string') {
+    return 'capturedAt has wrong type';
+  }
+  if (parsed.currentWorkspaceId !== undefined) {
+    const wid = parsed.currentWorkspaceId;
+    if (typeof wid !== 'number' || !Number.isInteger(wid) || wid <= 0) {
+      return 'currentWorkspaceId has wrong type';
+    }
+  }
   return null;
 }
 
@@ -100,6 +174,19 @@ export async function writeSession(session: Session): Promise<void> {
   } catch {
     // Windows / exotic FS: best-effort only.
   }
+}
+
+/**
+ * Persist a new `currentWorkspaceId` on an existing session. Returns the
+ * updated session, or `null` if there is no session to update (callers
+ * should surface "not logged in" in that case).
+ */
+export async function setCurrentWorkspaceId(workspaceId: number): Promise<Session | null> {
+  const session = await readSession();
+  if (!session) return null;
+  const updated: Session = { ...session, currentWorkspaceId: workspaceId };
+  await writeSession(updated);
+  return updated;
 }
 
 export async function clearSession(): Promise<{ existed: boolean }> {

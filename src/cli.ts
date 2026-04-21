@@ -4,6 +4,7 @@ import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { whoamiCommand } from './commands/whoami.js';
+import { workspaceCommand } from './commands/workspace.js';
 import { VERSION } from './version.js';
 
 const main = defineCommand({
@@ -18,6 +19,7 @@ const main = defineCommand({
     login: loginCommand,
     logout: logoutCommand,
     upgrade: upgradeCommand,
+    workspace: workspaceCommand,
   },
 });
 
