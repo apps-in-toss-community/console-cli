@@ -242,6 +242,65 @@ horizontalScreenshots:
     expect((err as ManifestError).kind).toBe('invalid-config');
   });
 
+  it('rejects titleEn with disallowed characters (dog-food #23 server rule)', async () => {
+    // Console error: "앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요" — captured
+    // as HTTP 400 errorCode=4000. We pre-validate locally so agent-plugin
+    // gets `invalid-config` instead of a passed-through `api-error`.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: "Has-Hyphen"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleEn');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('accepts titleEn with English letters, digits, spaces, and colons', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: "SDK Reference: v2"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.titleEn).toBe('SDK Reference: v2');
+  });
+
+  it('rejects description longer than 500 characters (dog-food #23 server rule)', async () => {
+    // Console error: "앱 상세설명은 최대 500자를 넘어갈 수 없어요".
+    const dir = makeTempDir();
+    const tooLong = 'a'.repeat(501);
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: ${tooLong}\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('description');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('counts description length by code points so emoji do not under-count', async () => {
+    // A single 💡 is one code point but two UTF-16 units. Using
+    // `[...str].length` keeps the CLI strict (matches or beats the
+    // server's own count, whichever way it counts internally).
+    const dir = makeTempDir();
+    // 250 emoji = 250 code points, but 500 UTF-16 units. If we counted
+    // .length naively we'd reject this; with code points it passes.
+    const borderline = '💡'.repeat(250);
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: "${borderline}"\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect([...manifest.description].length).toBe(250);
+  });
+
   it('requires at least 1 category id', async () => {
     const dir = makeTempDir();
     const path = writeManifest(

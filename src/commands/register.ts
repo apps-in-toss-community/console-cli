@@ -131,6 +131,10 @@ export async function runRegister(args: RegisterArgs, deps: RegisterDeps = {}): 
     const urls = await uploadAllImages(workspaceId, manifest, session.cookies, deps);
     const payload = buildSubmitPayload(manifest, urls);
     const submitImpl = deps.submitImpl ?? ((wid, p, c) => createMiniApp(wid, p, c));
+    // TODO: dog-food #23 showed this endpoint returns `reviewState: null` —
+    // a separate review-trigger endpoint must be captured and driven via a
+    // follow-up `aitcc app review-request` subcommand before the app goes
+    // into actual review.
     const result = await submitImpl(workspaceId, payload, session.cookies);
     emitSuccess(args.json, workspaceId, result);
     return exitAfterFlush(ExitCode.Ok);

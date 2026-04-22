@@ -4,10 +4,11 @@ import type { FetchLike } from './http.js';
 import { createMiniApp, type MiniAppSubmitPayload, uploadMiniAppResource } from './mini-apps.js';
 
 // These two helpers are the only network surface `app register` uses.
-// The submit payload shape is inferred (see CLAUDE.md "App registration")
-// so we pin the *request* (URL + method + body round-trip) rather than
-// asserting against a canned response — a bundle-analysis change would
-// have to change the builder, not this layer.
+// The submit payload shape was confirmed via dog-food #23 (flat top-level
+// + `impression.categoryList: [{id}]`). We pin the *request* (URL +
+// method + body round-trip) rather than asserting against a canned
+// response — a future shape correction would go through the builder,
+// not this layer.
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -89,24 +90,22 @@ describe('uploadMiniAppResource', () => {
 
 describe('createMiniApp', () => {
   const basePayload: MiniAppSubmitPayload = {
-    miniApp: {
-      title: 't',
-      titleEn: 'T',
-      appName: 's',
-      iconUri: 'https://cdn.example/logo.png',
-      status: 'PREPARE',
-      csEmail: 'a@b.co',
-      description: 's',
-      detailDescription: 'd',
-      images: [
-        {
-          imageUrl: 'https://cdn.example/thumb.png',
-          imageType: 'THUMBNAIL',
-          orientation: 'HORIZONTAL',
-        },
-      ],
-    },
-    impression: { keywordList: ['k'], categoryIds: [1] },
+    title: 't',
+    titleEn: 'T',
+    appName: 's',
+    iconUri: 'https://cdn.example/logo.png',
+    status: 'PREPARE',
+    csEmail: 'a@b.co',
+    description: 's',
+    detailDescription: 'd',
+    images: [
+      {
+        imageUrl: 'https://cdn.example/thumb.png',
+        imageType: 'THUMBNAIL',
+        orientation: 'HORIZONTAL',
+      },
+    ],
+    impression: { keywordList: ['k'], categoryList: [{ id: 1 }] },
   };
 
   it('POSTs the payload to /workspaces/:id/mini-app/review and returns the server response body', async () => {
@@ -132,8 +131,11 @@ describe('createMiniApp', () => {
       'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/review',
     );
     const parsed = capturedBody ? JSON.parse(capturedBody) : null;
-    expect(parsed?.miniApp?.title).toBe('t');
-    expect(parsed?.impression?.categoryIds).toEqual([1]);
+    // Flat top-level shape per dog-food #23 — no `miniApp` wrapper, and
+    // categories go as `categoryList: [{id}]` rather than `categoryIds`.
+    expect(parsed?.title).toBe('t');
+    expect(parsed?.miniApp).toBeUndefined();
+    expect(parsed?.impression?.categoryList).toEqual([{ id: 1 }]);
     expect(result.miniAppId).toBe(123);
     expect(result.reviewState).toBe('PENDING');
   });
