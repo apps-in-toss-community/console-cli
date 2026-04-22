@@ -235,6 +235,70 @@ export async function fetchMiniAppRatings(
   return { ratings, paging, averageRating, totalReviewCount };
 }
 
+// --- User reports (신고 내역) ---
+//
+// GET /workspaces/:wid/mini-apps/:aid/user-reports?pageSize=N[&cursor=...]
+//
+// Note the URL uses **plural** `mini-apps` — same split-personality as
+// `mini-apps/review-status`. Don't "normalize" it.
+//
+// Response envelope (observed 2026-04-23 on app 29405, empty case):
+//   { reports: [...], nextCursor: null | string, hasMore: boolean }
+//
+// Pagination is cursor-based here (unlike ratings which is page-based).
+// We expose `cursor` as an optional param and echo back `nextCursor` /
+// `hasMore` so callers can page through without guessing the scheme.
+
+export interface UserReportsPage {
+  readonly reports: readonly Readonly<Record<string, unknown>>[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+}
+
+export interface FetchUserReportsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly pageSize?: number;
+  readonly cursor?: string;
+}
+
+export async function fetchUserReports(
+  params: FetchUserReportsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<UserReportsPage> {
+  const pageSize = params.pageSize ?? 20;
+  const qs = new URLSearchParams();
+  qs.set('pageSize', String(pageSize));
+  if (params.cursor !== undefined) qs.set('cursor', params.cursor);
+  const url =
+    `${BASE}/workspaces/${params.workspaceId}/mini-apps/${params.miniAppId}/user-reports?` +
+    qs.toString();
+
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error(`Unexpected user-reports shape for app=${params.miniAppId}`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const reportsRaw = rec.reports;
+  if (!Array.isArray(reportsRaw)) {
+    throw new Error(
+      `Unexpected user-reports shape: reports is not an array (app=${params.miniAppId})`,
+    );
+  }
+  const reports = reportsRaw.map((r) => {
+    if (r === null || typeof r !== 'object') return {};
+    return r as Record<string, unknown>;
+  });
+  const nextCursor = typeof rec.nextCursor === 'string' ? rec.nextCursor : null;
+  const hasMore = Boolean(rec.hasMore);
+  return { reports, nextCursor, hasMore };
+}
+
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`
