@@ -10,6 +10,7 @@ import {
   emitNotAuthenticated,
   resolveWorkspaceContext,
 } from './_shared.js';
+import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -131,6 +132,41 @@ const lsCommand = defineCommand({
   },
 });
 
+// TODO(#23): after the first real submission we may want a follow-up
+// `aitcc app review-request <id>` command. The console UI has a separate
+// "검토 요청하기" step after create; whether it is a distinct endpoint
+// or folded into /mini-app/review is not yet captured.
+const registerCommand = defineCommand({
+  meta: {
+    name: 'register',
+    description:
+      'Register a mini-app in the selected workspace from a YAML/JSON manifest. ' +
+      'Uploads logo/thumbnail/screenshots, then submits the create payload.',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace (`aitcc workspace use`).',
+    },
+    config: {
+      type: 'string',
+      description:
+        'Path to the app manifest. Defaults to `./aitcc.app.yaml`, then `./aitcc.app.json`.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    await runRegister(
+      {
+        json: args.json,
+        ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+        ...(args.config !== undefined ? { config: args.config } : {}),
+      },
+      {},
+    );
+  },
+});
+
 export const appCommand = defineCommand({
   meta: {
     name: 'app',
@@ -138,5 +174,6 @@ export const appCommand = defineCommand({
   },
   subCommands: {
     ls: lsCommand,
+    register: registerCommand,
   },
 });
