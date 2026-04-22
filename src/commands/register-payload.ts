@@ -2,11 +2,12 @@ import type { MiniAppImageEntry, MiniAppSubmitPayload } from '../api/mini-apps.j
 import type { AppManifest } from '../config/app-manifest.js';
 
 // Pure transformation from a loaded AppManifest + the URLs produced by
-// the upload step into the `{miniApp, impression}` submit body. The
-// structure mirrors the `Xc` function from the console bundle (see
-// VALIDATION-RULES.md in the umbrella `.playwright-mcp/`). Dog-food
-// task #23 captures the first real network exchange and will either
-// confirm this shape or correct it here.
+// the upload step into the flat submit body. Shape confirmed via
+// dog-food task #23 (2026-04-22): the server parses a flat top-level
+// document that mirrors the persisted `app ls` row. The earlier
+// `{miniApp, impression}` wrapper silently dropped every nested field.
+// See `.playwright-mcp/FORM-SCHEMA-CAPTURED.md` in the umbrella for the
+// raw capture.
 
 export interface UploadedImageUrls {
   readonly logo: string;
@@ -34,7 +35,7 @@ export function buildSubmitPayload(
     })),
   ];
 
-  const miniApp: MiniAppSubmitPayload['miniApp'] = {
+  return {
     title: manifest.titleKo,
     titleEn: manifest.titleEn,
     appName: manifest.appName,
@@ -44,14 +45,11 @@ export function buildSubmitPayload(
     description: manifest.subtitle,
     detailDescription: manifest.description,
     images,
+    impression: {
+      keywordList: manifest.keywords,
+      categoryList: manifest.categoryIds.map((id) => ({ id })),
+    },
     ...(urls.logoDarkMode !== undefined ? { darkModeIconUri: urls.logoDarkMode } : {}),
     ...(manifest.homePageUri !== undefined ? { homePageUri: manifest.homePageUri } : {}),
   };
-
-  const impression: MiniAppSubmitPayload['impression'] = {
-    keywordList: manifest.keywords,
-    categoryIds: manifest.categoryIds,
-  };
-
-  return { miniApp, impression };
 }

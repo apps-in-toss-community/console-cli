@@ -241,6 +241,17 @@ function isValidEmail(v: string): boolean {
   return EMAIL_REGEX.test(v.toLowerCase());
 }
 
+// Dog-food #23 (2026-04-22) HTTP 400 errorCode=4000:
+// "앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요".
+const TITLE_EN_REGEX = /^[A-Za-z0-9 :]+$/;
+
+// Dog-food #23 (2026-04-22) HTTP 400 errorCode=4000:
+// "앱 상세설명은 최대 500자를 넘어갈 수 없어요". Counted by code points
+// (`[...str].length`) to err on the strict side — the server's internal
+// counting rule is not documented, so we use the count that treats
+// astral characters as single units.
+const DETAIL_DESCRIPTION_MAX_CODEPOINTS = 500;
+
 function isValidHttpUrl(v: string): boolean {
   try {
     const parsed = new URL(v);
@@ -253,6 +264,13 @@ function isValidHttpUrl(v: string): boolean {
 function validateManifest(raw: Record<string, unknown>, configDir: string): AppManifest {
   const titleKo = requireString(raw, 'titleKo');
   const titleEn = requireString(raw, 'titleEn');
+  if (!TITLE_EN_REGEX.test(titleEn)) {
+    throw new ManifestError(
+      'invalid-config',
+      `titleEn may only contain English letters, digits, spaces, and colons (got "${titleEn}")`,
+      'titleEn',
+    );
+  }
   const appName = requireString(raw, 'appName');
   const csEmail = requireString(raw, 'csEmail');
   if (!isValidEmail(csEmail)) {
@@ -272,6 +290,14 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
     );
   }
   const description = requireString(raw, 'description');
+  const descriptionCodepoints = [...description].length;
+  if (descriptionCodepoints > DETAIL_DESCRIPTION_MAX_CODEPOINTS) {
+    throw new ManifestError(
+      'invalid-config',
+      `description must be ${DETAIL_DESCRIPTION_MAX_CODEPOINTS} characters or fewer (got ${descriptionCodepoints})`,
+      'description',
+    );
+  }
   const homePageUri = optionalString(raw, 'homePageUri');
   if (homePageUri !== undefined && !isValidHttpUrl(homePageUri)) {
     throw new ManifestError(

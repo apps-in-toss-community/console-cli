@@ -3,9 +3,10 @@ import type { AppManifest } from '../config/app-manifest.js';
 import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.js';
 
 // The payload builder is a pure function — manifest + uploaded URLs in,
-// inferred submit body out. Dog-food task #23 will be the first real
-// submission and may force tweaks; keeping the transformation pure means
-// the diff will be confined here.
+// flat submit body out. Shape confirmed via dog-food task #23 (2026-04-22):
+// the server parses only top-level keys, and `impression` expects
+// `categoryList: [{id}]` rather than `categoryIds: [number]`. See the
+// umbrella `.playwright-mcp/FORM-SCHEMA-CAPTURED.md` for the raw capture.
 
 const baseManifest: AppManifest = {
   titleKo: '테스트 앱',
@@ -37,27 +38,35 @@ const baseUrls: UploadedImageUrls = {
 };
 
 describe('buildSubmitPayload', () => {
-  it('wires manifest scalar fields into miniApp + impression sections', () => {
+  it('produces a flat top-level payload mirroring the persisted app row', () => {
     const payload = buildSubmitPayload(baseManifest, baseUrls);
-    expect(payload.miniApp.title).toBe('테스트 앱');
-    expect(payload.miniApp.titleEn).toBe('Test App');
-    expect(payload.miniApp.appName).toBe('test-app');
-    expect(payload.miniApp.csEmail).toBe('a@b.co');
-    expect(payload.miniApp.iconUri).toBe('https://cdn.example/logo.png');
-    expect(payload.miniApp.status).toBe('PREPARE');
-    // description (subtitle in manifest) goes to miniApp.description; the
-    // long-form description becomes detailDescription. This mirrors the
-    // bundle-extracted `Xc` function.
-    expect(payload.miniApp.description).toBe('한 줄 부제');
-    expect(payload.miniApp.detailDescription).toBe('상세 설명');
+    expect(payload.title).toBe('테스트 앱');
+    expect(payload.titleEn).toBe('Test App');
+    expect(payload.appName).toBe('test-app');
+    expect(payload.csEmail).toBe('a@b.co');
+    expect(payload.iconUri).toBe('https://cdn.example/logo.png');
+    expect(payload.status).toBe('PREPARE');
+    // subtitle → description; long description → detailDescription.
+    expect(payload.description).toBe('한 줄 부제');
+    expect(payload.detailDescription).toBe('상세 설명');
+    // No nested `miniApp` wrapper (dog-food #23: the wrapped form dropped
+    // everything except top-level keys).
+    expect('miniApp' in payload).toBe(false);
+  });
+
+  it('nests impression with categoryList objects + keywordList', () => {
+    const payload = buildSubmitPayload(baseManifest, baseUrls);
+    // `categoryList: [{id}]` is what the persisted row shows — the old
+    // `categoryIds: [number]` form silently dropped on submit.
+    expect(payload.impression.categoryList).toEqual([{ id: 1 }, { id: 2 }]);
     expect(payload.impression.keywordList).toEqual(['kw1', 'kw2']);
-    expect(payload.impression.categoryIds).toEqual([1, 2]);
+    expect('categoryIds' in payload.impression).toBe(false);
   });
 
   it('omits darkModeIconUri / homePageUri when the manifest has no value', () => {
     const payload = buildSubmitPayload(baseManifest, baseUrls);
-    expect('darkModeIconUri' in payload.miniApp).toBe(false);
-    expect('homePageUri' in payload.miniApp).toBe(false);
+    expect('darkModeIconUri' in payload).toBe(false);
+    expect('homePageUri' in payload).toBe(false);
   });
 
   it('includes darkModeIconUri / homePageUri when set', () => {
@@ -65,11 +74,11 @@ describe('buildSubmitPayload', () => {
       { ...baseManifest, homePageUri: 'https://example.com/' },
       { ...baseUrls, logoDarkMode: 'https://cdn.example/logo-dark.png' },
     );
-    expect(payload.miniApp.darkModeIconUri).toBe('https://cdn.example/logo-dark.png');
-    expect(payload.miniApp.homePageUri).toBe('https://example.com/');
+    expect(payload.darkModeIconUri).toBe('https://cdn.example/logo-dark.png');
+    expect(payload.homePageUri).toBe('https://example.com/');
   });
 
-  it('renders images as THUMBNAIL/HORIZONTAL + PREVIEW/(VERTICAL|HORIZONTAL) rows in the documented order', () => {
+  it('renders images as THUMBNAIL/HORIZONTAL + PREVIEW/(VERTICAL|HORIZONTAL) rows in order', () => {
     const payload = buildSubmitPayload(
       { ...baseManifest, horizontalScreenshots: ['/tmp/h1.png'] },
       {
@@ -77,9 +86,7 @@ describe('buildSubmitPayload', () => {
         horizontalScreenshots: ['https://cdn.example/h1.png'],
       },
     );
-    const images = payload.miniApp.images;
-    // Thumbnail always first (bundle order), then all vertical previews,
-    // then horizontal previews.
+    const images = payload.images;
     expect(images[0]).toEqual({
       imageUrl: 'https://cdn.example/thumb.png',
       imageType: 'THUMBNAIL',

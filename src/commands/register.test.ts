@@ -399,12 +399,12 @@ describe('runRegister', () => {
       { width: 636, height: 1048, fileName: 's2.png' },
       { width: 636, height: 1048, fileName: 's3.png' },
     ]);
-    // End-to-end data flow: manifest fields → correct payload fields.
-    expect(submitted?.miniApp?.title).toBe('테스트 앱');
-    expect(submitted?.miniApp?.titleEn).toBe('Test App');
-    expect(submitted?.miniApp?.appName).toBe('test-app');
-    expect(submitted?.miniApp?.iconUri).toBe('https://cdn.example/logo.png');
-    expect(submitted?.impression?.categoryIds).toEqual([1]);
+    // End-to-end data flow: manifest fields → correct flat payload fields.
+    expect(submitted?.title).toBe('테스트 앱');
+    expect(submitted?.titleEn).toBe('Test App');
+    expect(submitted?.appName).toBe('test-app');
+    expect(submitted?.iconUri).toBe('https://cdn.example/logo.png');
+    expect(submitted?.impression?.categoryList).toEqual([{ id: 1 }]);
   });
 
   it('honors --workspace override even when the session has no currentWorkspaceId', async () => {
