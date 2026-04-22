@@ -111,18 +111,13 @@ export async function fetchReviewStatus(
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`
-// command. The submit payload shape below was confirmed via dog-food
-// task #23 (2026-04-22): the server parses the **flat** top-level
-// document that mirrors the persisted `app ls` row, and `impression`
-// expects `categoryList: [{id: number}]` (not `categoryIds: [number]`).
-// The earlier wrapped `{miniApp, impression}` shape silently dropped
-// every field the top-level parser did not recognize. See the umbrella
-// `.playwright-mcp/FORM-SCHEMA-CAPTURED.md` for the raw capture.
-//
-// Still inferred: this endpoint returns `reviewState: null`, strongly
-// suggesting it creates a skeleton app without actually triggering
-// review. A follow-up command (`aitcc app review-request`) must drive
-// the review-trigger endpoint once captured.
+// command. The submit payload shape below is *inferred* from static
+// bundle analysis (`VALIDATION-RULES.md` in the umbrella `.playwright-
+// mcp/`); the console UI never round-trips intermediate drafts, so the
+// only authoritative record will come from dog-food task #23. Field
+// names here intentionally mirror the `Xc` function from the bundle so
+// when #23 runs, any correction is a direct rename rather than a
+// restructure.
 
 // Exposed as `unknown` per-image so the caller (not this layer) is the
 // place where a cross-field invariant like "at least 3 PREVIEW/VERTICAL"
@@ -139,20 +134,23 @@ export interface MiniAppImageEntry {
 }
 
 export interface MiniAppSubmitPayload {
-  readonly title: string;
-  readonly titleEn: string;
-  readonly appName: string;
-  readonly iconUri: string;
-  readonly status: 'PREPARE';
-  readonly darkModeIconUri?: string;
-  readonly homePageUri?: string;
-  readonly csEmail: string;
-  readonly description: string; // subtitle (≤20 chars)
-  readonly detailDescription: string; // long-form description (≤500 code points)
-  readonly images: readonly MiniAppImageEntry[];
+  readonly miniApp: {
+    readonly title: string;
+    readonly titleEn: string;
+    readonly appName: string;
+    readonly iconUri: string;
+    readonly status: 'PREPARE';
+    readonly darkModeIconUri?: string;
+    readonly homePageUri?: string;
+    readonly csEmail: string;
+    readonly description: string; // subtitle (≤20 chars)
+    readonly detailDescription: string;
+    readonly images: readonly MiniAppImageEntry[];
+  };
   readonly impression: {
     readonly keywordList: readonly string[];
-    readonly categoryList: readonly { readonly id: number }[];
+    readonly categoryIds: readonly number[];
+    readonly subCategoryIds?: readonly number[];
   };
 }
 
