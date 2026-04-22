@@ -172,12 +172,13 @@ pnpm format         # biome format --write .
 ### Release flow (Type A per umbrella)
 
 - `.changeset/` 활성.
+- `.github/workflows/release.yml`의 `publish:` 입력은 **`pnpm exec changeset publish`** (raw `npm publish`가 아님 — `changesets/action`이 `🦋 New tag:` stdout 라인을 파싱해 GitHub Release를 만들기 때문. `@changesets/cli publish`만 그 라인을 emit한다).
 - Trigger: `main`에서 "Version Packages" PR merge.
 - `changesets/action`:
-  1. `package.json` version bump + CHANGELOG 갱신.
-  2. `npm publish --provenance --access public`.
-  3. GitHub Release 생성, tag `@ait-co/console-cli@x.y.z`.
-- **이어서** `release-binaries.yml`이 Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 파일 생성 → `gh release upload`로 방금 만든 release에 asset 붙임.
+  1. `package.json` version bump + CHANGELOG 갱신 (이 단계는 Version Packages PR 생성 run).
+  2. PR merge 후: `pnpm exec changeset publish` 호출 → 내부적으로 npm publish를 shell-out. `NPM_CONFIG_PROVENANCE=true` 환경변수가 provenance 서명을 활성화하고, OIDC token이 있으면 자동으로 trusted publishing 경로를 탄다.
+  3. `🦋 New tag: v{x.y.z}` 라인을 파싱해 tag push + GitHub Release 생성 (`createGithubReleases: true`). Tag format은 single-package repo이므로 `v{version}`.
+- **이어서** `release-binaries.yml`이 `release.published` 이벤트로 트리거 → Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 생성 → `gh release upload`로 방금 만든 release에 asset 붙임. (이 체인이 돌려면 `GITHUB_TOKEN`이 **App token** — default `GITHUB_TOKEN`으로는 `release.published`가 firing되지 않는다.)
 - `install.sh`는 `releases/latest`를 읽으므로, `AITCC_VERSION`으로 pin하지 않으면 항상 최신.
 
 ### Release policy
