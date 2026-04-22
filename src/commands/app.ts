@@ -153,12 +153,25 @@ const registerCommand = defineCommand({
       description:
         'Path to the app manifest. Defaults to `./aitcc.app.yaml`, then `./aitcc.app.json`.',
     },
+    'dry-run': {
+      type: 'boolean',
+      description: 'Validate manifest + images and print the inferred submit payload; no uploads.',
+      default: false,
+    },
+    'accept-terms': {
+      type: 'boolean',
+      description:
+        'Attest to the 5 console legal-agreement checkboxes (required for real submits).',
+      default: false,
+    },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
     await runRegister(
       {
         json: args.json,
+        dryRun: args['dry-run'],
+        acceptTerms: args['accept-terms'],
         ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
         ...(args.config !== undefined ? { config: args.config } : {}),
       },

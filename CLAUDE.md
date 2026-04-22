@@ -160,13 +160,18 @@ horizontalScreenshots:                    # 각 1504×741 PNG
 
 | Exit | stdout 형태 |
 |---|---|
-| 0 | `{"ok":true,"workspaceId":3095,"appId":123,"reviewState":"PENDING"}` |
-| 2 | `{"ok":false,"reason":"no-workspace-selected"}` / `invalid-config` / `missing-required-field` + `field` / `image-dimension-mismatch` + `path`/`expected`/`actual` |
+| 0 | `{"ok":true,"workspaceId":3095,"appId":123,"reviewState":"PENDING"}` (success) or `{"ok":true,"dryRun":true,"workspaceId":3095,"payload":{...}}` (dry-run) |
+| 2 | `{"ok":false,"reason":"no-workspace-selected"}` / `invalid-config` + `message` / `missing-required-field` + `field` + `message` / `image-dimension-mismatch` + `path`/`expected`/`actual`/`message` / `image-unreadable` + `path`/`message` / `terms-not-accepted` + `message` |
 | 10 | `{"ok":true,"authenticated":false}` |
 | 11 | `{"ok":false,"reason":"network-error","message":...}` |
 | 17 | `{"ok":false,"reason":"api-error","status":400,"errorCode":...,"message":...}` |
 
-**TODO 이후**: 검토 요청 (`검토 요청하기` 버튼에 해당하는 별도 호출) 이 현 `/mini-app/review` 엔드포인트와 동일한지, 별도 endpoint 인지 아직 미확인. dog-food task #23 이후 결정.
+**안전 장치**:
+
+- **`--dry-run`**: 매니페스트 parse + 이미지 dimension 검증 + payload 조립까지 수행하고 inferred submit body를 출력만 함. 업로드/제출 없음. `--accept-terms` 불필요. dog-food 전 payload 확인용.
+- **`--accept-terms`**: 실제 submit은 콘솔 UI의 5개 필수 법적 동의 체크박스(+ 카테고리 의존 추가 조항)를 우회한다. 사용자가 명시적으로 `--accept-terms`를 지정하지 않으면 CLI는 submit을 거부하고 exit 2로 종료한다 (`terms-not-accepted`). 이 플래그는 사용자가 `VALIDATION-RULES.md` 혹은 콘솔 UI에서 해당 조항들을 읽고 동의한다는 **CLI-level 확약**이다 — 서버 payload에 담기지는 않는다 (inferred shape에 해당 필드가 없음). dog-food 이후 실제 payload에 동의 필드가 있는 게 확인되면 매니페스트에 `agreements` 섹션을 추가할 수 있다.
+
+**TODO 이후 (dog-food task)**: 검토 요청 (`검토 요청하기` 버튼에 해당하는 별도 호출) 이 현 `/mini-app/review` 엔드포인트와 동일한지, 별도 endpoint 인지 아직 미확인. 실제 payload 에 동의 체크박스 필드가 있는지도 미확인. sdk-example 실등록으로 확정.
 
 ## 기술 스택
 

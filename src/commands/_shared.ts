@@ -52,9 +52,19 @@ export function emitNetworkError(json: boolean, message: string): void {
   }
 }
 
-export function emitApiError(json: boolean, message: string): void {
+export function emitApiError(
+  json: boolean,
+  message: string,
+  details?: { status?: number; errorCode?: string },
+): void {
   if (json) {
-    emitJson({ ok: false, reason: 'api-error', message });
+    emitJson({
+      ok: false,
+      reason: 'api-error',
+      ...(details?.status !== undefined ? { status: details.status } : {}),
+      ...(details?.errorCode !== undefined ? { errorCode: details.errorCode } : {}),
+      message,
+    });
   } else {
     process.stderr.write(`Unexpected error: ${message}\n`);
   }

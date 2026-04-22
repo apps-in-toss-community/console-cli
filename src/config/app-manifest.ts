@@ -230,11 +230,38 @@ function optionalPathArray(
   });
 }
 
+// Regexes mirror the console's client-side validators (`is-email` CDgIL0c0
+// bundle + VALIDATION-RULES.md). Keeping local validators lets agent-
+// plugin surface `missing-required-field`/`invalid-config` instead of a
+// pass-through `api-error` when the user supplies garbage.
+const EMAIL_REGEX =
+  /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+
+function isValidEmail(v: string): boolean {
+  return EMAIL_REGEX.test(v.toLowerCase());
+}
+
+function isValidHttpUrl(v: string): boolean {
+  try {
+    const parsed = new URL(v);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function validateManifest(raw: Record<string, unknown>, configDir: string): AppManifest {
   const titleKo = requireString(raw, 'titleKo');
   const titleEn = requireString(raw, 'titleEn');
   const appName = requireString(raw, 'appName');
   const csEmail = requireString(raw, 'csEmail');
+  if (!isValidEmail(csEmail)) {
+    throw new ManifestError(
+      'invalid-config',
+      `csEmail is not a valid email address (got ${csEmail})`,
+      'csEmail',
+    );
+  }
   const subtitle = requireString(raw, 'subtitle');
   // subtitle ≤ 20 chars (F(20) in VALIDATION-RULES).
   if (subtitle.length > 20) {
@@ -246,6 +273,13 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
   }
   const description = requireString(raw, 'description');
   const homePageUri = optionalString(raw, 'homePageUri');
+  if (homePageUri !== undefined && !isValidHttpUrl(homePageUri)) {
+    throw new ManifestError(
+      'invalid-config',
+      `homePageUri must be a http(s) URL (got ${homePageUri})`,
+      'homePageUri',
+    );
+  }
   const logo = requirePath(raw, 'logo', configDir);
   const logoDarkMode = optionalPath(raw, 'logoDarkMode', configDir);
   const horizontalThumbnail = requirePath(raw, 'horizontalThumbnail', configDir);

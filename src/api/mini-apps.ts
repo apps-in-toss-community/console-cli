@@ -1,12 +1,10 @@
 import type { CdpCookie } from '../cdp.js';
 import {
   cookieHeaderFor,
+  executeAndUnwrap,
   type FetchLike,
   MalformedResponseError,
-  NetworkError,
   requestConsoleApi,
-  TossApiError,
-  type TossEnvelope,
 } from './http.js';
 
 // Two endpoints cover the "list my apps" surface:
@@ -223,7 +221,17 @@ export async function uploadMiniAppResource(
   url.searchParams.set('validHeight', String(params.validHeight));
 
   const form = new FormData();
-  const blob = new Blob([new Uint8Array(params.file.buffer)], { type: params.file.contentType });
+  // A `Buffer` is already a `Uint8Array`, but its `ArrayBufferLike`
+  // backing can be a `SharedArrayBuffer` which `BlobPart` doesn't accept.
+  // Wrapping in a `Uint8Array` view over the same bytes (byteOffset +
+  // byteLength) keeps the type happy without the extra copy that
+  // `new Uint8Array(buffer)` would force.
+  const view = new Uint8Array(
+    params.file.buffer.buffer as ArrayBuffer,
+    params.file.buffer.byteOffset,
+    params.file.buffer.byteLength,
+  );
+  const blob = new Blob([view], { type: params.file.contentType });
   form.append('resource', blob, params.file.fileName);
   form.append('fileName', params.file.fileName);
 
@@ -233,41 +241,17 @@ export async function uploadMiniAppResource(
   };
   if (cookieHeader) headers.Cookie = cookieHeader;
 
-  const fetchImpl: FetchLike = opts.fetchImpl ?? ((input, init) => fetch(input, init));
-  let res: Response;
-  try {
-    res = await fetchImpl(url, { method: 'POST', headers, body: form });
-  } catch (err) {
-    throw new NetworkError(url.toString(), err as Error);
-  }
-
-  let text: string;
-  try {
-    text = await res.text();
-  } catch (err) {
-    throw new MalformedResponseError(url.toString(), res.status, (err as Error).message);
-  }
-  let parsed: TossEnvelope<unknown>;
-  try {
-    parsed = JSON.parse(text) as TossEnvelope<unknown>;
-  } catch (err) {
-    const preview = text.slice(0, 200).replace(/\s+/g, ' ').trim();
-    throw new MalformedResponseError(url.toString(), res.status, (err as Error).message, preview);
-  }
-  if (parsed.resultType === 'SUCCESS') {
-    if (typeof parsed.success !== 'string') {
-      throw new MalformedResponseError(
-        url.toString(),
-        res.status,
-        `expected string imageUrl, got ${typeof parsed.success}`,
-      );
-    }
-    return parsed.success;
-  }
-  throw new TossApiError(
-    res.status,
-    parsed.error.errorCode,
-    parsed.error.reason,
-    parsed.error.errorType,
+  const imageUrl = await executeAndUnwrap<unknown>(
+    url,
+    { method: 'POST', headers, body: form },
+    opts.fetchImpl,
   );
+  if (typeof imageUrl !== 'string') {
+    throw new MalformedResponseError(
+      url.toString(),
+      200,
+      `expected string imageUrl, got ${typeof imageUrl}`,
+    );
+  }
+  return imageUrl;
 }

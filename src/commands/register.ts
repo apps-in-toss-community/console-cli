@@ -44,17 +44,34 @@ import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.j
 //   failures:
 //     { ok: false, reason: 'no-workspace-selected' }                        exit 2
 //     { ok: false, reason: 'invalid-config', message }                      exit 2
-//     { ok: false, reason: 'missing-required-field', field }                exit 2
+//     { ok: false, reason: 'missing-required-field', field, message }       exit 2
 //     { ok: false, reason: 'image-dimension-mismatch',
-//         path, expected, actual }                                          exit 2
+//         path, expected, actual, message }                                 exit 2
+//     { ok: false, reason: 'image-unreadable', path, message }              exit 2
 //     { ok: true, authenticated: false }                                    exit 10
 //     { ok: false, reason: 'network-error', message }                       exit 11
-//     { ok: false, reason: 'api-error', status?, message }                  exit 17
+//     { ok: false, reason: 'api-error',
+//         status?, errorCode?, message }                                    exit 17
+//
+//   --dry-run:
+//     { ok: true, dryRun: true, workspaceId, payload }                      exit 0
+//     (no uploads, no submit — manifest + image dimensions are still
+//     validated so dry-run catches the same local errors as a real run.)
+//
+//   --accept-terms required for real submits:
+//     The console UI gates "검토 요청하기" on 5 mandatory legal-agreement
+//     checkboxes (plus category-dependent ones — see VALIDATION-RULES.md).
+//     We can't see those checkboxes on the wire yet (payload shape is
+//     inferred), so the CLI enforces the gate locally: submit refuses
+//     without --accept-terms. The flag is not required for --dry-run.
+//     { ok: false, reason: 'terms-not-accepted', message }                  exit 2
 
 export interface RegisterArgs {
   readonly workspace?: string | undefined;
   readonly config?: string | undefined;
   readonly json: boolean;
+  readonly dryRun?: boolean | undefined;
+  readonly acceptTerms?: boolean | undefined;
 }
 
 export interface RegisterDeps {
@@ -67,6 +84,11 @@ export interface RegisterDeps {
   ) => Promise<CreateMiniAppResult>;
 }
 
+// `runRegister` returns `Promise<void>` as a type-level handshake — at
+// runtime every code path either awaits `exitAfterFlush` (which calls
+// `process.exit` and never returns) or bubbles a thrown exception. A
+// future maintainer should not try to `catch` the absence of a return
+// value as "success"; the success signal is `process.exit(0)` itself.
 export async function runRegister(args: RegisterArgs, deps: RegisterDeps): Promise<void> {
   const ctx = await resolveWorkspaceContext({
     json: args.json,
@@ -78,7 +100,37 @@ export async function runRegister(args: RegisterArgs, deps: RegisterDeps): Promi
   const manifest = await loadAndValidateManifest(args, deps);
   if (!manifest) return;
 
+  // --accept-terms gate: required for real submits only. --dry-run
+  // skips it so users can iterate on their manifest without being
+  // forced to attest to the legal-agreement checkboxes each time.
+  if (!args.dryRun && !args.acceptTerms) {
+    emitTermsNotAccepted(args.json);
+    await exitAfterFlush(ExitCode.Usage);
+    return;
+  }
+
   try {
+    if (args.dryRun) {
+      // Emit the payload with placeholder URLs so the user can
+      // inspect exactly what would be sent without spending a round
+      // of uploads. Useful during dog-food verification when the
+      // inferred payload shape is in flight.
+      const placeholderUrls: UploadedImageUrls = {
+        logo: '<dry-run:logo>',
+        logoDarkMode: manifest.logoDarkMode !== undefined ? '<dry-run:logoDarkMode>' : undefined,
+        horizontalThumbnail: '<dry-run:horizontalThumbnail>',
+        verticalScreenshots: manifest.verticalScreenshots.map(
+          (_, i) => `<dry-run:verticalScreenshots[${i}]>`,
+        ),
+        horizontalScreenshots: manifest.horizontalScreenshots.map(
+          (_, i) => `<dry-run:horizontalScreenshots[${i}]>`,
+        ),
+      };
+      const payload = buildSubmitPayload(manifest, placeholderUrls);
+      emitDryRun(args.json, workspaceId, payload);
+      return exitAfterFlush(ExitCode.Ok);
+    }
+
     const urls = await uploadAllImages(workspaceId, manifest, session.cookies, deps);
     const payload = buildSubmitPayload(manifest, urls);
     const submitImpl = deps.submitImpl ?? ((wid, p, c) => createMiniApp(wid, p, c));
@@ -236,15 +288,56 @@ function emitManifestError(json: boolean, err: ManifestError): void {
 
 function emitImageDimensionError(json: boolean, err: ImageDimensionError): void {
   if (json) {
-    emitJson({
-      ok: false,
-      reason: 'image-dimension-mismatch',
-      path: err.path,
-      expected: err.expected,
-      actual: err.actual ?? null,
-    });
+    if (err.reason === 'mismatch') {
+      emitJson({
+        ok: false,
+        reason: 'image-dimension-mismatch',
+        path: err.path,
+        expected: err.expected,
+        actual: err.actual ?? null,
+        message: err.message,
+      });
+    } else {
+      // 'unreadable' covers missing files, permission errors, and
+      // decode failures — distinct from a genuine dimension mismatch
+      // so agent-plugin can branch (e.g., "path typo" vs "resize me").
+      emitJson({
+        ok: false,
+        reason: 'image-unreadable',
+        path: err.path,
+        message: err.message,
+      });
+    }
   } else {
     process.stderr.write(`${err.message}\n`);
+  }
+}
+
+function emitTermsNotAccepted(json: boolean): void {
+  const message =
+    'The console requires 5 legal-agreement checkboxes before submitting a mini-app for review. ' +
+    'Re-run with --accept-terms to attest that you have read and agree to each of them ' +
+    '(see VALIDATION-RULES.md or the console UI), or use --dry-run to preview the payload without submitting.';
+  if (json) {
+    emitJson({ ok: false, reason: 'terms-not-accepted', message });
+  } else {
+    process.stderr.write(`${message}\n`);
+  }
+}
+
+function emitDryRun(
+  json: boolean,
+  workspaceId: number,
+  payload: ReturnType<typeof buildSubmitPayload>,
+): void {
+  if (json) {
+    emitJson({ ok: true, dryRun: true, workspaceId, payload });
+  } else {
+    process.stdout.write('[dry-run] Would POST to ');
+    process.stdout.write(
+      `https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/${workspaceId}/mini-app/review\n`,
+    );
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   }
 }
 
@@ -270,17 +363,11 @@ async function emitFailureAndExit(json: boolean, err: unknown): Promise<void> {
     return exitAfterFlush(ExitCode.NotAuthenticated);
   }
   if (err instanceof TossApiError) {
-    if (json) {
-      emitJson({
-        ok: false,
-        reason: 'api-error',
-        status: err.status,
-        errorCode: err.errorCode,
-        message: err.message,
-      });
-    } else {
-      process.stderr.write(`Console API error: ${err.message}\n`);
-    }
+    // Use the shared emitApiError helper so every command's api-error
+    // JSON shape agrees. Register was the first command with enough
+    // detail to want `status`/`errorCode` exposed, so emitApiError's
+    // optional second arg was extended at the same time.
+    emitApiError(json, err.message, { status: err.status, errorCode: err.errorCode });
     return exitAfterFlush(ExitCode.ApiError);
   }
   if (err instanceof NetworkError) {

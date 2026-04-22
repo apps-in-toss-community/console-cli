@@ -216,6 +216,32 @@ horizontalScreenshots:
     expect((err as ManifestError).field).toBe('verticalScreenshots');
   });
 
+  it('rejects a non-email csEmail', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: not-an-email\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('csEmail');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('rejects a non-http homePageUri', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.app.yaml',
+      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nhomePageUri: javascript:alert(1)\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('homePageUri');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
   it('requires at least 1 category id', async () => {
     const dir = makeTempDir();
     const path = writeManifest(
