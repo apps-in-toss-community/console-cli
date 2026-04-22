@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findReviewEntry, pickMiniAppView, reviewStateFor } from './app.js';
+import { deriveReviewState, findReviewEntry, pickMiniAppView, reviewStateFor } from './app.js';
 
 // `app ls` joins two endpoints (`mini-app` list + `mini-apps/review-status`)
 // by best-effort id match. The helpers are pure and the three-key fallback
@@ -116,5 +116,79 @@ describe('pickMiniAppView', () => {
     expect(pickMiniAppView({ current: {}, draft: null }, 'draft')).toBeNull();
     expect(pickMiniAppView({ current: { miniApp: 'oops' }, draft: null }, 'current')).toBeNull();
     expect(pickMiniAppView({ current: { miniApp: [] }, draft: null }, 'current')).toBeNull();
+  });
+});
+
+// deriveReviewState encodes the UI "검토 중" banner rule so `app status`
+// has a single place to evolve when the rejected / approved shapes come in
+// from a real review cycle. Documented combinations live in app.ts above
+// the function; these tests pin each one.
+describe('deriveReviewState', () => {
+  const base = { current: null, draft: { miniApp: {} }, approvalType: null, rejectedMessage: null };
+
+  it('not-submitted when approvalType is null', () => {
+    expect(deriveReviewState({ ...base }).state).toBe('not-submitted');
+  });
+
+  it('under-review when approvalType=REVIEW and current is null', () => {
+    expect(deriveReviewState({ ...base, approvalType: 'REVIEW', current: null }).state).toBe(
+      'under-review',
+    );
+  });
+
+  it('rejected when rejectedMessage is a non-null string', () => {
+    const s = deriveReviewState({
+      ...base,
+      approvalType: 'REVIEW',
+      current: null,
+      rejectedMessage: 'violates policy X',
+    });
+    expect(s.state).toBe('rejected');
+    expect(s.rejectedMessage).toBe('violates policy X');
+  });
+
+  it('approved when current row exists and there is no fresh draft', () => {
+    expect(
+      deriveReviewState({
+        current: { miniApp: { status: 'LIVE' } },
+        draft: null,
+        approvalType: 'REVIEW',
+        rejectedMessage: null,
+      }).state,
+    ).toBe('approved');
+  });
+
+  it('approved-with-edits when both current and draft exist', () => {
+    expect(
+      deriveReviewState({
+        current: { miniApp: { status: 'LIVE' } },
+        draft: { miniApp: { status: 'PREPARE' } },
+        approvalType: 'REVIEW',
+        rejectedMessage: null,
+      }).state,
+    ).toBe('approved-with-edits');
+  });
+
+  it('unknown for approvalType values other than REVIEW (forward-compat)', () => {
+    // A future approvalType we haven't observed shouldn't get silently mapped
+    // to under-review — flag it as unknown so we notice and add a branch.
+    expect(
+      deriveReviewState({
+        ...base,
+        approvalType: 'FUTURE_TYPE',
+        current: null,
+      }).state,
+    ).toBe('unknown');
+  });
+
+  it('reports hasCurrent/hasDraft flags truthfully so JSON consumers have the raw signal too', () => {
+    const s = deriveReviewState({
+      current: { miniApp: {} },
+      draft: { miniApp: {} },
+      approvalType: 'REVIEW',
+      rejectedMessage: null,
+    });
+    expect(s.hasCurrent).toBe(true);
+    expect(s.hasDraft).toBe(true);
   });
 });
