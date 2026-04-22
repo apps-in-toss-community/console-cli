@@ -1,5 +1,44 @@
 # @ait-co/console-cli
 
+## 0.1.5
+
+### Patch Changes
+
+- 543ba37: Add `aitcc app ls` to list mini-apps in the selected workspace.
+
+  - Fetches `/workspaces/:id/mini-app` and `/workspaces/:id/mini-apps/review-status` in parallel and joins them by app id, so each row surfaces both the app identity and its review state in one call.
+  - Honours the workspace selection from `aitcc workspace use`; `--workspace <id>` overrides for one-off inspection.
+  - `--json` emits `{ ok: true, workspaceId, hasPolicyViolation, apps: [...] }`. `hasPolicyViolation` is surfaced because it is the console's workspace-wide policy flag, not a per-app attribute.
+  - Plain output is `appId<TAB>name<TAB>reviewState` — easy to pipe through `column -t` or `awk`. Unknown review states render as `-`; unnamed apps as `(unnamed)`.
+  - Mini-app payload shape is not yet fully documented (our test workspaces have zero apps); the API client normalises `id`/`name` across a few spellings and stashes the rest under `extra`. Follow-up exploration will tighten this once `sdk-example` is registered as a real mini-app.
+
+- 087cb53: Add `aitcc members ls` and `aitcc keys ls` for workspace member and API-key listing.
+
+  - `aitcc members ls [--workspace <id>]` — list workspace members, with `bizUserNo`, `name`, `email`, `status`, `role`. The `bizUserNo` is the stable per-person identifier; future member-management commands will key off it.
+  - `aitcc keys ls [--workspace <id>]` — list console API keys used for deploy automation. Empty lists include a stderr hint pointing users at the console UI's "발급받기" flow (issuing keys programmatically is a follow-up once we can observe the creation endpoint).
+  - Both commands reuse the shared workspace-context resolver added to `_shared.ts`, so `--workspace` parsing, "no workspace selected", and auth/network/api error triage are identical across `app ls` / `members ls` / `keys ls`.
+  - `parsePositiveInt` moved from `workspace.ts` to `_shared.ts` so every command can depend on it without importing through `workspace.ts`.
+  - Internal: `app ls` migrates to the shared resolver (behaviour-neutral). `keys ls --json` surfaces `needsKey: true` when the key list is empty, so agent-plugin skills can bail early with a friendly message before attempting a deploy that would 401.
+  - Internal: `resolveWorkspaceContext` now has unit tests covering the three failure branches (exit 10 on no session, exit 2 on invalid id, exit 2 on no selected workspace), pinning the agent-plugin JSON contract.
+
+- 58dc6a7: Add a throttled update-check notice that tells users when a newer `aitcc` is available, without hammering GitHub's anonymous 60/hr rate-limit bucket.
+
+  - At most one network call every 24 hours, cached at `$XDG_CACHE_HOME/aitcc/upgrade-check.json` (or `~/.cache/aitcc/upgrade-check.json`).
+  - Failed checks still update the throttle window to prevent aggressive retries.
+  - Conditional GET with the previous ETag — a 304 response consumes no rate-limit slot.
+  - Fully opt-out via `AITCC_NO_UPDATE_CHECK=1`.
+  - The notice is skipped when stdout is not a TTY or when `--json` is passed, so agent-plugin consumers never see a stray line.
+  - Only runs during successful `aitcc whoami` invocations. `aitcc login` / `aitcc logout` / `aitcc upgrade` never trigger the background check.
+
+- ca2e799: Add `aitcc workspace ls / use / show` for multi-tenant workspace management.
+
+  The Apps in Toss console scopes almost every resource (mini-apps, members, API keys, configs) under a workspace; an account can belong to multiple workspaces, so CLI operations need an explicit workspace context. Session schema bumps from v1 to v2 to persist `currentWorkspaceId` — v1 files are still read transparently and upgraded in-memory, then rewritten on the next explicit write.
+
+  - `aitcc workspace ls` — list workspaces the current account can access. Marks the selected one with `*`.
+  - `aitcc workspace use <id>` — select a workspace. Validates the id against the account's actual workspace list before persisting, so a typo fails fast instead of producing confusing 403s from every downstream command.
+  - `aitcc workspace show [--workspace <id>]` — dump the workspace detail (business registration / verification / review state). Pass `--workspace <id>` on `show` (and on future workspace-scoped commands) to override the persisted selection for one call without clobbering it.
+  - `--json` is supported on every subcommand and follows the existing exit-code contract (`ok`, `authenticated`, `reason`). Invalid id input produces `{ ok: false, reason: 'invalid-id', message }` with exit `2`; a missing workspace selection on `show` produces `{ ok: false, reason: 'no-workspace-selected' }`.
+
 ## 0.1.4
 
 ### Patch Changes
