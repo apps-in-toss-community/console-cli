@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
 import {
+  fetchBundles,
+  fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchReviewStatus,
@@ -350,5 +352,127 @@ describe('fetchUserReports', () => {
     await expect(
       fetchUserReports({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/reports is not an array/);
+  });
+});
+
+describe('fetchBundles', () => {
+  it('returns normalised empty page with no query params', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { contents: [], totalPage: 0, currentPage: 0 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchBundles({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/bundles',
+    );
+    expect(got).toEqual({ contents: [], totalPage: 0, currentPage: 0 });
+  });
+
+  it('passes page, tested, and deployStatus through as query params', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { contents: [], totalPage: 3, currentPage: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchBundles(
+      { workspaceId: 3095, miniAppId: 29405, page: 1, tested: true, deployStatus: 'DEPLOYED' },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('page=1');
+    expect(calledUrl).toContain('tested=true');
+    expect(calledUrl).toContain('deployStatus=DEPLOYED');
+    expect(got.totalPage).toBe(3);
+    expect(got.currentPage).toBe(1);
+  });
+
+  it('passes each bundle record through as an opaque record', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            contents: [
+              { id: 101, version: '1.0.0', deployStatus: 'DEPLOYED', createdAt: '2026-04-01' },
+              { id: 102, version: '1.0.1', deployStatus: 'TESTED' },
+            ],
+            totalPage: 1,
+            currentPage: 0,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchBundles({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl });
+    expect(got.contents).toHaveLength(2);
+    expect(got.contents[0]).toMatchObject({ id: 101, version: '1.0.0', deployStatus: 'DEPLOYED' });
+    expect(got.contents[1]).toMatchObject({ id: 102, deployStatus: 'TESTED' });
+  });
+
+  it('throws when contents is not an array', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { contents: 'nope', totalPage: 0, currentPage: 0 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    await expect(
+      fetchBundles({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/contents is not an array/);
+  });
+});
+
+describe('fetchDeployedBundle', () => {
+  it('returns null when no bundle is currently deployed', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const got = await fetchDeployedBundle(3095, 29405, cookies, { fetchImpl });
+    expect(got).toBeNull();
+  });
+
+  it('returns the deployed bundle record verbatim', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            id: 101,
+            version: '1.0.0',
+            deployStatus: 'DEPLOYED',
+            deployedAt: '2026-04-01T12:00:00Z',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchDeployedBundle(3095, 29405, cookies, { fetchImpl });
+    expect(got).toMatchObject({ id: 101, version: '1.0.0', deployStatus: 'DEPLOYED' });
+  });
+
+  it('throws when the response is an array (unexpected)', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchDeployedBundle(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(
+      /Unexpected deployed-bundle shape/,
+    );
   });
 });

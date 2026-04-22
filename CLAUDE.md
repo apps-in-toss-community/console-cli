@@ -53,6 +53,8 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc app status <id>` | ✅ | 앱의 리뷰 상태 (under-review / rejected / approved / approved-with-edits / not-submitted / unknown). `--watch --interval <sec>` 로 상태가 바뀔 때까지 polling. `/with-draft` envelope 필드 (`approvalType`, `current`, `rejectedMessage`, `draft`) 조합으로 derive. |
 | `aitcc app ratings <id>` | ✅ | 사용자 평점·리뷰 목록. `GET /mini-app/:id/app-ratings?page&size&sortField&sortDirection`. `--page`/`--size`/`--sort-field CREATED_AT\|SCORE`/`--sort-direction ASC\|DESC` 지원. 응답에 `averageRating`, `totalReviewCount`, `paging.hasNext` 포함. |
 | `aitcc app reports <id>` | ✅ | 사용자 신고 내역. `GET /mini-apps/:id/user-reports?pageSize&cursor` (**plural** `mini-apps`). Cursor-based pagination — `--cursor`로 다음 페이지 opaque token 전달. 응답: `{reports, nextCursor, hasMore}`. |
+| `aitcc app bundles ls <id>` | ✅ | 앱 업로드 번들 목록. `GET /mini-app/:id/bundles[?page&tested&deployStatus]` — page-based pagination, `{contents, totalPage, currentPage}`. `--page`/`--tested true\|false`/`--deploy-status STR` 필터. |
+| `aitcc app bundles deployed <id>` | ✅ | 현재 배포된 번들 (single record or null). `GET /mini-app/:id/bundles/deployed`. Deploy 확인용 — "지금 살아있는 버전이 뭐지?" 질문에 바로 답. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
