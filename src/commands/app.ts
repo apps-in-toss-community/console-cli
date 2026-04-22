@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 import {
   fetchBundles,
+  fetchCerts,
   fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
@@ -1026,6 +1027,94 @@ const bundlesCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app certs ls <id> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, certs: [...] }   exit 0
+//     { ok: false, reason: 'invalid-id' | ... }        exit 2
+//
+// mTLS certs for an app. Empty array is the common case (no certs
+// generated yet). Per-record shape is passed through opaquely until
+// we observe a populated response — agent-plugin consumers should
+// treat each entry as `Record<string, unknown>`.
+
+const certsLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List mTLS certificates issued for a mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app certs ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const certs = await fetchCerts(workspaceId, appId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, certs });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (certs.length === 0) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no mTLS certs\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}): ${certs.length} cert(s)\n`);
+      for (const c of certs) {
+        const id =
+          typeof c.id === 'string' || typeof c.id === 'number'
+            ? c.id
+            : typeof c.certId === 'string' || typeof c.certId === 'number'
+              ? c.certId
+              : '-';
+        const cn = typeof c.commonName === 'string' ? c.commonName : '-';
+        const createdAt = typeof c.createdAt === 'string' ? c.createdAt : '';
+        const expiresAt =
+          typeof c.expiresAt === 'string'
+            ? c.expiresAt
+            : typeof c.validUntil === 'string'
+              ? c.validUntil
+              : '';
+        process.stdout.write(`${id}\t${cn}\t${createdAt}\t${expiresAt}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const certsCommand = defineCommand({
+  meta: {
+    name: 'certs',
+    description: 'Inspect mTLS certificates for a mini-app.',
+  },
+  subCommands: {
+    ls: certsLsCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1079,6 +1168,7 @@ export const appCommand = defineCommand({
     ratings: ratingsCommand,
     reports: reportsCommand,
     bundles: bundlesCommand,
+    certs: certsCommand,
     register: registerCommand,
   },
 });

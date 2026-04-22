@@ -55,6 +55,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc app reports <id>` | ✅ | 사용자 신고 내역. `GET /mini-apps/:id/user-reports?pageSize&cursor` (**plural** `mini-apps`). Cursor-based pagination — `--cursor`로 다음 페이지 opaque token 전달. 응답: `{reports, nextCursor, hasMore}`. |
 | `aitcc app bundles ls <id>` | ✅ | 앱 업로드 번들 목록. `GET /mini-app/:id/bundles[?page&tested&deployStatus]` — page-based pagination, `{contents, totalPage, currentPage}`. `--page`/`--tested true\|false`/`--deploy-status STR` 필터. |
 | `aitcc app bundles deployed <id>` | ✅ | 현재 배포된 번들 (single record or null). `GET /mini-app/:id/bundles/deployed`. Deploy 확인용 — "지금 살아있는 버전이 뭐지?" 질문에 바로 답. |
+| `aitcc app certs ls <id>` | ✅ | 앱 mTLS 인증서 목록. `GET /mini-app/:id/certs` — simple array. Follow-up `certs create`/`revoke`는 UI flow 관찰 후. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 

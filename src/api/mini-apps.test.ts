@@ -3,6 +3,7 @@ import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
 import {
   fetchBundles,
+  fetchCerts,
   fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
@@ -474,5 +475,55 @@ describe('fetchDeployedBundle', () => {
     await expect(fetchDeployedBundle(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(
       /Unexpected deployed-bundle shape/,
     );
+  });
+});
+
+describe('fetchCerts', () => {
+  it('returns empty array when no certs are provisioned', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const got = await fetchCerts(3095, 29405, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/certs',
+    );
+    expect(got).toEqual([]);
+  });
+
+  it('passes each cert record through as an opaque record', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              id: 1,
+              commonName: 'app.example.com',
+              createdAt: '2026-04-01',
+              validUntil: '2027-04-01',
+            },
+            { id: 2, commonName: 'api.example.com' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchCerts(3095, 29405, cookies, { fetchImpl });
+    expect(got).toHaveLength(2);
+    expect(got[0]).toMatchObject({ id: 1, commonName: 'app.example.com' });
+    expect(got[1]).toMatchObject({ id: 2, commonName: 'api.example.com' });
+  });
+
+  it('throws when the response is not an array', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { id: 1 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchCerts(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(/not an array/);
   });
 });
