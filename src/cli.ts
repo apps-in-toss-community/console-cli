@@ -5,6 +5,7 @@ import { keysCommand } from './commands/keys.js';
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { membersCommand } from './commands/members.js';
+import { noticesCommand } from './commands/notices.js';
 import { upgradeCommand } from './commands/upgrade.js';
 import { whoamiCommand } from './commands/whoami.js';
 import { workspaceCommand } from './commands/workspace.js';
@@ -26,6 +27,7 @@ const main = defineCommand({
     app: appCommand,
     members: membersCommand,
     keys: keysCommand,
+    notices: noticesCommand,
   },
 });
 
