@@ -166,3 +166,19 @@ export async function resolveWorkspaceContext(args: {
 
   return { session, workspaceId };
 }
+
+/**
+ * Session-only sibling of `resolveWorkspaceContext` for commands that
+ * don't need a workspace id (notices come from a shared Toss workspace,
+ * whoami is self-scoped). Same "exits on miss, returns null to force
+ * `if (!session) return`" pattern.
+ */
+export async function requireSession(json: boolean): Promise<Session | null> {
+  const session = await readSession();
+  if (!session) {
+    emitNotAuthenticated(json);
+    await exitAfterFlush(ExitCode.NotAuthenticated);
+    return null;
+  }
+  return session;
+}
