@@ -87,6 +87,7 @@ const cookies: readonly CdpCookie[] = [
 ];
 
 describe('runRegister', () => {
+  const originalXdg = process.env.XDG_CONFIG_HOME;
   let root: string;
   let dir: string;
   let stdout: string[];
@@ -114,6 +115,10 @@ describe('runRegister', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Restore env so a future multi-file test worker doesn't inherit the
+    // tmpdir pointer. Matches the pattern in `_shared.test.ts` / `session.test.ts`.
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdg;
   });
 
   async function writeSessionAt(currentWorkspaceId?: number): Promise<void> {
@@ -129,8 +134,19 @@ describe('runRegister', () => {
     await writeSession(currentWorkspaceId === undefined ? base : { ...base, currentWorkspaceId });
   }
 
+  // Pin `deps.cwd` to the test's tmpdir in every call so the `aitcc.app.yaml`
+  // auto-detect path resolves inside the sandbox, not against whatever the
+  // ambient `process.cwd()` happens to contain. Tests with explicit
+  // `args.config` don't strictly need this, but passing it uniformly keeps
+  // the suite hermetic if someone later drops a repo-root `aitcc.app.yaml`.
+  function depsWith(
+    overrides: Parameters<typeof runRegister>[1] = {},
+  ): Parameters<typeof runRegister>[1] {
+    return { cwd: dir, ...overrides };
+  }
+
   it('emits { ok: true, authenticated: false } + exit 10 when no session exists', async () => {
-    const exit = await captureExit(() => runRegister({ json: true }, {}));
+    const exit = await captureExit(() => runRegister({ json: true }, depsWith()));
     expect(exit?.code).toBe(10);
     expect(stdout.join('')).toContain('"authenticated":false');
   });
@@ -138,7 +154,7 @@ describe('runRegister', () => {
   it('emits no-workspace-selected + exit 2 when session has no workspace', async () => {
     await writeSessionAt();
     const manifest = writeManifest(dir, validManifestBody(dir));
-    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, {}));
+    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, depsWith()));
     expect(exit?.code).toBe(2);
     expect(stdout.join('')).toContain('"reason":"no-workspace-selected"');
   });
@@ -146,7 +162,7 @@ describe('runRegister', () => {
   it('emits invalid-config + exit 2 when the manifest is missing', async () => {
     await writeSessionAt(3095);
     const exit = await captureExit(() =>
-      runRegister({ json: true, config: join(dir, 'missing.yaml') }, {}),
+      runRegister({ json: true, config: join(dir, 'missing.yaml') }, depsWith()),
     );
     expect(exit?.code).toBe(2);
     const out = stdout.join('');
@@ -158,7 +174,7 @@ describe('runRegister', () => {
     const body = validManifestBody(dir);
     delete body.titleKo;
     const manifest = writeManifest(dir, body);
-    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, {}));
+    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, depsWith()));
     expect(exit?.code).toBe(2);
     const out = stdout.join('');
     expect(out).toContain('"reason":"missing-required-field"');
@@ -170,7 +186,7 @@ describe('runRegister', () => {
     const body = validManifestBody(dir);
     writePng(dir, 'logo.png', 512, 512);
     const manifest = writeManifest(dir, body);
-    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, {}));
+    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, depsWith()));
     expect(exit?.code).toBe(2);
     const out = stdout.join('');
     expect(out).toContain('"reason":"image-dimension-mismatch"');
@@ -187,7 +203,7 @@ describe('runRegister', () => {
     const { rmSync } = await import('node:fs');
     rmSync(join(dir, 'logo.png'));
     const manifest = writeManifest(dir, body);
-    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, {}));
+    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, depsWith()));
     expect(exit?.code).toBe(2);
     const out = stdout.join('');
     expect(out).toContain('"reason":"image-unreadable"');
@@ -201,12 +217,12 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => {
             uploadCalls += 1;
             return 'https://cdn.example/x.png';
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(2);
@@ -224,7 +240,7 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, dryRun: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => {
             uploadCalls += 1;
             return 'https://cdn.example/x.png';
@@ -233,7 +249,7 @@ describe('runRegister', () => {
             submitCalls += 1;
             return { miniAppId: 0, reviewState: 'PENDING', extra: {} };
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(0);
@@ -252,11 +268,11 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => {
             throw new TossApiError(400, 'IMG_TOO_LARGE', 'no', 1);
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(17);
@@ -273,11 +289,11 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => {
             throw new NetworkError('https://x', new Error('ECONNRESET'));
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(11);
@@ -291,12 +307,12 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => 'https://cdn.example/x.png',
           submitImpl: async () => {
             throw new TossApiError(400, 'INVALID_APP_NAME', 'nope', 1);
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(17);
@@ -312,12 +328,12 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => 'https://cdn.example/x.png',
           submitImpl: async () => {
             throw new NetworkError('https://submit', new Error('ETIMEDOUT'));
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(11);
@@ -331,12 +347,12 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => 'https://cdn.example/x.png',
           submitImpl: async () => {
             throw new TossApiError(401, '4010', 'auth', 1);
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(10);
@@ -352,7 +368,7 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async (params) => {
             uploads.push({
               width: params.validWidth,
@@ -365,7 +381,7 @@ describe('runRegister', () => {
             submitted = payload;
             return { miniAppId: 123, reviewState: 'PENDING', extra: {} };
           },
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(0);
@@ -399,10 +415,10 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: true, acceptTerms: true, workspace: '9999', config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => 'https://cdn.example/x.png',
           submitImpl: async () => ({ miniAppId: 7, reviewState: 'PENDING', extra: {} }),
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(0);
@@ -415,10 +431,10 @@ describe('runRegister', () => {
     const exit = await captureExit(() =>
       runRegister(
         { json: false, acceptTerms: true, config: manifest },
-        {
+        depsWith({
           uploadImpl: async () => 'https://cdn.example/x.png',
           submitImpl: async () => ({ miniAppId: 123, reviewState: 'PENDING', extra: {} }),
-        },
+        }),
       ),
     );
     expect(exit?.code).toBe(0);
@@ -432,7 +448,7 @@ describe('runRegister', () => {
     writePng(dir, 'logo.png', 512, 512);
     const manifest = writeManifest(dir, body);
     const exit = await captureExit(() =>
-      runRegister({ json: false, acceptTerms: true, config: manifest }, {}),
+      runRegister({ json: false, acceptTerms: true, config: manifest }, depsWith()),
     );
     expect(exit?.code).toBe(2);
     expect(stdout.join('')).toBe('');

@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { NetworkError, TossApiError } from '../api/http.js';
 import {
   type CreateMiniAppResult,
   createMiniApp,
@@ -21,13 +20,7 @@ import {
 } from '../config/image-validator.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import {
-  emitApiError,
-  emitJson,
-  emitNetworkError,
-  emitNotAuthenticated,
-  resolveWorkspaceContext,
-} from './_shared.js';
+import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
 import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.js';
 
 // `runRegister` is the testable seam for `aitcc app register`. The public
@@ -59,11 +52,12 @@ import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.j
 //     validated so dry-run catches the same local errors as a real run.)
 //
 //   --accept-terms required for real submits:
-//     The console UI gates "검토 요청하기" on 5 mandatory legal-agreement
-//     checkboxes (plus category-dependent ones — see VALIDATION-RULES.md).
-//     We can't see those checkboxes on the wire yet (payload shape is
-//     inferred), so the CLI enforces the gate locally: submit refuses
-//     without --accept-terms. The flag is not required for --dry-run.
+//     The console UI gates "검토 요청하기" on several mandatory legal-
+//     agreement checkboxes (common + category-dependent — see
+//     VALIDATION-RULES.md). We can't see those on the wire yet (payload
+//     shape is inferred), so the CLI enforces the gate locally: submit
+//     refuses without --accept-terms. The flag is not required for
+//     --dry-run.
 //     { ok: false, reason: 'terms-not-accepted', message }                  exit 2
 
 export interface RegisterArgs {
@@ -89,7 +83,10 @@ export interface RegisterDeps {
 // `process.exit` and never returns) or bubbles a thrown exception. A
 // future maintainer should not try to `catch` the absence of a return
 // value as "success"; the success signal is `process.exit(0)` itself.
-export async function runRegister(args: RegisterArgs, deps: RegisterDeps): Promise<void> {
+//
+// `deps` defaults to `{}` so the citty wrapper (`app.ts`) doesn't need
+// to pass a literal every call; tests override specific fields.
+export async function runRegister(args: RegisterArgs, deps: RegisterDeps = {}): Promise<void> {
   const ctx = await resolveWorkspaceContext({
     json: args.json,
     ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
@@ -192,6 +189,13 @@ async function uploadAllImages(
   cookies: readonly CdpCookie[],
   deps: RegisterDeps,
 ): Promise<UploadedImageUrls> {
+  // Serial on purpose: dog-food task #23 has not yet confirmed that the
+  // console's `/resource/:wid/upload` endpoint tolerates concurrent
+  // POSTs from the same session. `Promise.all` would shave a few seconds
+  // off a 5-image upload, but until we've observed the server under
+  // parallel load, the failure mode ("429? 503? silent drop?") is
+  // unknown and a first-registration flake is much more expensive to
+  // debug than a slower linear run.
   const uploadImpl = deps.uploadImpl ?? ((p) => uploadMiniAppResource(p));
 
   const logo = await uploadOne(uploadImpl, {
@@ -315,7 +319,7 @@ function emitImageDimensionError(json: boolean, err: ImageDimensionError): void 
 
 function emitTermsNotAccepted(json: boolean): void {
   const message =
-    'The console requires 5 legal-agreement checkboxes before submitting a mini-app for review. ' +
+    'The console requires several legal-agreement checkboxes before submitting a mini-app for review. ' +
     'Re-run with --accept-terms to attest that you have read and agree to each of them ' +
     '(see VALIDATION-RULES.md or the console UI), or use --dry-run to preview the payload without submitting.';
   if (json) {
@@ -357,23 +361,10 @@ function emitSuccess(json: boolean, workspaceId: number, result: CreateMiniAppRe
   }
 }
 
+// Thin wrapper kept for local readability — the real dispatch lives in
+// `_shared.ts::emitFailureFromError` and is shared with app/keys/
+// members/workspace so every command's auth/network/api-error JSON
+// shape agrees.
 async function emitFailureAndExit(json: boolean, err: unknown): Promise<void> {
-  if (err instanceof TossApiError && err.isAuthError) {
-    emitNotAuthenticated(json, 'session-expired');
-    return exitAfterFlush(ExitCode.NotAuthenticated);
-  }
-  if (err instanceof TossApiError) {
-    // Use the shared emitApiError helper so every command's api-error
-    // JSON shape agrees. Register was the first command with enough
-    // detail to want `status`/`errorCode` exposed, so emitApiError's
-    // optional second arg was extended at the same time.
-    emitApiError(json, err.message, { status: err.status, errorCode: err.errorCode });
-    return exitAfterFlush(ExitCode.ApiError);
-  }
-  if (err instanceof NetworkError) {
-    emitNetworkError(json, err.message);
-    return exitAfterFlush(ExitCode.NetworkError);
-  }
-  emitApiError(json, (err as Error).message);
-  return exitAfterFlush(ExitCode.ApiError);
+  return emitFailureFromError(json, err);
 }

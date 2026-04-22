@@ -1,3 +1,4 @@
+import { NetworkError, TossApiError } from '../api/http.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, type Session, sessionPathForDiagnostics } from '../session.js';
@@ -68,6 +69,36 @@ export function emitApiError(
   } else {
     process.stderr.write(`Unexpected error: ${message}\n`);
   }
+}
+
+/**
+ * Shared auth/network/api dispatch. Every session-scoped command's
+ * `catch (err)` block boils down to the same sequence: TossApiError
+ * (auth → exit 10, otherwise → exit 17 with status + errorCode),
+ * NetworkError (exit 11), fallback (exit 17 with just a message).
+ * Exists so we get a single source of truth for the api-error JSON
+ * shape — previously each command duplicated the if/else ladder and
+ * `register` diverged (it exposed `status`/`errorCode` that the others
+ * didn't) until this extraction lined them up.
+ *
+ * Returns `Promise<void>` but never returns at runtime: every branch
+ * awaits `exitAfterFlush` which calls `process.exit`.
+ */
+export async function emitFailureFromError(json: boolean, err: unknown): Promise<void> {
+  if (err instanceof TossApiError && err.isAuthError) {
+    emitNotAuthenticated(json, 'session-expired');
+    return exitAfterFlush(ExitCode.NotAuthenticated);
+  }
+  if (err instanceof TossApiError) {
+    emitApiError(json, err.message, { status: err.status, errorCode: err.errorCode });
+    return exitAfterFlush(ExitCode.ApiError);
+  }
+  if (err instanceof NetworkError) {
+    emitNetworkError(json, err.message);
+    return exitAfterFlush(ExitCode.NetworkError);
+  }
+  emitApiError(json, (err as Error).message);
+  return exitAfterFlush(ExitCode.ApiError);
 }
 
 // Parse a CLI-provided workspace id strictly: only the form `^[1-9]\d*$`

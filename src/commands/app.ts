@@ -1,15 +1,8 @@
 import { defineCommand } from 'citty';
-import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchMiniApps, fetchReviewStatus } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import {
-  emitApiError,
-  emitJson,
-  emitNetworkError,
-  emitNotAuthenticated,
-  resolveWorkspaceContext,
-} from './_shared.js';
+import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
 import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
@@ -118,16 +111,7 @@ const lsCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
-      if (err instanceof TossApiError && err.isAuthError) {
-        emitNotAuthenticated(args.json, 'session-expired');
-        return exitAfterFlush(ExitCode.NotAuthenticated);
-      }
-      if (err instanceof NetworkError) {
-        emitNetworkError(args.json, err.message);
-        return exitAfterFlush(ExitCode.NetworkError);
-      }
-      emitApiError(args.json, (err as Error).message);
-      return exitAfterFlush(ExitCode.ApiError);
+      return emitFailureFromError(args.json, err);
     }
   },
 });
@@ -161,22 +145,19 @@ const registerCommand = defineCommand({
     'accept-terms': {
       type: 'boolean',
       description:
-        'Attest to the 5 console legal-agreement checkboxes (required for real submits).',
+        'Attest to the required console legal-agreement checkboxes (see VALIDATION-RULES.md). Required for real submits.',
       default: false,
     },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    await runRegister(
-      {
-        json: args.json,
-        dryRun: args['dry-run'],
-        acceptTerms: args['accept-terms'],
-        ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
-        ...(args.config !== undefined ? { config: args.config } : {}),
-      },
-      {},
-    );
+    await runRegister({
+      json: args.json,
+      dryRun: args['dry-run'],
+      acceptTerms: args['accept-terms'],
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+      ...(args.config !== undefined ? { config: args.config } : {}),
+    });
   },
 });
 
