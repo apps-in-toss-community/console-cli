@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
-import { fetchMiniAppRatings, fetchMiniApps, fetchReviewStatus } from './mini-apps.js';
+import {
+  fetchMiniAppRatings,
+  fetchMiniApps,
+  fetchReviewStatus,
+  fetchUserReports,
+} from './mini-apps.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -256,5 +261,94 @@ describe('fetchMiniAppRatings', () => {
     await expect(
       fetchMiniAppRatings({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/paging missing/);
+  });
+});
+
+describe('fetchUserReports', () => {
+  it('hits /mini-apps/:aid/user-reports (plural!) with default page size', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { reports: [], nextCursor: null, hasMore: false },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchUserReports({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-apps/29405/user-reports?pageSize=20',
+    );
+    expect(got).toEqual({ reports: [], nextCursor: null, hasMore: false });
+  });
+
+  it('passes cursor and custom pageSize through', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { reports: [], nextCursor: 'next-xyz', hasMore: true },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchUserReports(
+      { workspaceId: 3095, miniAppId: 29405, pageSize: 5, cursor: 'abc' },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('pageSize=5');
+    expect(calledUrl).toContain('cursor=abc');
+    expect(got.nextCursor).toBe('next-xyz');
+    expect(got.hasMore).toBe(true);
+  });
+
+  it('passes each report record through as an opaque record', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            reports: [
+              {
+                id: 1,
+                reason: 'SPAM',
+                content: 'bad ad',
+                createdAt: '2026-04-20T12:00:00Z',
+              },
+              { id: 2, reason: 'INAPPROPRIATE' },
+            ],
+            nextCursor: null,
+            hasMore: false,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchUserReports({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(got.reports).toHaveLength(2);
+    expect(got.reports[0]).toMatchObject({ id: 1, reason: 'SPAM', content: 'bad ad' });
+    expect(got.reports[1]).toMatchObject({ id: 2, reason: 'INAPPROPRIATE' });
+  });
+
+  it('throws when reports is not an array', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { reports: 'nope', nextCursor: null, hasMore: false },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    await expect(
+      fetchUserReports({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/reports is not an array/);
   });
 });

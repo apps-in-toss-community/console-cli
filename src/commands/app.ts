@@ -4,6 +4,7 @@ import {
   fetchMiniApps,
   fetchMiniAppWithDraft,
   fetchReviewStatus,
+  fetchUserReports,
   type RatingSortDirection,
   type RatingSortField,
 } from '../api/mini-apps.js';
@@ -686,6 +687,139 @@ const ratingsCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app reports <id> [--workspace <id>] [--page-size N] [--cursor <str>]:
+//     { ok: true, workspaceId, appId, pageSize, cursor, nextCursor,
+//       hasMore, reports: [...] }                              exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-config', ... } exit 2
+//
+// The endpoint is `/workspaces/:wid/mini-apps/:aid/user-reports` —
+// note the **plural** `mini-apps` (same split-personality as review-status).
+// Pagination is cursor-based: the server hands back `nextCursor` + `hasMore`,
+// we pass `--cursor` as an opaque string next call.
+
+const reportsCommand = defineCommand({
+  meta: {
+    name: 'reports',
+    description: 'List user-submitted reports (신고 내역) for a mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    'page-size': { type: 'string', description: 'Page size (default 20).', default: '20' },
+    cursor: {
+      type: 'string',
+      description: 'Opaque cursor from a previous response `nextCursor`.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app reports: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const pageSizeResult = parseNonNegativeInt(args['page-size'], 'page-size');
+    if ('error' in pageSizeResult) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'page-size',
+          message: pageSizeResult.error,
+        });
+      } else {
+        process.stderr.write(`app reports: ${pageSizeResult.error}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    if (pageSizeResult.value === 0) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'page-size',
+          message: '--page-size must be at least 1',
+        });
+      } else {
+        process.stderr.write('app reports: --page-size must be at least 1\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchUserReports(
+        {
+          workspaceId,
+          miniAppId: appId,
+          pageSize: pageSizeResult.value,
+          ...(typeof args.cursor === 'string' && args.cursor.length > 0
+            ? { cursor: args.cursor }
+            : {}),
+        },
+        session.cookies,
+      );
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          pageSize: pageSizeResult.value,
+          cursor: args.cursor ?? null,
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          reports: result.reports,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): ${result.reports.length} report(s) on this page\n`,
+      );
+      if (result.reports.length === 0) {
+        process.stdout.write('No reports.\n');
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      for (const r of result.reports) {
+        const id = typeof r.id === 'string' || typeof r.id === 'number' ? r.id : '-';
+        const reason = typeof r.reason === 'string' ? r.reason : (r.reportType ?? '-');
+        const text =
+          typeof r.content === 'string' ? r.content : typeof r.detail === 'string' ? r.detail : '';
+        const createdAt =
+          typeof r.createdAt === 'string'
+            ? r.createdAt
+            : typeof r.reportedAt === 'string'
+              ? r.reportedAt
+              : '';
+        process.stdout.write(`${id}\t${createdAt}\t${reason}\t${text}\n`);
+      }
+      if (result.hasMore && result.nextCursor) {
+        process.stdout.write(`(more: --cursor ${result.nextCursor})\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -737,6 +871,7 @@ export const appCommand = defineCommand({
     show: showCommand,
     status: statusCommand,
     ratings: ratingsCommand,
+    reports: reportsCommand,
     register: registerCommand,
   },
 });
