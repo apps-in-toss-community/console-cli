@@ -367,6 +367,37 @@ export async function fetchBundles(
   return { contents, totalPage, currentPage };
 }
 
+// --- mTLS certs ---
+//
+// GET /workspaces/:wid/mini-app/:aid/certs → array of cert records.
+//
+// Observed empty case on app 29405 (2026-04-23): `[]`. Per-record shape
+// not yet observed; passed through opaquely. The console UI exposes
+// "mTLS 인증서" for generating client certificates, so a real app
+// will eventually populate this and we can pin fields (probably
+// `certId` / `commonName` / `createdAt` / expiry).
+
+export async function fetchCerts(
+  workspaceId: number,
+  miniAppId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<readonly Readonly<Record<string, unknown>>[]> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/certs`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (!Array.isArray(raw)) {
+    throw new Error(`Unexpected certs shape for app=${miniAppId}: not an array`);
+  }
+  return raw.map((c) => {
+    if (c === null || typeof c !== 'object') return {};
+    return c as Record<string, unknown>;
+  });
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,
