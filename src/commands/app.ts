@@ -1,5 +1,12 @@
 import { defineCommand } from 'citty';
-import { fetchMiniApps, fetchMiniAppWithDraft, fetchReviewStatus } from '../api/mini-apps.js';
+import {
+  fetchMiniAppRatings,
+  fetchMiniApps,
+  fetchMiniAppWithDraft,
+  fetchReviewStatus,
+  type RatingSortDirection,
+  type RatingSortField,
+} from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
@@ -477,6 +484,208 @@ const statusCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app ratings <id> [--workspace <id>] [--page N] [--size N]
+//                    [--sort-field CREATED_AT|SCORE] [--sort-direction ASC|DESC]:
+//     { ok: true, workspaceId, appId, page, size, paging, averageRating,
+//       totalReviewCount, ratings: [...] }                                 exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                       exit 2
+//     { ok: false, reason: 'invalid-id', message }                         exit 2
+//     { ok: false, reason: 'invalid-config', field, message }              exit 2
+//
+// The `sortField` values reflect what the console UI emits; the server
+// accepts them exactly. We don't enumerate more values because no other
+// orderings are observed — if the server supports them, add them once
+// they appear in a real capture.
+
+const VALID_SORT_FIELDS: readonly RatingSortField[] = ['CREATED_AT', 'SCORE'];
+const VALID_SORT_DIRECTIONS: readonly RatingSortDirection[] = ['ASC', 'DESC'];
+
+function parseNonNegativeInt(raw: string, field: string): { value: number } | { error: string } {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    return { error: `--${field} must be a non-negative integer (got ${JSON.stringify(raw)})` };
+  }
+  return { value: n };
+}
+
+const ratingsCommand = defineCommand({
+  meta: {
+    name: 'ratings',
+    description: 'List user ratings and reviews left for a mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    size: { type: 'string', description: 'Page size.', default: '20' },
+    'sort-field': {
+      type: 'string',
+      description: 'Sort field: CREATED_AT (default) or SCORE.',
+      default: 'CREATED_AT',
+    },
+    'sort-direction': {
+      type: 'string',
+      description: 'Sort direction: ASC or DESC (default).',
+      default: 'DESC',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app ratings: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const pageResult = parseNonNegativeInt(args.page, 'page');
+    if ('error' in pageResult) {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-config', field: 'page', message: pageResult.error });
+      } else {
+        process.stderr.write(`app ratings: ${pageResult.error}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sizeResult = parseNonNegativeInt(args.size, 'size');
+    if ('error' in sizeResult) {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-config', field: 'size', message: sizeResult.error });
+      } else {
+        process.stderr.write(`app ratings: ${sizeResult.error}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    if (sizeResult.value === 0) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'size',
+          message: '--size must be at least 1',
+        });
+      } else {
+        process.stderr.write('app ratings: --size must be at least 1\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sortField = args['sort-field'];
+    if (!VALID_SORT_FIELDS.includes(sortField as RatingSortField)) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'sort-field',
+          message: `--sort-field must be one of ${VALID_SORT_FIELDS.join('|')} (got ${JSON.stringify(sortField)})`,
+        });
+      } else {
+        process.stderr.write(`app ratings: invalid --sort-field ${JSON.stringify(sortField)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sortDirection = args['sort-direction'];
+    if (!VALID_SORT_DIRECTIONS.includes(sortDirection as RatingSortDirection)) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'sort-direction',
+          message: `--sort-direction must be one of ${VALID_SORT_DIRECTIONS.join('|')} (got ${JSON.stringify(sortDirection)})`,
+        });
+      } else {
+        process.stderr.write(
+          `app ratings: invalid --sort-direction ${JSON.stringify(sortDirection)}\n`,
+        );
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchMiniAppRatings(
+        {
+          workspaceId,
+          miniAppId: appId,
+          page: pageResult.value,
+          size: sizeResult.value,
+          sortField: sortField as RatingSortField,
+          sortDirection: sortDirection as RatingSortDirection,
+        },
+        session.cookies,
+      );
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          page: pageResult.value,
+          size: sizeResult.value,
+          sortField,
+          sortDirection,
+          averageRating: result.averageRating,
+          totalReviewCount: result.totalReviewCount,
+          paging: result.paging,
+          ratings: result.ratings,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): ${result.totalReviewCount} review(s), avg ${result.averageRating.toFixed(2)}\n`,
+      );
+      if (result.ratings.length === 0) {
+        process.stdout.write('No ratings on this page.\n');
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      for (const r of result.ratings) {
+        const score = typeof r.score === 'number' ? r.score : (r.rating ?? '-');
+        const author =
+          typeof r.nickname === 'string'
+            ? r.nickname
+            : typeof r.userName === 'string'
+              ? r.userName
+              : '(anon)';
+        const text =
+          typeof r.content === 'string'
+            ? r.content
+            : typeof r.reviewContent === 'string'
+              ? r.reviewContent
+              : '';
+        const createdAt =
+          typeof r.createdAt === 'string'
+            ? r.createdAt
+            : typeof r.reviewedAt === 'string'
+              ? r.reviewedAt
+              : '';
+        process.stdout.write(`${score}\t${createdAt}\t${author}\t${text}\n`);
+      }
+      if (result.paging.hasNext) {
+        process.stdout.write(
+          `(more: --page ${pageResult.value + 1} for next ${sizeResult.value})\n`,
+        );
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -527,6 +736,7 @@ export const appCommand = defineCommand({
     ls: lsCommand,
     show: showCommand,
     status: statusCommand,
+    ratings: ratingsCommand,
     register: registerCommand,
   },
 });

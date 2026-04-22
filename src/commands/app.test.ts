@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { deriveReviewState, findReviewEntry, pickMiniAppView, reviewStateFor } from './app.js';
 
+// parseNonNegativeInt is not exported (rendering would widen the surface
+// without enough reuse) — ratings parsing is covered at the CLI level via
+// integration tests in env where the CLI spawns.
+
 // `app ls` joins two endpoints (`mini-app` list + `mini-apps/review-status`)
 // by best-effort id match. The helpers are pure and the three-key fallback
 // logic is exactly the place a silent "simplify" refactor would regress.

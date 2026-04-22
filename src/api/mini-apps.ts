@@ -149,6 +149,92 @@ function isRecordOrNull(v: unknown): v is Record<string, unknown> | null {
   return v === null || (typeof v === 'object' && !Array.isArray(v));
 }
 
+// --- Ratings & reviews ---
+//
+// GET /workspaces/:wid/mini-app/:aid/app-ratings
+//   ?page=0&size=20&sortField=CREATED_AT&sortDirection=DESC
+//
+// Response envelope (observed 2026-04-23 on app 29405, empty case):
+//   { ratings: [...], paging: { pageNumber, pageSize, hasNext, totalCount },
+//     averageRating, totalReviewCount }
+//
+// Individual rating records have not yet been observed (sdk-example has
+// zero reviews while under review). We pass each record through as an
+// opaque Record<string, unknown> for now; once a real review lands we can
+// pin the per-row shape without breaking the wrapper.
+
+export type RatingSortField = 'CREATED_AT' | 'SCORE';
+export type RatingSortDirection = 'ASC' | 'DESC';
+
+export interface RatingsPaging {
+  readonly pageNumber: number;
+  readonly pageSize: number;
+  readonly hasNext: boolean;
+  readonly totalCount: number;
+}
+
+export interface MiniAppRatingsPage {
+  readonly ratings: readonly Readonly<Record<string, unknown>>[];
+  readonly paging: RatingsPaging;
+  readonly averageRating: number;
+  readonly totalReviewCount: number;
+}
+
+export interface FetchRatingsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly page?: number;
+  readonly size?: number;
+  readonly sortField?: RatingSortField;
+  readonly sortDirection?: RatingSortDirection;
+}
+
+export async function fetchMiniAppRatings(
+  params: FetchRatingsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<MiniAppRatingsPage> {
+  const page = params.page ?? 0;
+  const size = params.size ?? 20;
+  const sortField = params.sortField ?? 'CREATED_AT';
+  const sortDirection = params.sortDirection ?? 'DESC';
+  const url =
+    `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/app-ratings` +
+    `?page=${page}&size=${size}&sortField=${sortField}&sortDirection=${sortDirection}`;
+
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error(`Unexpected ratings shape for app=${params.miniAppId}`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const ratingsRaw = rec.ratings;
+  if (!Array.isArray(ratingsRaw)) {
+    throw new Error(`Unexpected ratings shape: ratings is not an array (app=${params.miniAppId})`);
+  }
+  const ratings = ratingsRaw.map((r) => {
+    if (r === null || typeof r !== 'object') return {};
+    return r as Record<string, unknown>;
+  });
+  const pagingRaw = rec.paging;
+  if (pagingRaw === null || typeof pagingRaw !== 'object') {
+    throw new Error(`Unexpected ratings shape: paging missing (app=${params.miniAppId})`);
+  }
+  const p = pagingRaw as Record<string, unknown>;
+  const paging: RatingsPaging = {
+    pageNumber: typeof p.pageNumber === 'number' ? p.pageNumber : page,
+    pageSize: typeof p.pageSize === 'number' ? p.pageSize : size,
+    hasNext: Boolean(p.hasNext),
+    totalCount: typeof p.totalCount === 'number' ? p.totalCount : 0,
+  };
+  const averageRating = typeof rec.averageRating === 'number' ? rec.averageRating : 0;
+  const totalReviewCount = typeof rec.totalReviewCount === 'number' ? rec.totalReviewCount : 0;
+  return { ratings, paging, averageRating, totalReviewCount };
+}
+
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`

@@ -51,6 +51,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc app register` | ✅ | YAML/JSON 매니페스트 + 이미지 업로드 + 등록+심사 요청 one-shot. submit payload shape는 dog-food task #23 (2026-04-22) 에서 실제 네트워크로 확정됨. 완전한 body로 제출 시 앱이 즉시 "검토 중" 상태로 진입. |
 | `aitcc app show <id>` | ✅ | `GET /mini-app/:id/with-draft` 로 draft + current 전체 뷰. `--view draft|current|merged` 로 어느 쪽 볼지 선택. 기본값은 `draft` — 미검수 앱에서 current는 비어있음. |
 | `aitcc app status <id>` | ✅ | 앱의 리뷰 상태 (under-review / rejected / approved / approved-with-edits / not-submitted / unknown). `--watch --interval <sec>` 로 상태가 바뀔 때까지 polling. `/with-draft` envelope 필드 (`approvalType`, `current`, `rejectedMessage`, `draft`) 조합으로 derive. |
+| `aitcc app ratings <id>` | ✅ | 사용자 평점·리뷰 목록. `GET /mini-app/:id/app-ratings?page&size&sortField&sortDirection`. `--page`/`--size`/`--sort-field CREATED_AT\|SCORE`/`--sort-direction ASC\|DESC` 지원. 응답에 `averageRating`, `totalReviewCount`, `paging.hasNext` 포함. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
