@@ -1,14 +1,12 @@
 import { defineCommand } from 'citty';
-import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import { fetchWorkspaceDetail } from '../api/workspaces.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, setCurrentWorkspaceId } from '../session.js';
 import {
-  emitApiError,
+  emitFailureFromError,
   emitJson,
-  emitNetworkError,
   emitNotAuthenticated,
   parsePositiveInt,
 } from './_shared.js';
@@ -83,16 +81,7 @@ const lsCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
-      if (err instanceof TossApiError && err.isAuthError) {
-        emitNotAuthenticated(args.json, 'session-expired');
-        return exitAfterFlush(ExitCode.NotAuthenticated);
-      }
-      if (err instanceof NetworkError) {
-        emitNetworkError(args.json, err.message);
-        return exitAfterFlush(ExitCode.NetworkError);
-      }
-      emitApiError(args.json, (err as Error).message);
-      return exitAfterFlush(ExitCode.ApiError);
+      return emitFailureFromError(args.json, err);
     }
   },
 });
@@ -165,16 +154,7 @@ const useCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
-      if (err instanceof TossApiError && err.isAuthError) {
-        emitNotAuthenticated(args.json, 'session-expired');
-        return exitAfterFlush(ExitCode.NotAuthenticated);
-      }
-      if (err instanceof NetworkError) {
-        emitNetworkError(args.json, err.message);
-        return exitAfterFlush(ExitCode.NetworkError);
-      }
-      emitApiError(args.json, (err as Error).message);
-      return exitAfterFlush(ExitCode.ApiError);
+      return emitFailureFromError(args.json, err);
     }
   },
 });
@@ -246,16 +226,7 @@ const showCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
-      if (err instanceof TossApiError && err.isAuthError) {
-        emitNotAuthenticated(args.json, 'session-expired');
-        return exitAfterFlush(ExitCode.NotAuthenticated);
-      }
-      if (err instanceof NetworkError) {
-        emitNetworkError(args.json, err.message);
-        return exitAfterFlush(ExitCode.NetworkError);
-      }
-      emitApiError(args.json, (err as Error).message);
-      return exitAfterFlush(ExitCode.ApiError);
+      return emitFailureFromError(args.json, err);
     }
   },
 });

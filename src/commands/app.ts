@@ -1,15 +1,9 @@
 import { defineCommand } from 'citty';
-import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchMiniApps, fetchReviewStatus } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import {
-  emitApiError,
-  emitJson,
-  emitNetworkError,
-  emitNotAuthenticated,
-  resolveWorkspaceContext,
-} from './_shared.js';
+import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
+import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -117,17 +111,53 @@ const lsCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
-      if (err instanceof TossApiError && err.isAuthError) {
-        emitNotAuthenticated(args.json, 'session-expired');
-        return exitAfterFlush(ExitCode.NotAuthenticated);
-      }
-      if (err instanceof NetworkError) {
-        emitNetworkError(args.json, err.message);
-        return exitAfterFlush(ExitCode.NetworkError);
-      }
-      emitApiError(args.json, (err as Error).message);
-      return exitAfterFlush(ExitCode.ApiError);
+      return emitFailureFromError(args.json, err);
     }
+  },
+});
+
+// TODO(#23): after the first real submission we may want a follow-up
+// `aitcc app review-request <id>` command. The console UI has a separate
+// "검토 요청하기" step after create; whether it is a distinct endpoint
+// or folded into /mini-app/review is not yet captured.
+const registerCommand = defineCommand({
+  meta: {
+    name: 'register',
+    description:
+      'Register a mini-app in the selected workspace from a YAML/JSON manifest. ' +
+      'Uploads logo/thumbnail/screenshots, then submits the create payload.',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace (`aitcc workspace use`).',
+    },
+    config: {
+      type: 'string',
+      description:
+        'Path to the app manifest. Defaults to `./aitcc.app.yaml`, then `./aitcc.app.json`.',
+    },
+    'dry-run': {
+      type: 'boolean',
+      description: 'Validate manifest + images and print the inferred submit payload; no uploads.',
+      default: false,
+    },
+    'accept-terms': {
+      type: 'boolean',
+      description:
+        'Attest to the required console legal-agreement checkboxes (see VALIDATION-RULES.md). Required for real submits.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    await runRegister({
+      json: args.json,
+      dryRun: args['dry-run'],
+      acceptTerms: args['accept-terms'],
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+      ...(args.config !== undefined ? { config: args.config } : {}),
+    });
   },
 });
 
@@ -138,5 +168,6 @@ export const appCommand = defineCommand({
   },
   subCommands: {
     ls: lsCommand,
+    register: registerCommand,
   },
 });

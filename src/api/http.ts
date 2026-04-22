@@ -191,10 +191,30 @@ export async function requestConsoleApi<T>(options: RequestOptions): Promise<T> 
     init.body = JSON.stringify(options.body);
   }
 
-  const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
+  return executeAndUnwrap<T>(url, init, options.fetchImpl);
+}
+
+/**
+ * Send a pre-built `RequestInit` against the console API and unwrap the
+ * Toss envelope. Use this when the caller needs to build the body itself
+ * (multipart uploads, binary requests, anything that can't live under
+ * `requestConsoleApi`'s JSON-body assumption). Cookie header composition
+ * and any additional headers remain the caller's responsibility.
+ *
+ * Exists so `uploadMiniAppResource` doesn't have to re-implement the
+ * text→JSON→envelope→error branch in `requestConsoleApi`; drift between
+ * the two paths has bitten us once (cf. the refactor in the
+ * `app register` review).
+ */
+export async function executeAndUnwrap<T>(
+  url: URL,
+  init: RequestInit,
+  fetchImpl?: FetchLike,
+): Promise<T> {
+  const impl: FetchLike = fetchImpl ?? ((input, i) => fetch(input, i));
   let res: Response;
   try {
-    res = await fetchImpl(url, init);
+    res = await impl(url, init);
   } catch (err) {
     throw new NetworkError(url.toString(), err as Error);
   }
