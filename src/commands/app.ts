@@ -1,5 +1,7 @@
 import { defineCommand } from 'citty';
 import {
+  fetchBundles,
+  fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchMiniAppWithDraft,
@@ -820,6 +822,210 @@ const reportsCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app bundles ls <id> [--workspace <id>] [--page N]
+//                       [--tested true|false] [--deploy-status STR]:
+//     { ok: true, workspaceId, appId, page, totalPage, currentPage,
+//       bundles: [...] }                                       exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-config' ... } exit 2
+//
+//   app bundles deployed <id> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, bundle: {...} | null }   exit 0
+//     { ok: false, reason: 'invalid-id' ... }                  exit 2
+//
+// Bundles are the artefact that `aitcc deploy` will eventually upload
+// (task #24). Listing them now lets agent-plugin and humans see the
+// deploy surface even before we can write new ones.
+
+const bundlesLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List upload bundles for a mini-app (page-based pagination).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    tested: {
+      type: 'string',
+      description: 'Filter: `true` to show only tested bundles (or `false`).',
+    },
+    'deploy-status': {
+      type: 'string',
+      description: 'Filter by deploy status (e.g. DEPLOYED).',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const pageResult = parseNonNegativeInt(args.page, 'page');
+    if ('error' in pageResult) {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-config', field: 'page', message: pageResult.error });
+      } else {
+        process.stderr.write(`app bundles ls: ${pageResult.error}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    let tested: boolean | undefined;
+    if (args.tested !== undefined) {
+      if (args.tested === 'true') tested = true;
+      else if (args.tested === 'false') tested = false;
+      else {
+        if (args.json) {
+          emitJson({
+            ok: false,
+            reason: 'invalid-config',
+            field: 'tested',
+            message: `--tested must be "true" or "false" (got ${JSON.stringify(args.tested)})`,
+          });
+        } else {
+          process.stderr.write(`app bundles ls: invalid --tested ${JSON.stringify(args.tested)}\n`);
+        }
+        return exitAfterFlush(ExitCode.Usage);
+      }
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchBundles(
+        {
+          workspaceId,
+          miniAppId: appId,
+          page: pageResult.value,
+          ...(tested !== undefined ? { tested } : {}),
+          ...(typeof args['deploy-status'] === 'string' && args['deploy-status'].length > 0
+            ? { deployStatus: args['deploy-status'] }
+            : {}),
+        },
+        session.cookies,
+      );
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          page: pageResult.value,
+          totalPage: result.totalPage,
+          currentPage: result.currentPage,
+          bundles: result.contents,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): page ${result.currentPage + 1}/${Math.max(result.totalPage, 1)}, ${result.contents.length} bundle(s)\n`,
+      );
+      if (result.contents.length === 0) {
+        process.stdout.write('No bundles on this page.\n');
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      for (const b of result.contents) {
+        const id = typeof b.id === 'string' || typeof b.id === 'number' ? b.id : '-';
+        const version = typeof b.version === 'string' ? b.version : '-';
+        const status = typeof b.deployStatus === 'string' ? b.deployStatus : '-';
+        const createdAt = typeof b.createdAt === 'string' ? b.createdAt : '';
+        process.stdout.write(`${id}\t${version}\t${status}\t${createdAt}\n`);
+      }
+      if (result.currentPage + 1 < result.totalPage) {
+        process.stdout.write(`(more: --page ${result.currentPage + 1})\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const bundlesDeployedCommand = defineCommand({
+  meta: {
+    name: 'deployed',
+    description: 'Show the currently deployed bundle for a mini-app (or null if none).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles deployed: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const bundle = await fetchDeployedBundle(workspaceId, appId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, bundle });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (bundle === null) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no deployed bundle\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      const id = typeof bundle.id === 'string' || typeof bundle.id === 'number' ? bundle.id : '-';
+      const version = typeof bundle.version === 'string' ? bundle.version : '-';
+      const status = typeof bundle.deployStatus === 'string' ? bundle.deployStatus : '-';
+      const deployedAt = typeof bundle.deployedAt === 'string' ? bundle.deployedAt : '';
+      process.stdout.write(`App ${appId} deployed bundle:\n`);
+      process.stdout.write(`  id          ${id}\n`);
+      process.stdout.write(`  version     ${version}\n`);
+      process.stdout.write(`  status      ${status}\n`);
+      process.stdout.write(`  deployedAt  ${deployedAt}\n`);
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const bundlesCommand = defineCommand({
+  meta: {
+    name: 'bundles',
+    description: 'Inspect upload bundles for a mini-app.',
+  },
+  subCommands: {
+    ls: bundlesLsCommand,
+    deployed: bundlesDeployedCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -872,6 +1078,7 @@ export const appCommand = defineCommand({
     status: statusCommand,
     ratings: ratingsCommand,
     reports: reportsCommand,
+    bundles: bundlesCommand,
     register: registerCommand,
   },
 });

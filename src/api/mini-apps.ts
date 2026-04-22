@@ -299,6 +299,93 @@ export async function fetchUserReports(
   return { reports, nextCursor, hasMore };
 }
 
+// --- Bundles (앱 번들 배포) ---
+//
+// GET /workspaces/:wid/mini-app/:aid/bundles[?page=&tested=&deployStatus=]
+// GET /workspaces/:wid/mini-app/:aid/bundles/deployed  → single bundle | null
+//
+// Response envelope (observed 2026-04-23 on app 29405, empty case):
+//   { contents: [...], totalPage: 0, currentPage: 0 }
+//
+// Page-based pagination (unlike ratings's {paging:{...}} or user-reports
+// cursor-based). Filter query params: `tested=true` for TESTED-only, and
+// `deployStatus=DEPLOYED` to narrow to live bundles. We expose those as
+// optional opaque-string filters so callers can pass them through without
+// the API layer enumerating every enum value ahead of time.
+//
+// `bundles/deployed` (singular route) returns null until a first deploy
+// lands; the shape of a populated record is not yet observed, so we pass
+// it through opaquely.
+
+export interface BundlesPage {
+  readonly contents: readonly Readonly<Record<string, unknown>>[];
+  readonly totalPage: number;
+  readonly currentPage: number;
+}
+
+export interface FetchBundlesParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly page?: number;
+  readonly tested?: boolean;
+  readonly deployStatus?: string;
+}
+
+export async function fetchBundles(
+  params: FetchBundlesParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<BundlesPage> {
+  const qs = new URLSearchParams();
+  if (params.page !== undefined) qs.set('page', String(params.page));
+  if (params.tested !== undefined) qs.set('tested', String(params.tested));
+  if (params.deployStatus !== undefined) qs.set('deployStatus', params.deployStatus);
+  const query = qs.toString();
+  const url =
+    `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/bundles` +
+    (query ? `?${query}` : '');
+
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error(`Unexpected bundles shape for app=${params.miniAppId}`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const contentsRaw = rec.contents;
+  if (!Array.isArray(contentsRaw)) {
+    throw new Error(`Unexpected bundles shape: contents is not an array (app=${params.miniAppId})`);
+  }
+  const contents = contentsRaw.map((b) => {
+    if (b === null || typeof b !== 'object') return {};
+    return b as Record<string, unknown>;
+  });
+  const totalPage = typeof rec.totalPage === 'number' ? rec.totalPage : 0;
+  const currentPage = typeof rec.currentPage === 'number' ? rec.currentPage : 0;
+  return { contents, totalPage, currentPage };
+}
+
+export async function fetchDeployedBundle(
+  workspaceId: number,
+  miniAppId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Record<string, unknown> | null> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/deployed`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected deployed-bundle shape for app=${miniAppId}`);
+  }
+  return raw as Record<string, unknown>;
+}
+
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`
