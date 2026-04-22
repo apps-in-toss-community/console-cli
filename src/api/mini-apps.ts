@@ -108,6 +108,38 @@ export async function fetchReviewStatus(
   return { hasPolicyViolation, miniApps };
 }
 
+export interface MiniAppWithDraft {
+  readonly current: Record<string, unknown> | null;
+  readonly draft: Record<string, unknown> | null;
+}
+
+export async function fetchMiniAppWithDraft(
+  workspaceId: number,
+  miniAppId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<MiniAppWithDraft> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/with-draft`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error(`Unexpected with-draft shape for mini-app=${miniAppId}`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const current = isRecordOrNull(rec.current)
+    ? (rec.current as Record<string, unknown> | null)
+    : null;
+  const draft = isRecordOrNull(rec.draft) ? (rec.draft as Record<string, unknown> | null) : null;
+  return { current, draft };
+}
+
+function isRecordOrNull(v: unknown): v is Record<string, unknown> | null {
+  return v === null || (typeof v === 'object' && !Array.isArray(v));
+}
+
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`

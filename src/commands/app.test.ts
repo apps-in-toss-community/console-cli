@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findReviewEntry, reviewStateFor } from './app.js';
+import { findReviewEntry, pickMiniAppView, reviewStateFor } from './app.js';
 
 // `app ls` joins two endpoints (`mini-app` list + `mini-apps/review-status`)
 // by best-effort id match. The helpers are pure and the three-key fallback
@@ -57,5 +57,64 @@ describe('reviewStateFor', () => {
   it('returns undefined when the field is not a string', () => {
     expect(reviewStateFor({ reviewState: 123 })).toBeUndefined();
     expect(reviewStateFor({})).toBeUndefined();
+  });
+});
+
+// `pickMiniAppView` is the little helper that decides which side of the
+// /with-draft envelope gets rendered. It matters because until an app is
+// approved, `current` is null while `draft` holds every field the user
+// entered — picking the wrong view is exactly what led us to believe
+// `register` was dropping fields in the first place.
+describe('pickMiniAppView', () => {
+  const currentSide = { miniApp: { title: 'published', description: 'p' } };
+  const draftSide = { miniApp: { title: 'editing', detailDescription: 'd' } };
+
+  it('returns draft when asked (draft is the safe default)', () => {
+    expect(pickMiniAppView({ current: currentSide, draft: draftSide }, 'draft')).toEqual(
+      draftSide.miniApp,
+    );
+  });
+
+  it('returns current when asked', () => {
+    expect(pickMiniAppView({ current: currentSide, draft: draftSide }, 'current')).toEqual(
+      currentSide.miniApp,
+    );
+  });
+
+  it('falls back to draft for current-of-unreviewed-app so callers can tell the two apart via view', () => {
+    expect(pickMiniAppView({ current: null, draft: draftSide }, 'current')).toBeNull();
+    // Explicit: asking for `current` when it's null returns null (not draft)
+    // so agent-plugin can distinguish "not reviewed" from "reviewed and published".
+  });
+
+  it("draft view on an app that has not been drafted (shouldn't happen in practice) returns null", () => {
+    expect(pickMiniAppView({ current: null, draft: null }, 'draft')).toBeNull();
+  });
+
+  it('merged: draft overrides current field-by-field', () => {
+    const merged = pickMiniAppView({ current: currentSide, draft: draftSide }, 'merged');
+    expect(merged).toEqual({
+      title: 'editing',
+      description: 'p',
+      detailDescription: 'd',
+    });
+  });
+
+  it('merged: falls back to the present side when only one exists', () => {
+    expect(pickMiniAppView({ current: currentSide, draft: null }, 'merged')).toEqual(
+      currentSide.miniApp,
+    );
+    expect(pickMiniAppView({ current: null, draft: draftSide }, 'merged')).toEqual(
+      draftSide.miniApp,
+    );
+  });
+
+  it('handles envelopes whose miniApp field is missing or wrong-typed', () => {
+    // A side with no `miniApp` (or with a non-object value) is normalised to null
+    // rather than crashing. Protects against a future schema change where the
+    // server swaps the nested key but we haven't caught up yet.
+    expect(pickMiniAppView({ current: {}, draft: null }, 'draft')).toBeNull();
+    expect(pickMiniAppView({ current: { miniApp: 'oops' }, draft: null }, 'current')).toBeNull();
+    expect(pickMiniAppView({ current: { miniApp: [] }, draft: null }, 'current')).toBeNull();
   });
 });

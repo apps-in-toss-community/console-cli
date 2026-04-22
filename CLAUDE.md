@@ -49,6 +49,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
 | `aitcc app ls` | ✅ | 현재 워크스페이스의 미니앱 목록. `--json`으로 agent-plugin 소비. |
 | `aitcc app register` | ✅ | YAML/JSON 매니페스트 + 이미지 업로드 + 등록+심사 요청 one-shot. submit payload shape는 dog-food task #23 (2026-04-22) 에서 실제 네트워크로 확정됨. 완전한 body로 제출 시 앱이 즉시 "검토 중" 상태로 진입. |
+| `aitcc app show <id>` | ✅ | `GET /mini-app/:id/with-draft` 로 draft + current 전체 뷰. `--view draft|current|merged` 로 어느 쪽 볼지 선택. 기본값은 `draft` — 미검수 앱에서 current는 비어있음. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
