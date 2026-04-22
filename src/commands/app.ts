@@ -296,6 +296,187 @@ const showCommand = defineCommand({
   },
 });
 
+// Derived review state. The console UI's "검토 중" banner is not a single
+// API field — it's composed from the /with-draft envelope. We surface the
+// derivation so `aitcc app status` is the one place the rule lives.
+//
+// Observed combinations (2026-04-23 on workspace 3095, apps 29349/29356/
+// 29397/29405 all under review):
+//
+//   approvalType=REVIEW current=null  rejectedMessage=null   → under-review
+//   approvalType=REVIEW current=null  rejectedMessage=STR    → rejected
+//   approvalType=REVIEW current=ROW   (draft is edits-in-flight) → approved (with pending edits)
+//   approvalType=REVIEW current=ROW   draft=null or equal    → approved
+//   approvalType=null                                         → not-submitted (edit draft only)
+//
+// Unknown combinations fall through to `unknown` so callers can log and
+// we can extend the ladder as new signals come in.
+export type ReviewState =
+  | 'not-submitted'
+  | 'under-review'
+  | 'rejected'
+  | 'approved'
+  | 'approved-with-edits'
+  | 'unknown';
+
+export interface DerivedStatus {
+  readonly state: ReviewState;
+  readonly approvalType: string | null;
+  readonly rejectedMessage: string | null;
+  readonly hasCurrent: boolean;
+  readonly hasDraft: boolean;
+}
+
+export function deriveReviewState(env: {
+  current: Record<string, unknown> | null;
+  draft: Record<string, unknown> | null;
+  approvalType: string | null;
+  rejectedMessage: string | null;
+}): DerivedStatus {
+  const hasCurrent = env.current !== null;
+  const hasDraft = env.draft !== null;
+  const approvalType = env.approvalType;
+  const rejectedMessage = env.rejectedMessage;
+
+  let state: ReviewState;
+  if (approvalType === null) {
+    state = 'not-submitted';
+  } else if (rejectedMessage !== null) {
+    state = 'rejected';
+  } else if (!hasCurrent) {
+    state = 'under-review';
+  } else if (hasDraft) {
+    state = 'approved-with-edits';
+  } else {
+    state = 'approved';
+  }
+  // approvalType values other than REVIEW (we haven't observed any yet)
+  // or unexpected combinations get flagged as unknown rather than misreported.
+  if (approvalType !== null && approvalType !== 'REVIEW' && state === 'under-review') {
+    state = 'unknown';
+  }
+  return { state, approvalType, rejectedMessage, hasCurrent, hasDraft };
+}
+
+const POLL_MIN_INTERVAL_SEC = 30;
+const POLL_MAX_INTERVAL_SEC = 3600;
+
+const statusCommand = defineCommand({
+  meta: {
+    name: 'status',
+    description:
+      'Show the derived review state of a mini-app (under-review / rejected / approved).',
+  },
+  args: {
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID.',
+      required: true,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    watch: {
+      type: 'boolean',
+      description:
+        'Poll until the review state flips off `under-review` (rejected or approved). ' +
+        'Combine with `--interval <seconds>`.',
+      default: false,
+    },
+    interval: {
+      type: 'string',
+      description: 'Polling interval in seconds when --watch is set. Clamped to [30, 3600].',
+      default: '60',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app status: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const intervalRaw = Number(args.interval);
+    if (!Number.isFinite(intervalRaw) || intervalRaw <= 0) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'interval',
+          message: `--interval must be a positive number (got ${JSON.stringify(args.interval)})`,
+        });
+      } else {
+        process.stderr.write(`app status: invalid --interval ${JSON.stringify(args.interval)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const intervalSec = Math.max(
+      POLL_MIN_INTERVAL_SEC,
+      Math.min(POLL_MAX_INTERVAL_SEC, Math.floor(intervalRaw)),
+    );
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    const emit = (status: DerivedStatus) => {
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, ...status });
+      } else {
+        process.stdout.write(
+          `App ${appId} (ws ${workspaceId}): ${status.state}` +
+            (status.rejectedMessage ? `\n  reason: ${status.rejectedMessage}` : '') +
+            '\n',
+        );
+      }
+    };
+
+    try {
+      const once = async (): Promise<DerivedStatus> => {
+        const env = await fetchMiniAppWithDraft(workspaceId, appId, session.cookies);
+        return deriveReviewState(env);
+      };
+
+      if (!args.watch) {
+        emit(await once());
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      // --watch: poll with clear line-per-tick JSON emission. Each JSON line
+      // is a self-contained object, NDJSON-style, so agents/shells can pipe
+      // it into `jq -c` without waiting for a terminal. Stop when the state
+      // is no longer `under-review` (reviewed) or when the process is
+      // interrupted — we don't synthesise a "watch-ended" record.
+      // Human mode prints a one-line update only when the state changes.
+      let lastState: ReviewState | null = null;
+      while (true) {
+        const status = await once();
+        if (args.json) {
+          emit(status);
+        } else if (status.state !== lastState) {
+          emit(status);
+        }
+        lastState = status.state;
+        if (status.state !== 'under-review') {
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        await new Promise((resolve) => setTimeout(resolve, intervalSec * 1000));
+      }
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -345,6 +526,7 @@ export const appCommand = defineCommand({
   subCommands: {
     ls: lsCommand,
     show: showCommand,
+    status: statusCommand,
     register: registerCommand,
   },
 });

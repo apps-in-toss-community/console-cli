@@ -111,6 +111,13 @@ export async function fetchReviewStatus(
 export interface MiniAppWithDraft {
   readonly current: Record<string, unknown> | null;
   readonly draft: Record<string, unknown> | null;
+  // Top-level envelope fields (not inside current/draft). Present on every
+  // with-draft response. `approvalType` distinguishes REVIEW-submitted apps
+  // from drafts that haven't been sent for review; `rejectedMessage` is
+  // non-null iff the review came back rejected. Together with `current`
+  // (null until an approved record exists) they derive the UI banner state.
+  readonly approvalType: string | null;
+  readonly rejectedMessage: string | null;
 }
 
 export async function fetchMiniAppWithDraft(
@@ -133,7 +140,9 @@ export async function fetchMiniAppWithDraft(
     ? (rec.current as Record<string, unknown> | null)
     : null;
   const draft = isRecordOrNull(rec.draft) ? (rec.draft as Record<string, unknown> | null) : null;
-  return { current, draft };
+  const approvalType = typeof rec.approvalType === 'string' ? rec.approvalType : null;
+  const rejectedMessage = typeof rec.rejectedMessage === 'string' ? rec.rejectedMessage : null;
+  return { current, draft, approvalType, rejectedMessage };
 }
 
 function isRecordOrNull(v: unknown): v is Record<string, unknown> | null {
