@@ -1,5 +1,5 @@
 import { defineCommand } from 'citty';
-import { fetchMiniApps, fetchReviewStatus } from '../api/mini-apps.js';
+import { fetchMiniApps, fetchMiniAppWithDraft, fetchReviewStatus } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
@@ -116,10 +116,186 @@ const lsCommand = defineCommand({
   },
 });
 
-// TODO(#23): after the first real submission we may want a follow-up
-// `aitcc app review-request <id>` command. The console UI has a separate
-// "검토 요청하기" step after create; whether it is a distinct endpoint
-// or folded into /mini-app/review is not yet captured.
+// --json contract (consumed by agent-plugin):
+//
+//   app show <id> [--workspace <id>] [--view draft|current|merged]:
+//     { ok: true, workspaceId, appId, view, miniApp: {...} }   exit 0
+//     { ok: false, reason: 'no-workspace-selected' }            exit 2
+//     { ok: false, reason: 'invalid-id', message }              exit 2
+//     { ok: false, reason: 'app-not-found', appId }             exit 2
+//
+// `view` picks which part of the with-draft envelope to surface:
+// - `draft` (default) — the editor's latest state, populated as soon as
+//   the app is created. This is what `app register` just wrote; it's the
+//   only reliable view until the app is approved and published.
+// - `current` — the published/reviewed record end users see. Empty until
+//   the app's first approval, so defaulting here would hide almost every
+//   field we care about — hence the default is `draft`.
+// - `merged` — current with draft overlaid on top (draft wins per field).
+//   Useful once both exist and the user wants the "authoritative" snapshot.
+//
+// The `--view` flag intentionally never falls back on its own. If the
+// caller asks for `current` on an unreviewed app they get `miniApp: null`
+// with `view: 'current'` so agent-plugin can tell the two cases apart.
+export function pickMiniAppView(
+  envelope: { current: Record<string, unknown> | null; draft: Record<string, unknown> | null },
+  view: 'draft' | 'current' | 'merged',
+): Record<string, unknown> | null {
+  const extract = (side: Record<string, unknown> | null): Record<string, unknown> | null => {
+    if (side === null) return null;
+    const ma = side.miniApp;
+    if (ma !== null && typeof ma === 'object' && !Array.isArray(ma)) {
+      return ma as Record<string, unknown>;
+    }
+    return null;
+  };
+  const draft = extract(envelope.draft);
+  const current = extract(envelope.current);
+  if (view === 'draft') return draft;
+  if (view === 'current') return current;
+  if (current !== null && draft !== null) return { ...current, ...draft };
+  return draft ?? current;
+}
+
+function parseAppId(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
+  return n;
+}
+
+const showCommand = defineCommand({
+  meta: {
+    name: 'show',
+    description:
+      'Show full details of a mini-app, including fields only visible in the draft view.',
+  },
+  args: {
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID (the numeric `appId` from `app ls` or `app register`).',
+      required: true,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    view: {
+      type: 'string',
+      description: 'Which view to render: `draft` (default), `current`, or `merged`.',
+      default: 'draft',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app show: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const view = args.view;
+    if (view !== 'draft' && view !== 'current' && view !== 'merged') {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-config',
+          field: 'view',
+          message: `--view must be one of draft|current|merged (got ${JSON.stringify(view)})`,
+        });
+      } else {
+        process.stderr.write(`app show: invalid --view ${JSON.stringify(view)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const envelope = await fetchMiniAppWithDraft(workspaceId, appId, session.cookies);
+      const miniApp = pickMiniAppView(envelope, view);
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          view,
+          miniApp,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      if (miniApp === null) {
+        if (view === 'current' && envelope.draft !== null) {
+          process.stdout.write(
+            `App ${appId} has no \`current\` view yet (not reviewed). Try --view draft.\n`,
+          );
+        } else {
+          process.stdout.write(`App ${appId} has no data for view=${view}.\n`);
+        }
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      const pick = (k: string): string => {
+        const v = miniApp[k];
+        return v === null || v === undefined ? '-' : String(v);
+      };
+      const images = Array.isArray(miniApp.images) ? miniApp.images : [];
+      const impression =
+        miniApp.impression !== null && typeof miniApp.impression === 'object'
+          ? (miniApp.impression as Record<string, unknown>)
+          : {};
+      const keywords = Array.isArray(impression.keywordList) ? impression.keywordList : [];
+      const categoryPaths = Array.isArray(impression.categoryPaths) ? impression.categoryPaths : [];
+
+      process.stdout.write(`# App ${appId} (view=${view})\n\n`);
+      process.stdout.write(`Name (ko)      ${pick('title')}\n`);
+      process.stdout.write(`Name (en)      ${pick('titleEn')}\n`);
+      process.stdout.write(`App slug       ${pick('appName')}\n`);
+      process.stdout.write(`Status         ${pick('status')}\n`);
+      process.stdout.write(`Home page      ${pick('homePageUri')}\n`);
+      process.stdout.write(`CS email       ${pick('csEmail')}\n`);
+      process.stdout.write(`Logo           ${pick('iconUri')}\n`);
+      process.stdout.write(`Subtitle       ${pick('description')}\n`);
+      const detail =
+        typeof miniApp.detailDescription === 'string'
+          ? `${[...miniApp.detailDescription].length} chars`
+          : '-';
+      process.stdout.write(`Detail desc    ${detail}\n`);
+      process.stdout.write(`Images         ${images.length}\n`);
+      process.stdout.write(`Keywords       ${keywords.length} (${keywords.join(', ')})\n`);
+      const firstPath = categoryPaths[0];
+      if (firstPath && typeof firstPath === 'object') {
+        const fp = firstPath as Record<string, unknown>;
+        const parts: string[] = [];
+        for (const key of ['group', 'category', 'subCategory']) {
+          const node = fp[key];
+          if (node !== null && typeof node === 'object') {
+            const nm = (node as Record<string, unknown>).name;
+            if (typeof nm === 'string') parts.push(nm);
+          }
+        }
+        process.stdout.write(`Category       ${parts.join(' > ') || '-'}\n`);
+      } else {
+        process.stdout.write(`Category       -\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -168,6 +344,7 @@ export const appCommand = defineCommand({
   },
   subCommands: {
     ls: lsCommand,
+    show: showCommand,
     register: registerCommand,
   },
 });
