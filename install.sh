@@ -147,3 +147,29 @@ case ":$PATH:" in
     log "  export PATH=\"$INSTALL_DIR:\$PATH\""
     ;;
 esac
+
+# -- shell completion hint ---------------------------------------------------
+# We don't modify the user's rc files automatically — editing someone's
+# shell config without asking is a line we'd rather not cross. Instead
+# we detect the current shell and print the exact one-liner they can
+# paste once. `aitcc completion <shell>` emits the script at runtime, so
+# sourcing it via process substitution (bash) keeps the install
+# idempotent: re-running picks up the latest aitcc's command tree.
+shell_name="$(basename "${SHELL:-}")"
+case "$shell_name" in
+  bash)
+    log ""
+    log "Shell completion (bash): add this to ~/.bashrc:"
+    log "  source <(aitcc completion bash)"
+    ;;
+  zsh)
+    log ""
+    log "Shell completion (zsh): run once, then open a fresh shell:"
+    log "  aitcc completion zsh > \"\${fpath[1]}/_aitcc\""
+    ;;
+  fish)
+    log ""
+    log "Shell completion (fish): run once:"
+    log "  aitcc completion fish > ~/.config/fish/completions/aitcc.fish"
+    ;;
+esac

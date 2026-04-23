@@ -68,6 +68,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc workspace terms` | ✅ | 워크스페이스가 기능별로 동의해야 하는 약관 목록과 동의 상태. `GET /workspaces/:id/console-workspace-terms/:type/skip-permission`. 5개 타입: `TOSS_LOGIN`, `BIZ_WORKSPACE`, `TOSS_PROMOTION_MONEY`, `IAA`, `IAP`. `--type <TYPE>`로 단일 버킷, 기본은 5개 전부 병렬 조회 후 묶어 출력. `--json`에선 단일 타입은 `terms[]`, 전체 조회는 `byType: {TYPE: terms[]}`. 각 term은 `{required, termsId, revisionId, title, contentsUrl, actionType, isAgreed, isOneTimeConsent}`. |
 | `aitcc workspace segments ls` | ✅ | 워크스페이스의 유저 세그먼트 목록 (세그먼트 메뉴). `GET /workspaces/:id/segments/list?category&search&page`. workspace-level endpoint (mini-app 별이 아님). `--category`(기본 "생성된 세그먼트"), `--search`, `--page`, `--workspace` 지원. 응답: `{contents, totalPage, currentPage}`. Per-segment record shape는 live 관찰로 pin. |
 | `aitcc me terms` | ✅ | 로그인된 계정이 동의한 콘솔-레벨 약관. `GET /console-user-terms/me` — 단일 앱인토스 콘솔 이용약관. workspace/app-scoped가 아닌 user-scoped 약관. Shape는 workspace terms와 동일. |
+| `aitcc completion <bash\|zsh\|fish>` | ✅ | Shell completion 스크립트 emit. citty엔 completion generator 없어서 정적 top-level + 한 단계 subcommand 매핑만 하드코딩 (`app bundles ls` 같은 3단계 이하는 셸 fallback). 설치: bash는 `source <(aitcc completion bash)`, zsh는 `aitcc completion zsh > "${fpath[1]}/_aitcc"`, fish는 `~/.config/fish/completions/aitcc.fish`. `install.sh`가 `$SHELL` 감지해 설치 후 one-liner 안내 출력 (rc 파일 자동 수정은 하지 않음). |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
