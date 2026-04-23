@@ -273,6 +273,20 @@ async function uploadOne(
   });
 }
 
+// Errors that touch `categoryIds` always reference that key explicitly in
+// the message (see `config/app-manifest.ts`). Point the user at
+// `aitcc app categories --selectable` so they don't have to hunt for a
+// live example — this is the only plain-text hint we surface beyond the
+// raw message, and we keep the JSON payload unchanged so the contract
+// with agent-plugin is stable.
+function categoryHintFor(err: ManifestError): string | null {
+  const target = err.field ?? '';
+  if (target === 'categoryIds' || /categoryIds/.test(err.message)) {
+    return 'Tip: run `aitcc app categories --selectable` to list valid category ids.';
+  }
+  return null;
+}
+
 function emitManifestError(json: boolean, err: ManifestError): void {
   if (json) {
     if (err.kind === 'missing-required-field') {
@@ -287,6 +301,8 @@ function emitManifestError(json: boolean, err: ManifestError): void {
     }
   } else {
     process.stderr.write(`${err.message}\n`);
+    const hint = categoryHintFor(err);
+    if (hint) process.stderr.write(`${hint}\n`);
   }
 }
 

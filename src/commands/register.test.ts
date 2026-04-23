@@ -181,6 +181,34 @@ describe('runRegister', () => {
     expect(out).toContain('"field":"titleKo"');
   });
 
+  it('adds a `app categories` hint to stderr when categoryIds fails validation', async () => {
+    await writeSessionAt(3095);
+    const body = validManifestBody(dir);
+    // `categoryIds: []` triggers the manifest validator's min-length
+    // check — an `invalid-config` error whose message references the
+    // categoryIds key.
+    body.categoryIds = [];
+    const manifest = writeManifest(dir, body);
+    // Plain-text mode: the hint goes to stderr alongside the raw message.
+    const exit = await captureExit(() =>
+      runRegister({ json: false, config: manifest }, depsWith()),
+    );
+    expect(exit?.code).toBe(2);
+    expect(stderr.join('')).toContain('aitcc app categories --selectable');
+  });
+
+  it('does not leak the category hint into --json stdout', async () => {
+    await writeSessionAt(3095);
+    const body = validManifestBody(dir);
+    body.categoryIds = [];
+    const manifest = writeManifest(dir, body);
+    const exit = await captureExit(() => runRegister({ json: true, config: manifest }, depsWith()));
+    expect(exit?.code).toBe(2);
+    // JSON payload is unchanged — hint is plain-text only so agent-plugin's
+    // parser never has to worry about it.
+    expect(stdout.join('')).not.toContain('app categories');
+  });
+
   it('emits image-dimension-mismatch + exit 2 when an image has wrong dimensions', async () => {
     await writeSessionAt(3095);
     const body = validManifestBody(dir);
