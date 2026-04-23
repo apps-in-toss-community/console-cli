@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
-import { fetchWorkspaceDetail, fetchWorkspacePartner, fetchWorkspaceTerms } from './workspaces.js';
+import {
+  fetchWorkspaceDetail,
+  fetchWorkspacePartner,
+  fetchWorkspaceSegments,
+  fetchWorkspaceTerms,
+} from './workspaces.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -236,5 +241,80 @@ describe('fetchWorkspaceTerms', () => {
       isAgreed: false,
       isOneTimeConsent: false,
     });
+  });
+});
+
+describe('fetchWorkspaceSegments', () => {
+  it('hits /segments/list with category/search/page defaults', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { contents: [], totalPage: 0, currentPage: 0 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchWorkspaceSegments({ workspaceId: 3095 }, cookies, { fetchImpl });
+    // Default category matches the UI's initial tab ('생성된 세그먼트') — URL-encoded.
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/segments/list?category=%EC%83%9D%EC%84%B1%EB%90%9C+%EC%84%B8%EA%B7%B8%EB%A8%BC%ED%8A%B8&search=&page=0',
+    );
+    expect(got).toEqual({ contents: [], totalPage: 0, currentPage: 0 });
+  });
+
+  it('forwards category/search/page overrides', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { contents: [], totalPage: 3, currentPage: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchWorkspaceSegments(
+      { workspaceId: 3095, category: '추천 세그먼트', search: 'vip', page: 1 },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('category=%EC%B6%94%EC%B2%9C+%EC%84%B8%EA%B7%B8%EB%A8%BC%ED%8A%B8');
+    expect(calledUrl).toContain('search=vip');
+    expect(calledUrl).toContain('page=1');
+    expect(got.currentPage).toBe(1);
+    expect(got.totalPage).toBe(3);
+  });
+
+  it('passes segment records through opaquely', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            contents: [{ id: 1, name: 'VIP users', userCount: 1234, newField: 1 }],
+            totalPage: 1,
+            currentPage: 0,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchWorkspaceSegments({ workspaceId: 3095 }, cookies, { fetchImpl });
+    expect(got.contents).toHaveLength(1);
+    expect(got.contents[0]).toEqual({ id: 1, name: 'VIP users', userCount: 1234, newField: 1 });
+  });
+
+  it('rejects non-object success payloads', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchWorkspaceSegments({ workspaceId: 3095 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/Unexpected segments shape/);
   });
 });

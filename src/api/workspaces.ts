@@ -108,6 +108,56 @@ export interface WorkspaceTerm {
   readonly isOneTimeConsent: boolean;
 }
 
+// Segments are workspace-scoped (not per-app). The category axis appears
+// in the UI as tabs like "생성된 세그먼트"/"추천 세그먼트"; the server
+// accepts any string and just filters whatever bucket it matches (we've
+// observed all common category strings return an empty list on a fresh
+// workspace rather than 400-ing). Default bucket matches the UI.
+const DEFAULT_SEGMENT_CATEGORY = '생성된 세그먼트';
+
+export interface FetchWorkspaceSegmentsParams {
+  readonly workspaceId: number;
+  readonly category?: string;
+  readonly search?: string;
+  readonly page?: number;
+}
+
+export interface WorkspaceSegmentsPage {
+  readonly contents: readonly Readonly<Record<string, unknown>>[];
+  readonly totalPage: number;
+  readonly currentPage: number;
+}
+
+export async function fetchWorkspaceSegments(
+  params: FetchWorkspaceSegmentsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<WorkspaceSegmentsPage> {
+  const page = params.page ?? 0;
+  const qs = new URLSearchParams();
+  qs.set('category', params.category ?? DEFAULT_SEGMENT_CATEGORY);
+  qs.set('search', params.search ?? '');
+  qs.set('page', String(page));
+  const url = `${WORKSPACES_BASE}/workspaces/${params.workspaceId}/segments/list?${qs.toString()}`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected segments shape for workspace=${params.workspaceId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const contents = Array.isArray(data.contents) ? data.contents : [];
+  return {
+    contents: contents.map((c) =>
+      c && typeof c === 'object' ? (c as Record<string, unknown>) : {},
+    ),
+    totalPage: typeof data.totalPage === 'number' ? data.totalPage : 0,
+    currentPage: typeof data.currentPage === 'number' ? data.currentPage : page,
+  };
+}
+
 export async function fetchWorkspaceTerms(
   workspaceId: number,
   type: WorkspaceTermType,

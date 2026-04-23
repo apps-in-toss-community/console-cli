@@ -63,6 +63,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc notices ls / show <id> / categories` | ✅ | 앱인토스 공지사항. 별도 서비스 (`api-public.toss.im/api-public/v3/ipd-thor`, hard-coded `workspaceId=129` — 모든 유저 공유). `ls`는 page-based + `--search` title-contains 필터, `show`는 single post, `categories`는 7개 버킷 post count. 세션 쿠키(`.toss.im` 도메인)로 자동 인증. |
 | `aitcc workspace partner` | ✅ | 워크스페이스의 파트너(정산/페이아웃) 등록 상태. `GET /workspaces/:id/partner` — `{registered, approvalType, rejectMessage, partner}`. 초기 상태는 `registered: false, approvalType: 'DRAFT'`. `--workspace <id>`로 다른 워크스페이스 조회 가능. Partner record shape는 approval 승인 후 live 관찰로 pin. |
 | `aitcc workspace terms` | ✅ | 워크스페이스가 기능별로 동의해야 하는 약관 목록과 동의 상태. `GET /workspaces/:id/console-workspace-terms/:type/skip-permission`. 5개 타입: `TOSS_LOGIN`, `BIZ_WORKSPACE`, `TOSS_PROMOTION_MONEY`, `IAA`, `IAP`. `--type <TYPE>`로 단일 버킷, 기본은 5개 전부 병렬 조회 후 묶어 출력. `--json`에선 단일 타입은 `terms[]`, 전체 조회는 `byType: {TYPE: terms[]}`. 각 term은 `{required, termsId, revisionId, title, contentsUrl, actionType, isAgreed, isOneTimeConsent}`. |
+| `aitcc workspace segments ls` | ✅ | 워크스페이스의 유저 세그먼트 목록 (세그먼트 메뉴). `GET /workspaces/:id/segments/list?category&search&page`. workspace-level endpoint (mini-app 별이 아님). `--category`(기본 "생성된 세그먼트"), `--search`, `--page`, `--workspace` 지원. 응답: `{contents, totalPage, currentPage}`. Per-segment record shape는 live 관찰로 pin. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
