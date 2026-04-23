@@ -291,6 +291,18 @@ pnpm format         # biome format --write .
 - 복구는 간단: 다음 Version Packages PR(v0.1.14 등)을 merge하면 누락된 changeset들을 한번에 publish한다. v0.1.13 같은 "skip된 버전"은 그대로 남고(npm에 존재하지 않고 `install.sh`도 latest만 가리키므로) 소비자에게 실질적 영향 없음. 단 v0.1.13의 기능들이 v0.1.14 CHANGELOG에 섞여 들어가 혼란스러울 수 있으니 `CHANGELOG.md` 에디트로 정정하는 편이 깔끔.
 - 교훈: "Version Packages PR merge → release.yml run 완료 확인 → 그 다음 PR merge" 순서 유지. 동시 merge는 race를 유발한다.
 
+## Verification Commands
+
+기계적 검증이 필요한 모든 자동화(`/review-fix-loop`, CI, 릴리즈 전 수동 체크)가 이 섹션의 명령을 참조한다. 실제 스크립트는 `### 명령어` 섹션에 선언돼 있고, 여기서는 그 중 "typecheck가 깨지지 않는지, 기존 동작이 깨지지 않는지"를 빠르게 확인하는 최소 세트를 고정한다.
+
+```bash
+pnpm typecheck   # tsc --noEmit
+pnpm lint        # biome check .
+pnpm test        # vitest run
+```
+
+셋 다 non-zero exit이면 merge 전에 고친다. 로컬 iteration에는 `pnpm dev` (watch)도 쓰지만 자동화에는 위 세 개만.
+
 ## Open questions
 
 - `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
