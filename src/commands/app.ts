@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 import {
   fetchAppEventCatalogs,
+  fetchAppTemplates,
   fetchBundles,
   fetchCerts,
   fetchConversionMetrics,
@@ -15,6 +16,8 @@ import {
   type MetricsTimeUnit,
   type RatingSortDirection,
   type RatingSortField,
+  TEMPLATE_CONTENT_REACH_TYPES,
+  type TemplateContentReachType,
 } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
@@ -1319,6 +1322,11 @@ const metricsCommand = defineCommand({
 //     { ok: true, workspaceId, appId, events: [...], cacheTime, paging: {...} }   exit 0
 //     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' | ... } exit 2
 //
+//   app templates ls <id> [--workspace <id>] [--page N] [--size N] [--content-reach-type FUNCTIONAL|MARKETING] [--smart-message true|false]:
+//     { ok: true, workspaceId, appId, templates: [...], totalPageCount }          exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' |
+//                            'invalid-content-reach-type' | 'invalid-smart-message' } exit 2
+//
 // Share-reward promotions for an app. Empty array is the common case
 // (no promotions set up). Per-record shape is passed through opaquely
 // until a populated response is observed.
@@ -1623,6 +1631,154 @@ const eventsCommand = defineCommand({
   },
 });
 
+const templatesLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description:
+      'List the smart-message composer templates available for a mini-app (the 템플릿 picker in 스마트 발송).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    size: { type: 'string', description: 'Page size.', default: '20' },
+    'content-reach-type': {
+      type: 'string',
+      description: `Template reach bucket: ${TEMPLATE_CONTENT_REACH_TYPES.join(' | ')}. Omit for all.`,
+    },
+    'smart-message': {
+      type: 'string',
+      description:
+        'Filter to templates compatible with smart-message ("true") or legacy push ("false"). Omit for all.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app templates ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const pageResult = parseNonNegativeInt(String(args.page), 'page');
+    if ('error' in pageResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
+      else process.stderr.write(`${pageResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sizeResult = parseNonNegativeInt(String(args.size), 'size');
+    if ('error' in sizeResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-size', message: sizeResult.error });
+      else process.stderr.write(`${sizeResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    let contentReachType: TemplateContentReachType | undefined;
+    if (args['content-reach-type'] !== undefined) {
+      const upper = String(args['content-reach-type']).toUpperCase();
+      if ((TEMPLATE_CONTENT_REACH_TYPES as readonly string[]).includes(upper)) {
+        contentReachType = upper as TemplateContentReachType;
+      } else {
+        const message = `--content-reach-type must be one of: ${TEMPLATE_CONTENT_REACH_TYPES.join(', ')}`;
+        if (args.json) {
+          emitJson({
+            ok: false,
+            reason: 'invalid-content-reach-type',
+            allowed: [...TEMPLATE_CONTENT_REACH_TYPES],
+          });
+        } else {
+          process.stderr.write(`${message}\n`);
+        }
+        return exitAfterFlush(ExitCode.Usage);
+      }
+    }
+
+    let isSmartMessage: boolean | undefined;
+    if (args['smart-message'] !== undefined) {
+      const raw = String(args['smart-message']).toLowerCase();
+      if (raw === 'true') isSmartMessage = true;
+      else if (raw === 'false') isSmartMessage = false;
+      else {
+        const message = '--smart-message must be "true" or "false"';
+        if (args.json) emitJson({ ok: false, reason: 'invalid-smart-message', message });
+        else process.stderr.write(`${message}\n`);
+        return exitAfterFlush(ExitCode.Usage);
+      }
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchAppTemplates(
+        {
+          workspaceId,
+          miniAppId: appId,
+          page: pageResult.value,
+          size: sizeResult.value,
+          ...(contentReachType !== undefined ? { contentReachType } : {}),
+          ...(isSmartMessage !== undefined ? { isSmartMessage } : {}),
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          templates: result.templates,
+          totalPageCount: result.totalPageCount,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (result.templates.length === 0) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no templates\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): ${result.templates.length} template(s) of ${result.totalPageCount} page(s)\n`,
+      );
+      for (const t of result.templates) {
+        const id =
+          typeof t.id === 'string' || typeof t.id === 'number'
+            ? t.id
+            : typeof t.templateId === 'string' || typeof t.templateId === 'number'
+              ? t.templateId
+              : '-';
+        const title =
+          typeof t.title === 'string' ? t.title : typeof t.name === 'string' ? t.name : '-';
+        const type = typeof t.templateType === 'string' ? t.templateType : '-';
+        process.stdout.write(`${id}\t${title}\t${type}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const templatesCommand = defineCommand({
+  meta: {
+    name: 'templates',
+    description: 'Inspect smart-message composer templates available for a mini-app.',
+  },
+  subCommands: {
+    ls: templatesLsCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1681,6 +1837,7 @@ export const appCommand = defineCommand({
     'share-rewards': shareRewardsCommand,
     messages: messagesCommand,
     events: eventsCommand,
+    templates: templatesCommand,
     register: registerCommand,
   },
 });
