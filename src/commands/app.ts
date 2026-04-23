@@ -4,6 +4,7 @@ import {
   fetchAppServiceStatus,
   fetchAppTemplates,
   fetchBundles,
+  fetchBundleTestLinks,
   fetchCerts,
   fetchConversionMetrics,
   fetchDeployedBundle,
@@ -16,6 +17,14 @@ import {
   fetchSmartMessageCampaigns,
   fetchUserReports,
   type MetricsTimeUnit,
+  postBundleMemo,
+  postBundleRelease,
+  postBundleReview,
+  postBundleReviewWithdrawal,
+  postBundleTestPush,
+  postDeploymentsComplete,
+  postDeploymentsInitialize,
+  putBundleToUploadUrl,
   type RatingSortDirection,
   type RatingSortField,
   TEMPLATE_CONTENT_REACH_TYPES,
@@ -1091,14 +1100,554 @@ const bundlesDeployedCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app bundles upload <id> <path> [--deployment-id <uuid>] [--memo <text>]
+//                       [--workspace <id>] [--dry-run]:
+//     { ok: true, workspaceId, appId, deploymentId, reviewStatus,
+//       bundle: { ... }, memoApplied: boolean }                   exit 0
+//     { ok: true, dryRun: true, workspaceId, appId, deploymentId,
+//       bytes, memo }                                             exit 0
+//     { ok: false, reason: 'invalid-id' | 'file-unreadable'
+//                         | 'missing-deployment-id'
+//                         | 'bundle-not-prepare', ... }           exit 2
+//
+// 3-step upload: initialize → PUT to S3 presigned URL → complete,
+// optionally followed by POST /bundles/memos. deployment-id is the
+// `_metadata.deploymentId` inside the .ait's app.json — for now we ask
+// the caller to supply it explicitly (zip-cracking is a follow-up).
+// On mismatched reviewStatus ("이미 존재하는 버전이에요.") we bail
+// before touching S3 with exit 2 / reason `bundle-not-prepare`, matching
+// the console's own client-side guard.
+
+const bundlesUploadCommand = defineCommand({
+  meta: {
+    name: 'upload',
+    description: 'Upload an .ait bundle (initialize → PUT → complete [+ memo]).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    path: { type: 'positional', description: 'Path to the .ait bundle file.', required: true },
+    'deployment-id': {
+      type: 'string',
+      description: 'deploymentId embedded in the bundle (from app.json._metadata.deploymentId).',
+    },
+    memo: { type: 'string', description: 'Optional memo attached to this bundle version.' },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    'dry-run': {
+      type: 'boolean',
+      description: 'Validate inputs and show what would be sent, without touching the server.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles upload: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
+    if (deploymentId === '') {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'missing-deployment-id',
+          message:
+            '--deployment-id is required; read app.json._metadata.deploymentId from inside the .ait',
+        });
+      } else {
+        process.stderr.write(
+          'app bundles upload: --deployment-id <uuid> is required.\n' +
+            '  The .ait bundle is a zip; read app.json inside and copy _metadata.deploymentId.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const filePath = typeof args.path === 'string' ? args.path : '';
+    let bytes: Uint8Array;
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const buf = await readFile(filePath);
+      bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (args.json) {
+        emitJson({ ok: false, reason: 'file-unreadable', path: filePath, message });
+      } else {
+        process.stderr.write(`app bundles upload: cannot read ${filePath}: ${message}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    const memo = typeof args.memo === 'string' && args.memo.length > 0 ? args.memo : undefined;
+
+    if (args['dry-run']) {
+      if (args.json) {
+        emitJson({
+          ok: true,
+          dryRun: true,
+          workspaceId,
+          appId,
+          deploymentId,
+          bytes: bytes.byteLength,
+          memo: memo ?? null,
+        });
+      } else {
+        process.stdout.write(
+          `DRY RUN\n` +
+            `  workspace    ${workspaceId}\n` +
+            `  appId        ${appId}\n` +
+            `  deploymentId ${deploymentId}\n` +
+            `  bytes        ${bytes.byteLength}\n` +
+            `  memo         ${memo ?? '(none)'}\n`,
+        );
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    }
+
+    try {
+      const init = await postDeploymentsInitialize(
+        workspaceId,
+        appId,
+        deploymentId,
+        session.cookies,
+      );
+      if (init.reviewStatus !== 'PREPARE') {
+        if (args.json) {
+          emitJson({
+            ok: false,
+            reason: 'bundle-not-prepare',
+            workspaceId,
+            appId,
+            deploymentId,
+            reviewStatus: init.reviewStatus,
+            message: '이미 존재하는 버전이에요.',
+          });
+        } else {
+          process.stderr.write(
+            `app bundles upload: deployment ${deploymentId} is already in state ${init.reviewStatus}; bundle upload refused.\n`,
+          );
+        }
+        return exitAfterFlush(ExitCode.Usage);
+      }
+      await putBundleToUploadUrl(init.uploadUrl, bytes);
+      const bundle = await postDeploymentsComplete(
+        workspaceId,
+        appId,
+        deploymentId,
+        session.cookies,
+      );
+      let memoApplied = false;
+      if (memo !== undefined) {
+        await postBundleMemo(workspaceId, appId, deploymentId, memo, session.cookies);
+        memoApplied = true;
+      }
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          deploymentId,
+          reviewStatus: init.reviewStatus,
+          bundle,
+          memoApplied,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `Uploaded bundle for app ${appId} (ws ${workspaceId})\n` +
+          `  deploymentId ${deploymentId}\n` +
+          `  bytes        ${bytes.byteLength}\n` +
+          `  memo         ${memoApplied ? 'applied' : '(none)'}\n`,
+      );
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+// --json contract (consumed by agent-plugin):
+//
+//   app bundles review <id> --deployment-id <uuid> --release-notes <text>
+//                      [--withdraw] [--workspace <id>]:
+//     { ok: true, workspaceId, appId, deploymentId, action: 'submit'|'withdraw',
+//       result: { ... } }                                        exit 0
+//     { ok: false, reason: 'invalid-id' | 'missing-deployment-id'
+//                         | 'missing-release-notes' }            exit 2
+//
+// Submits (default) or withdraws a review request on an uploaded bundle.
+// Server validates the deploymentId belongs to the app — we don't
+// double-check here. `--withdraw` is the opposite action and takes no
+// release-notes. Submitting requires release-notes even if empty on the
+// wire (the UI sends "") — we forward whatever the caller supplies.
+
+const bundlesReviewCommand = defineCommand({
+  meta: {
+    name: 'review',
+    description: 'Submit (or withdraw) an uploaded bundle for review.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    'deployment-id': {
+      type: 'string',
+      description: 'deploymentId of the uploaded bundle.',
+    },
+    'release-notes': {
+      type: 'string',
+      description: 'Release notes shown to the reviewer. Ignored with --withdraw.',
+    },
+    withdraw: {
+      type: 'boolean',
+      description: 'Withdraw the existing review request instead of submitting a new one.',
+      default: false,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles review: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
+    if (deploymentId === '') {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'missing-deployment-id' });
+      } else {
+        process.stderr.write('app bundles review: --deployment-id <uuid> is required.\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const withdraw = Boolean(args.withdraw);
+    const releaseNotes =
+      typeof args['release-notes'] === 'string' ? args['release-notes'] : undefined;
+    if (!withdraw && releaseNotes === undefined) {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'missing-release-notes' });
+      } else {
+        process.stderr.write(
+          'app bundles review: --release-notes <text> is required to submit for review.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      if (withdraw) {
+        const result = await postBundleReviewWithdrawal(
+          workspaceId,
+          appId,
+          deploymentId,
+          session.cookies,
+        );
+        if (args.json) {
+          emitJson({
+            ok: true,
+            workspaceId,
+            appId,
+            deploymentId,
+            action: 'withdraw',
+            result,
+          });
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        process.stdout.write(
+          `Withdrew review for bundle ${deploymentId} (app ${appId}, ws ${workspaceId})\n`,
+        );
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      const result = await postBundleReview(
+        {
+          workspaceId,
+          miniAppId: appId,
+          deploymentId,
+          releaseNotes: releaseNotes ?? '',
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          deploymentId,
+          action: 'submit',
+          result,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      const versionName = typeof result.versionName === 'string' ? result.versionName : '';
+      process.stdout.write(
+        `Submitted bundle ${deploymentId} for review (app ${appId}, ws ${workspaceId})` +
+          (versionName ? ` — version ${versionName}` : '') +
+          '\n',
+      );
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+// --json contract (consumed by agent-plugin):
+//
+//   app bundles release <id> --deployment-id <uuid> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, deploymentId, result: { ... } } exit 0
+//     { ok: false, reason: 'invalid-id' | 'missing-deployment-id'
+//                         | 'not-confirmed' }                         exit 2
+//
+// Flips an APPROVED bundle live. This is the destructive write path —
+// end users will see the new version. Guarded behind `--confirm` to
+// prevent accidental invocation from a loose shell history. No `--json`
+// bypass: the confirmation flag is mandatory.
+
+const bundlesReleaseCommand = defineCommand({
+  meta: {
+    name: 'release',
+    description: 'Release (publish) an APPROVED bundle to end users.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    'deployment-id': {
+      type: 'string',
+      description: 'deploymentId of the APPROVED bundle to publish.',
+    },
+    confirm: {
+      type: 'boolean',
+      description: 'Required to actually release — without it, the command refuses.',
+      default: false,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles release: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
+    if (deploymentId === '') {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'missing-deployment-id' });
+      } else {
+        process.stderr.write('app bundles release: --deployment-id <uuid> is required.\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    if (!args.confirm) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'not-confirmed',
+          message: 'release is destructive; pass --confirm to proceed',
+        });
+      } else {
+        process.stderr.write(
+          'app bundles release: this publishes the bundle to end users.\n' +
+            '  Re-run with --confirm to proceed.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await postBundleRelease(
+        { workspaceId, miniAppId: appId, deploymentId },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, deploymentId, result });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `Released bundle ${deploymentId} for app ${appId} (ws ${workspaceId})\n`,
+      );
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+// --json contract (consumed by agent-plugin):
+//
+//   app bundles test-push <id> --deployment-id <uuid> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, deploymentId, result: { ... } } exit 0
+//
+//   app bundles test-links <id> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, links: { ... } }                exit 0
+
+const bundlesTestPushCommand = defineCommand({
+  meta: {
+    name: 'test-push',
+    description: 'Send a test push so the uploader can open this bundle on their device.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    'deployment-id': {
+      type: 'string',
+      description: 'deploymentId of the bundle to test.',
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles test-push: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
+    if (deploymentId === '') {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'missing-deployment-id' });
+      } else {
+        process.stderr.write('app bundles test-push: --deployment-id <uuid> is required.\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    try {
+      const result = await postBundleTestPush(workspaceId, appId, deploymentId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, deploymentId, result });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`Sent test push for bundle ${deploymentId} (app ${appId})\n`);
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const bundlesTestLinksCommand = defineCommand({
+  meta: {
+    name: 'test-links',
+    description: 'Show per-device test URLs for the mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app bundles test-links: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    try {
+      const links = await fetchBundleTestLinks(workspaceId, appId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, links });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      const keys = Object.keys(links);
+      if (keys.length === 0) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no test links available\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}):\n`);
+      for (const k of keys) {
+        const v = links[k];
+        process.stdout.write(`  ${k}\t${typeof v === 'string' ? v : JSON.stringify(v)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const bundlesCommand = defineCommand({
   meta: {
     name: 'bundles',
-    description: 'Inspect upload bundles for a mini-app.',
+    description: 'Inspect and manage upload bundles for a mini-app.',
   },
   subCommands: {
     ls: bundlesLsCommand,
     deployed: bundlesDeployedCommand,
+    upload: bundlesUploadCommand,
+    review: bundlesReviewCommand,
+    release: bundlesReleaseCommand,
+    'test-push': bundlesTestPushCommand,
+    'test-links': bundlesTestLinksCommand,
   },
 });
 

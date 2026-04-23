@@ -888,6 +888,282 @@ export async function fetchDeployedBundle(
   return raw as Record<string, unknown>;
 }
 
+// --- Bundle upload (deploy) ---
+//
+// The console's "앱 출시 > 등록하기" dialog walks a 3-step server dance
+// plus an optional memo write:
+//
+//   1. POST /mini-app/:id/deployments/initialize   body {deploymentId}
+//        → { deployment: { reviewStatus, ... }, uploadUrl }
+//   2. PUT <uploadUrl>   Content-Type: application/zip, body = raw .ait bytes
+//        (S3 presigned URL; goes direct to S3, no Toss envelope)
+//   3. POST /mini-app/:id/deployments/complete     body {deploymentId}
+//        → bundle record (server-side confirmation)
+//   4. (optional) POST /mini-app/:id/bundles/memos body {deploymentId, memo}
+//
+// `deploymentId` is embedded in the .ait bundle itself — the toolchain
+// that packs the bundle writes it into `app.json._metadata.deploymentId`
+// (observed via static analysis of the console's client-side parser in
+// `index.ZIQgZB74.js`, 2026-04-23). We take it as an explicit parameter
+// here to keep this layer free of zip-parsing logic; the command layer
+// can either crack the zip or let the user pass `--deployment-id` by
+// hand.
+//
+// The initialize response's `deployment.reviewStatus` must be `PREPARE`
+// before the PUT fires — any other value means the deploymentId has
+// already been used and the console raises "이미 존재하는 버전이에요."
+
+export interface DeploymentInitializeResult {
+  readonly uploadUrl: string;
+  readonly deployment: Readonly<Record<string, unknown>>;
+  readonly reviewStatus: string;
+}
+
+export async function postDeploymentsInitialize(
+  workspaceId: number,
+  miniAppId: number,
+  deploymentId: string,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<DeploymentInitializeResult> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/deployments/initialize`;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body: { deploymentId },
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected deployments/initialize shape for app=${miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const uploadUrl = data.uploadUrl;
+  if (typeof uploadUrl !== 'string') {
+    throw new Error(
+      `Unexpected deployments/initialize shape for app=${miniAppId}: missing uploadUrl`,
+    );
+  }
+  const deployment =
+    data.deployment && typeof data.deployment === 'object'
+      ? (data.deployment as Record<string, unknown>)
+      : {};
+  const reviewStatus =
+    typeof deployment.reviewStatus === 'string' ? deployment.reviewStatus : 'UNKNOWN';
+  return { uploadUrl, deployment, reviewStatus };
+}
+
+export async function postDeploymentsComplete(
+  workspaceId: number,
+  miniAppId: number,
+  deploymentId: string,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/deployments/complete`;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body: { deploymentId },
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  // Complete returns the persisted bundle record; pass it through opaquely
+  // until we see populated shape in dog-food.
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+export async function postBundleMemo(
+  workspaceId: number,
+  miniAppId: number,
+  deploymentId: string,
+  memo: string,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/memos`;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body: { deploymentId, memo },
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+/**
+ * PUT the raw .ait bytes to the S3 presigned URL returned by
+ * `postDeploymentsInitialize`. This is a direct-to-S3 call with NO Toss
+ * envelope — the response is empty on success (HTTP 200). Any cookies are
+ * intentionally NOT sent because S3 would reject the signed request if
+ * extra auth headers contradict the signature.
+ */
+export async function putBundleToUploadUrl(
+  uploadUrl: string,
+  body: Uint8Array,
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<void> {
+  const impl: FetchLike = opts.fetchImpl ?? ((i, init) => fetch(i, init));
+  // BodyInit's Uint8Array overload requires `ArrayBufferView<ArrayBuffer>`,
+  // so we explicitly view the bytes with a plain ArrayBuffer backing — same
+  // trick used in `uploadMiniAppResource` above. A `Buffer` from readFile
+  // may be backed by a `SharedArrayBuffer` which `BodyInit` rejects.
+  const view = new Uint8Array(body.buffer as ArrayBuffer, body.byteOffset, body.byteLength);
+  let res: Response;
+  try {
+    res = await impl(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/zip' },
+      body: view,
+    });
+  } catch (err) {
+    throw new Error(`PUT to upload URL failed: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const preview = await res.text().catch(() => '');
+    throw new Error(`PUT to upload URL returned HTTP ${res.status}: ${preview.slice(0, 200)}`);
+  }
+}
+
+// --- Bundle review / release / withdraw / test ---
+//
+// After a bundle is uploaded it sits in reviewStatus=PREPARE on the server.
+// To actually ship it, three further mutations may fire:
+//
+//   POST /bundles/reviews                body {deploymentId, releaseNotes, featureList?, screenshotImagePaths?}
+//     → submits for Toss review. reviewAppBundle()
+//   POST /bundles/reviews/withdrawal     body {deploymentId}
+//     → cancels an in-flight review. postWithdrawAppBundleReview()
+//   POST /bundles/release                body {deploymentId, contentImages?}
+//     → flips an APPROVED bundle live in the marketplace. releaseAppBundle()
+//
+// Plus two read/test helpers:
+//
+//   POST /bundles/test-push              body {deploymentId}  → sends a push so the uploader can open the build on their device
+//   GET  /bundles/test-links             → returns per-device test URLs
+//
+// All four mutation bodies, plus the test-push trigger, were observed
+// via static analysis of the console's `index.ZIQgZB74.js` chunk
+// (2026-04-23). No live XHR was triggered for these from the CLI — they
+// are destructive write paths (release especially is visible to end
+// users) and must be dog-fooded with care.
+
+export interface ReviewAppBundleParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly deploymentId: string;
+  readonly releaseNotes: string;
+  readonly featureList?: readonly Readonly<Record<string, unknown>>[];
+  readonly screenshotImagePaths?: readonly string[];
+}
+
+export async function postBundleReview(
+  params: ReviewAppBundleParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/bundles/reviews`;
+  const body: Record<string, unknown> = {
+    deploymentId: params.deploymentId,
+    releaseNotes: params.releaseNotes,
+  };
+  if (params.featureList !== undefined) body.featureList = params.featureList;
+  if (params.screenshotImagePaths !== undefined)
+    body.screenshotImagePaths = params.screenshotImagePaths;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+export async function postBundleReviewWithdrawal(
+  workspaceId: number,
+  miniAppId: number,
+  deploymentId: string,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/reviews/withdrawal`;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body: { deploymentId },
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+export interface ReleaseAppBundleParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly deploymentId: string;
+  readonly contentImages?: readonly string[];
+}
+
+export async function postBundleRelease(
+  params: ReleaseAppBundleParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/bundles/release`;
+  const body: Record<string, unknown> = { deploymentId: params.deploymentId };
+  if (params.contentImages !== undefined) body.contentImages = params.contentImages;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+export async function postBundleTestPush(
+  workspaceId: number,
+  miniAppId: number,
+  deploymentId: string,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/test-push`;
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body: { deploymentId },
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
+export async function fetchBundleTestLinks(
+  workspaceId: number,
+  miniAppId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<Readonly<Record<string, unknown>>> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/test-links`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw as Record<string, unknown>;
+}
+
 // --- Register (create) ---
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`
