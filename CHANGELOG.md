@@ -1,5 +1,57 @@
 # @ait-co/console-cli
 
+## 0.1.12
+
+### Patch Changes
+
+- 2769f76: Add `aitcc app categories` to list the impression category tree used by `app register`'s `categoryIds` field.
+
+  Endpoint: `GET /impression/category-list` — workspace-independent lookup. Returns three groups (금융 / 게임 / 생활), each with a category list and optional sub-categories. `--selectable` collapses the output to only the entries callers may actually reference (`isSelectable: true`). Useful when authoring or validating an `aitcc.app.yaml` manifest.
+
+- c663d07: Add `aitcc app events ls <id>` to list the custom event catalogs (log search) for a mini-app — the 이벤트 menu in the console.
+
+  Endpoint: `POST /mini-app/:id/log/catalogs/search` with body `{isRefresh, pageNumber, pageSize, search}`. Response: `{results, cacheTime, paging: {pageNumber, pageSize, hasNext, totalCount, totalPages}}`. PREPARE-state apps return an empty `results` with a server-cache timestamp — same pattern as `conversion-metrics`.
+
+  Flags: `--page <n>`, `--size <n>`, `--search <text>`, `--refresh` (bypass server cache). Per-event record shape is passed through opaquely until a populated response is observed.
+
+- de2bafc: Add `aitcc app messages ls <id>` to list smart-message campaigns (the successor to the legacy 푸시알림 menu, now surfaced as 스마트 발송).
+
+  Endpoint: `POST /mini-app/:id/smart-message/campaigns?page=&size=` with a JSON body `{sort, search, filters}`. The unusual POST-for-list shape is what the console UI sends; the CLI mirrors it so the request is indistinguishable from XHR. Response: `{items, paging: {pageNumber, pageSize, hasNext, totalCount}}`.
+
+  Flags: `--page <n>`, `--size <n>`, `--search <text>`. Per-campaign record shape is passed through opaquely until a populated response is observed.
+
+- df8d355: Add `aitcc app service-status <id>` to show the server-authoritative runtime state of a mini-app.
+
+  Endpoint: `GET /mini-app/:id/review-status` (singular `mini-app` — distinct from the workspace-level `mini-apps/review-status` plural endpoint that `app ls` uses). Response: `{serviceStatus, shutdownCandidateStatus, scheduledShutdownAt}`.
+
+  This complements `app status` (which derives state client-side from `/with-draft`) by surfacing the server's canonical `serviceStatus` string — useful for detecting shutdown schedules or when the /with-draft envelope is ambiguous.
+
+- 0a55a3e: Add `aitcc app templates ls <id>` to list the smart-message composer templates for a mini-app (the template picker inside 스마트 발송).
+
+  Endpoint: `GET /mini-app/:id/templates/search?page&size&contentReachType&isSmartMessage`. Response: `{page: {totalPageCount}, groupSendContextSimpleView}` — the internal `groupSendContextSimpleView` key is renamed to `templates` at the CLI layer so the output stays readable.
+
+  Flags: `--page`, `--size`, `--content-reach-type FUNCTIONAL|MARKETING`, `--smart-message true|false`. Per-template record shape is passed through opaquely until a populated response is observed.
+
+- c9c9143: Add `aitcc me terms` to show the console-level terms of agreement for the signed-in account.
+
+  Endpoint: `GET /console-user-terms/me`. This is user-scoped (sibling of `workspace terms`, which is workspace-scoped). On a fresh account the result is a single `앱인토스 콘솔 이용약관` entry with `isAgreed: true` — anyone who has logged in at all has accepted it.
+
+  Introduces a new top-level `me` command group for future account-level settings (profile, notification preferences, etc.).
+
+- e10c47c: Add `aitcc workspace partner` to show the partner (billing/payout) registration state of the selected workspace.
+
+  Endpoint: `GET /workspaces/:wid/partner` — returns `{registered, approvalType, rejectMessage, partner}`. A fresh workspace reports `registered: false, approvalType: 'DRAFT', partner: null`; once the owner registers the billing entity the `partner` record is populated (passed through opaquely until a live example is observed).
+
+  Flag: `--workspace <id>` to inspect a workspace other than the current selection.
+
+- 952d89a: Add `aitcc workspace segments ls [--category <cat>] [--search <text>] [--page N] [--workspace <id>]` to list user segments defined in the workspace (the 세그먼트 menu).
+
+  Endpoint: `GET /workspaces/:wid/segments/list?category&search&page` — workspace-scoped (not per mini-app). Response: `{contents, totalPage, currentPage}`. `--category` defaults to "생성된 세그먼트" (the UI's initial tab). Per-segment record shape is passed through opaquely until a populated response is observed.
+
+- c51816a: Add `aitcc workspace terms [--type TYPE] [--workspace <id>]` to show the console terms-of-agreement buckets that gate workspace-level features.
+
+  Endpoint: `GET /workspaces/:wid/console-workspace-terms/:type/skip-permission` — one call per bucket. Five types: `TOSS_LOGIN`, `BIZ_WORKSPACE`, `TOSS_PROMOTION_MONEY`, `IAA`, `IAP`. Default is to query every bucket in parallel; `--type <TYPE>` limits to a single one. Each entry is `{required, termsId, revisionId, title, contentsUrl, actionType, isAgreed, isOneTimeConsent}` — useful for checking which features are blocked by pending agreements before running commands that depend on them (e.g. `app share-rewards` needs `TOSS_PROMOTION_MONEY`, `app promotions` creation needs partner+promotion-money, etc.).
+
 ## 0.1.11
 
 ### Patch Changes
