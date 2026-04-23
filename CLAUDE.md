@@ -321,4 +321,8 @@ Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple 
 
 결론: `aitcc app status <id>`가 의도된 단일 표면. 루트 `aitcc status`는 향후에도 추가하지 않는 것을 기본 방침으로 한다.
 
+### App runtime logs: deferred (엔드포인트 없음)
+
+현재 콘솔 UI에는 서버 런타임 로그 엔드포인트가 노출되지 않는다. 콘솔이 surface하는 건 커스텀 이벤트 카탈로그(`app events` → `/log/catalogs/search`, `app.logEvent()` SDK 호출 집계)와 전환 지표(`app metrics` → `/conversion-metrics`)뿐이고, 원시 runtime 로그(stdout/stderr, 예외 스택, 요청별 라인)는 아니다. 전체 콘솔 번들(`bootstrap.*.js`)에 `runtime`/`telemetry`/`trace`/`crash`/`error-log`/`stream` 경로가 하나도 선언돼 있지 않고, `/mini-app/:id/` 서브페이지 route table에도 "로그" 메뉴가 없음 — 상세 조사는 `.playwright-mcp/LOGS-NOT-FOUND.md` 참조. `aitcc app logs`는 backend surface area가 생길 때까지 deferred.
+
 전체 로드맵은 [landing page](https://apps-in-toss-community.github.io/) 참고.
