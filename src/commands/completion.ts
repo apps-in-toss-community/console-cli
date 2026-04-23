@@ -58,6 +58,10 @@ const SUB_COMMANDS: Record<string, readonly string[]> = {
     'status',
     'templates',
   ],
+  // 3rd-level completion (`app bundles <TAB>`) is out of scope — shells
+  // fall back to filename completion there. But we list the bundles
+  // subcommands here as a comment for reviewers: ls, deployed, upload,
+  // review, release, test-push, test-links.
   notices: ['categories', 'ls', 'show'],
   me: ['terms'],
   completion: ['bash', 'zsh', 'fish'],
