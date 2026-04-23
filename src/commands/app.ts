@@ -6,6 +6,7 @@ import {
   fetchCerts,
   fetchConversionMetrics,
   fetchDeployedBundle,
+  fetchImpressionCategoryList,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchMiniAppWithDraft,
@@ -21,7 +22,13 @@ import {
 } from '../api/mini-apps.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
+import { readSession } from '../session.js';
+import {
+  emitFailureFromError,
+  emitJson,
+  emitNotAuthenticated,
+  resolveWorkspaceContext,
+} from './_shared.js';
 import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
@@ -1327,6 +1334,10 @@ const metricsCommand = defineCommand({
 //     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' |
 //                            'invalid-content-reach-type' | 'invalid-smart-message' } exit 2
 //
+//   app categories [--selectable]:
+//     { ok: true, categories: CategoryTreeEntry[] }                               exit 0
+//     { ok: true, authenticated: false }                                          exit 10
+//
 // Share-reward promotions for an app. Empty array is the common case
 // (no promotions set up). Per-record shape is passed through opaquely
 // until a populated response is observed.
@@ -1779,6 +1790,70 @@ const templatesCommand = defineCommand({
   },
 });
 
+const categoriesCommand = defineCommand({
+  meta: {
+    name: 'categories',
+    description: "List the impression category tree used by `app register`'s `categoryIds` field.",
+  },
+  args: {
+    selectable: {
+      type: 'boolean',
+      description: 'Only show categories flagged `isSelectable: true` — the ones you can pick.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const session = await readSession();
+    if (!session) {
+      emitNotAuthenticated(args.json);
+      return exitAfterFlush(ExitCode.NotAuthenticated);
+    }
+
+    try {
+      const tree = await fetchImpressionCategoryList(session.cookies);
+
+      // Optional filter collapses non-selectable groups and categories. Kept
+      // off by default because the flag `isSelectable: false` entries still
+      // show up in live app payloads (eg. `금융` group) and are useful for
+      // agents debugging a rejected registration.
+      const filtered = args.selectable
+        ? tree
+            .filter((g) => g.categoryGroup.isSelectable)
+            .map((g) => ({
+              ...g,
+              categoryList: g.categoryList
+                .filter((c) => c.isSelectable)
+                .map((c) => ({
+                  ...c,
+                  subCategoryList: c.subCategoryList.filter((s) => s.isSelectable),
+                })),
+            }))
+        : tree;
+
+      if (args.json) {
+        emitJson({ ok: true, categories: filtered });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      for (const g of filtered) {
+        const mark = g.categoryGroup.isSelectable ? '' : ' (not selectable)';
+        process.stdout.write(`[${g.categoryGroup.id}] ${g.categoryGroup.name}${mark}\n`);
+        for (const c of g.categoryList) {
+          const cmark = c.isSelectable ? '' : ' (not selectable)';
+          process.stdout.write(`  ${c.id}\t${c.name}${cmark}\n`);
+          for (const s of c.subCategoryList) {
+            const smark = s.isSelectable ? '' : ' (not selectable)';
+            process.stdout.write(`    ${s.id}\t${s.name}${smark}\n`);
+          }
+        }
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1838,6 +1913,7 @@ export const appCommand = defineCommand({
     messages: messagesCommand,
     events: eventsCommand,
     templates: templatesCommand,
+    categories: categoriesCommand,
     register: registerCommand,
   },
 });
