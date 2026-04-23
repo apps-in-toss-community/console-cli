@@ -55,6 +55,7 @@
   },
   "dependencies": {
     "citty": "^0.2.2",
+    "fflate": "^0.8.2",
     "image-size": "^2.0.2",
     "yaml": "^2.8.3"
   }
