@@ -592,6 +592,80 @@ export async function fetchSmartMessageCampaigns(
   };
 }
 
+// --- Event catalogs (log search) ---
+//
+// The console "이벤트" (events) page is powered by a POST search endpoint
+// that returns the catalog of custom events recorded for a mini-app.
+// Body shape from observed UI XHR: `{isRefresh, pageNumber, pageSize, search}`.
+// Response: `{results, cacheTime, paging: {pageNumber, pageSize, hasNext,
+// totalCount, totalPages}}`. On a PREPARE-state app with no traffic,
+// `results` is empty and `cacheTime` carries a server-cache timestamp —
+// same pattern as conversion-metrics.
+
+export interface FetchAppEventCatalogsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly pageNumber?: number;
+  readonly pageSize?: number;
+  readonly search?: string;
+  readonly refresh?: boolean;
+}
+
+export interface AppEventCatalogsPaging {
+  readonly pageNumber: number;
+  readonly pageSize: number;
+  readonly hasNext: boolean;
+  readonly totalCount: number;
+  readonly totalPages: number;
+}
+
+export interface AppEventCatalogsResult {
+  readonly results: readonly Readonly<Record<string, unknown>>[];
+  readonly cacheTime: string | undefined;
+  readonly paging: AppEventCatalogsPaging;
+}
+
+export async function fetchAppEventCatalogs(
+  params: FetchAppEventCatalogsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<AppEventCatalogsResult> {
+  const pageNumber = params.pageNumber ?? 0;
+  const pageSize = params.pageSize ?? 20;
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/log/catalogs/search`;
+  const body = {
+    isRefresh: params.refresh ?? false,
+    pageNumber,
+    pageSize,
+    search: params.search ?? '',
+  };
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected event-catalogs shape for app=${params.miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const results = Array.isArray(data.results) ? data.results : [];
+  const rawPaging = data.paging as Record<string, unknown> | undefined;
+  const paging: AppEventCatalogsPaging = {
+    pageNumber: typeof rawPaging?.pageNumber === 'number' ? rawPaging.pageNumber : pageNumber,
+    pageSize: typeof rawPaging?.pageSize === 'number' ? rawPaging.pageSize : pageSize,
+    hasNext: Boolean(rawPaging?.hasNext),
+    totalCount: typeof rawPaging?.totalCount === 'number' ? rawPaging.totalCount : results.length,
+    totalPages: typeof rawPaging?.totalPages === 'number' ? rawPaging.totalPages : 0,
+  };
+  return {
+    results: results.map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>) : {})),
+    cacheTime: typeof data.cacheTime === 'string' ? data.cacheTime : undefined,
+    paging,
+  };
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,
