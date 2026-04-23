@@ -666,6 +666,71 @@ export async function fetchAppEventCatalogs(
   };
 }
 
+// --- Templates (smart-message composer) ---
+//
+// GET /mini-app/:id/templates/search
+//   ?page=0&size=20&contentReachType=FUNCTIONAL|MARKETING&isSmartMessage=true|false
+//
+// Response shape (observed on empty app 29405):
+//   { page: { totalPageCount }, groupSendContextSimpleView: [] }
+//
+// The odd bucket key name (`groupSendContextSimpleView`) is the server's
+// own — we surface it as `templates` at the CLI layer so the output is
+// readable without leaking the internal naming. Per-template record
+// shape is passed through opaquely until a populated response is seen.
+
+export type TemplateContentReachType = 'FUNCTIONAL' | 'MARKETING';
+export const TEMPLATE_CONTENT_REACH_TYPES: readonly TemplateContentReachType[] = [
+  'FUNCTIONAL',
+  'MARKETING',
+];
+
+export interface FetchAppTemplatesParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly page?: number;
+  readonly size?: number;
+  readonly contentReachType?: TemplateContentReachType;
+  readonly isSmartMessage?: boolean;
+}
+
+export interface AppTemplatesResult {
+  readonly templates: readonly Readonly<Record<string, unknown>>[];
+  readonly totalPageCount: number;
+}
+
+export async function fetchAppTemplates(
+  params: FetchAppTemplatesParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<AppTemplatesResult> {
+  const page = params.page ?? 0;
+  const size = params.size ?? 20;
+  const qs = new URLSearchParams();
+  qs.set('page', String(page));
+  qs.set('size', String(size));
+  if (params.contentReachType) qs.set('contentReachType', params.contentReachType);
+  if (params.isSmartMessage !== undefined) qs.set('isSmartMessage', String(params.isSmartMessage));
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/templates/search?${qs.toString()}`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected templates shape for app=${params.miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const list = Array.isArray(data.groupSendContextSimpleView)
+    ? data.groupSendContextSimpleView
+    : [];
+  const pageMeta = data.page as Record<string, unknown> | undefined;
+  return {
+    templates: list.map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>) : {})),
+    totalPageCount: typeof pageMeta?.totalPageCount === 'number' ? pageMeta.totalPageCount : 0,
+  };
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,

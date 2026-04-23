@@ -3,6 +3,7 @@ import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
 import {
   fetchAppEventCatalogs,
+  fetchAppTemplates,
   fetchBundles,
   fetchCerts,
   fetchConversionMetrics,
@@ -978,5 +979,96 @@ describe('fetchAppEventCatalogs', () => {
     await expect(
       fetchAppEventCatalogs({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/Unexpected event-catalogs shape/);
+  });
+});
+
+describe('fetchAppTemplates', () => {
+  it('hits /templates/search with page/size defaults and omits optional filters', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { page: { totalPageCount: 0 }, groupSendContextSimpleView: [] },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchAppTemplates({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/templates/search?page=0&size=20',
+    );
+    expect(got).toEqual({ templates: [], totalPageCount: 0 });
+  });
+
+  it('forwards contentReachType/isSmartMessage when provided', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { page: { totalPageCount: 3 }, groupSendContextSimpleView: [] },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    await fetchAppTemplates(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        page: 1,
+        size: 5,
+        contentReachType: 'MARKETING',
+        isSmartMessage: true,
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('page=1');
+    expect(calledUrl).toContain('size=5');
+    expect(calledUrl).toContain('contentReachType=MARKETING');
+    expect(calledUrl).toContain('isSmartMessage=true');
+  });
+
+  it('passes templates through opaquely and maps groupSendContextSimpleView to templates', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            page: { totalPageCount: 1 },
+            groupSendContextSimpleView: [
+              { id: 5, title: 'Welcome', templateType: 'PUSH', unknownField: 1 },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchAppTemplates({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(got.totalPageCount).toBe(1);
+    expect(got.templates).toHaveLength(1);
+    expect(got.templates[0]).toEqual({
+      id: 5,
+      title: 'Welcome',
+      templateType: 'PUSH',
+      unknownField: 1,
+    });
+  });
+
+  it('rejects non-object success payloads', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchAppTemplates({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/Unexpected templates shape/);
   });
 });
