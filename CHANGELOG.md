@@ -1,5 +1,93 @@
 # @ait-co/console-cli
 
+## 0.1.15
+
+### Patch Changes
+
+- b61a117: docs: record that the console exposes no runtime-log endpoint
+
+  Full static analysis of `bootstrap.N0Zaulo0.js` (184 endpoints, 55 async
+  chunks, complete mini-app route table) finds zero runtime-log surface —
+  the three `/log/*` endpoints in the bundle are all about the **custom
+  analytics event catalog** (keyed on `logName`), same thing `aitcc app
+events` already wraps. `aitcc app logs` is deferred until a backend log
+  endpoint actually exists; see `.playwright-mcp/LOGS-NOT-FOUND.md` for
+  the full procedure so the next attempt can pick up where this one left
+  off.
+
+- 12a6036: docs: close out root-level `aitcc status` from TODO
+
+  TODO.md originally had `aitcc status [appId]` as a planned root-level
+  command alongside `app status`. Now that `aitcc app status <id>` is
+  implemented with `--watch` / `--json` / `--workspace` and fuses the
+  client-derived review state with the server's `serviceStatus`, the
+  root-level alias isn't worth the surface area: it would either
+  duplicate `app status` (saving 4 characters) or require a
+  "selected-app" mode-state the session deliberately doesn't keep.
+
+  Marks the item complete in TODO and adds a "왜 top-level `aitcc
+status`가 없는가" rationale note in CLAUDE.md so future sweeps don't
+  re-open this question. No code changes.
+
+- 019a5fc: feat(app): bundle upload/review/release/test-push commands
+
+  Adds the full write-path for shipping bundles to mini-apps:
+
+  - `aitcc app bundles upload <id> <path> --deployment-id <uuid> [--memo]` —
+    3-step deploy dance observed in the console UI:
+    `POST /deployments/initialize {deploymentId}` →
+    `PUT <uploadUrl>` (S3 presigned, Content-Type `application/zip`) →
+    `POST /deployments/complete {deploymentId}` →
+    optional `POST /bundles/memos {deploymentId, memo}`.
+    Refuses if initialize returns `reviewStatus !== PREPARE` (matches the
+    console's "이미 존재하는 버전이에요." guard). `--dry-run` shows what
+    would be sent without touching the server.
+  - `aitcc app bundles review <id> --deployment-id <uuid> --release-notes <text>` —
+    `POST /bundles/reviews`. `--withdraw` sends
+    `POST /bundles/reviews/withdrawal` instead.
+  - `aitcc app bundles release <id> --deployment-id <uuid> --confirm` —
+    `POST /bundles/release`. Guarded behind `--confirm` because the bundle
+    goes live to end users.
+  - `aitcc app bundles test-push <id> --deployment-id <uuid>` —
+    `POST /bundles/test-push`.
+  - `aitcc app bundles test-links <id>` — `GET /bundles/test-links`.
+
+  `deploymentId` is the `_metadata.deploymentId` written into the `.ait`
+  bundle's `app.json` by the build toolchain; for now the CLI takes it as
+  an explicit flag. Zip cracking is a follow-up.
+
+- cd34b41: feat(app): deploy one-shot wrapper (upload + review + release)
+
+  Adds `aitcc app deploy <path> --app <id>` — a convenience wrapper that
+  chains the bundle pipeline. Before this, shipping a bundle meant
+  running three separate commands (`bundles upload` → `bundles review` →
+  `bundles release`) while carrying the same `--deployment-id` by hand.
+
+  The wrapper:
+
+  - Auto-detects `_metadata.deploymentId` from the `.ait` by cracking the
+    zip (via `fflate`) when `--deployment-id` is omitted — users no
+    longer need to open the bundle themselves.
+  - Always performs the 3-step upload (initialize → PUT → complete, +
+    optional memo).
+  - `--request-review --release-notes <text>` additionally submits the
+    bundle for review.
+  - `--release --confirm` additionally publishes an APPROVED bundle.
+    (Typically a second `app deploy` run, since a freshly uploaded
+    bundle is not yet APPROVED.)
+  - `--dry-run` prints the planned pipeline without touching the server.
+  - Partial-success `--json` reports `uploaded`/`reviewed`/`released`
+    flags so `agent-plugin` can resume at the failing step on retry
+    without re-uploading.
+
+  Internal additions:
+
+  - New runtime dependency: `fflate` (~8 KB, zero deps) for zip reads.
+  - New module: `src/config/ait-bundle.ts` — pure bundle reader, unit-
+    tested with synthesized zips (`src/config/ait-bundle.test.ts`).
+  - New command module: `src/commands/app-deploy.ts`, exporting
+    `runDeploy` as the testable seam (same pattern as `runRegister`).
+
 ## 0.1.14
 
 ### Patch Changes
