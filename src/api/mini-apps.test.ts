@@ -8,6 +8,7 @@ import {
   fetchCerts,
   fetchConversionMetrics,
   fetchDeployedBundle,
+  fetchImpressionCategoryList,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchReviewStatus,
@@ -1070,5 +1071,75 @@ describe('fetchAppTemplates', () => {
     await expect(
       fetchAppTemplates({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/Unexpected templates shape/);
+  });
+});
+
+describe('fetchImpressionCategoryList', () => {
+  it('hits /impression/category-list (no workspaces prefix) and normalises the tree', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              categoryGroup: { id: 7, name: '생활', isSelectable: true },
+              categoryList: [
+                {
+                  id: 3882,
+                  name: '정보',
+                  isSelectable: true,
+                  subCategoryList: [
+                    { id: 56, name: '뉴스', isSelectable: true },
+                    { id: 58, name: '도서', isSelectable: true },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchImpressionCategoryList(cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/impression/category-list',
+    );
+    expect(got).toHaveLength(1);
+    expect(got[0]?.categoryGroup).toEqual({ id: 7, name: '생활', isSelectable: true });
+    expect(got[0]?.categoryList[0]?.subCategoryList).toEqual([
+      { id: 56, name: '뉴스', isSelectable: true },
+      { id: 58, name: '도서', isSelectable: true },
+    ]);
+  });
+
+  it('rejects a non-array payload', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { not: 'array' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchImpressionCategoryList(cookies, { fetchImpl })).rejects.toThrow(
+      /Unexpected impression\/category-list shape/,
+    );
+  });
+
+  it('handles missing subCategoryList gracefully', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              categoryGroup: { id: 3, name: '금융', isSelectable: false },
+              categoryList: [{ id: 1, name: 'X', isSelectable: false }],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchImpressionCategoryList(cookies, { fetchImpl });
+    expect(got[0]?.categoryList[0]?.subCategoryList).toEqual([]);
   });
 });

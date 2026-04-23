@@ -731,6 +731,94 @@ export async function fetchAppTemplates(
   };
 }
 
+// --- Impression category tree ---
+//
+// GET /impression/category-list returns the full category hierarchy used
+// by `app register`. It's a global, workspace-independent lookup — the
+// console navigates directly to the `/impression` prefix (NOT
+// `/workspaces/:id/impression`). `isSelectable: true` marks which
+// entries callers may actually reference from `categoryIds`.
+//
+// Tree: [{ categoryGroup, categoryList: [{ id, name, isSelectable,
+// subCategoryList: [{ id, name, isSelectable }] }] }]
+
+export interface CategoryGroupNode {
+  readonly id: number;
+  readonly name: string;
+  readonly isSelectable: boolean;
+}
+
+export interface SubCategoryNode {
+  readonly id: number;
+  readonly name: string;
+  readonly isSelectable: boolean;
+}
+
+export interface CategoryNode {
+  readonly id: number;
+  readonly name: string;
+  readonly isSelectable: boolean;
+  readonly subCategoryList: readonly SubCategoryNode[];
+}
+
+export interface CategoryTreeEntry {
+  readonly categoryGroup: CategoryGroupNode;
+  readonly categoryList: readonly CategoryNode[];
+}
+
+export async function fetchImpressionCategoryList(
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<readonly CategoryTreeEntry[]> {
+  const url = `${BASE}/impression/category-list`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (!Array.isArray(raw)) {
+    throw new Error('Unexpected impression/category-list shape: not an array');
+  }
+  return raw.map((entry, i): CategoryTreeEntry => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`Unexpected category-list entry at index ${i}`);
+    }
+    const e = entry as Record<string, unknown>;
+    const group = e.categoryGroup as Record<string, unknown> | undefined;
+    const list = Array.isArray(e.categoryList) ? e.categoryList : [];
+    return {
+      categoryGroup: {
+        id: typeof group?.id === 'number' ? group.id : 0,
+        name: typeof group?.name === 'string' ? group.name : '',
+        isSelectable: Boolean(group?.isSelectable),
+      },
+      categoryList: list.map((c): CategoryNode => {
+        if (!c || typeof c !== 'object') {
+          return { id: 0, name: '', isSelectable: false, subCategoryList: [] };
+        }
+        const cr = c as Record<string, unknown>;
+        const subs = Array.isArray(cr.subCategoryList) ? cr.subCategoryList : [];
+        return {
+          id: typeof cr.id === 'number' ? cr.id : 0,
+          name: typeof cr.name === 'string' ? cr.name : '',
+          isSelectable: Boolean(cr.isSelectable),
+          subCategoryList: subs.map((s): SubCategoryNode => {
+            if (!s || typeof s !== 'object') {
+              return { id: 0, name: '', isSelectable: false };
+            }
+            const sr = s as Record<string, unknown>;
+            return {
+              id: typeof sr.id === 'number' ? sr.id : 0,
+              name: typeof sr.name === 'string' ? sr.name : '',
+              isSelectable: Boolean(sr.isSelectable),
+            };
+          }),
+        };
+      }),
+    };
+  });
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,
