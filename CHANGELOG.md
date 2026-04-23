@@ -1,5 +1,16 @@
 # @ait-co/console-cli
 
+## 0.1.13
+
+### Patch Changes
+
+- 6a3fa2c: `app show --view current` now prints a stderr hint when the current view is empty but a draft exists — the most common "why is this empty?" case for unreviewed apps. The JSON contract is unchanged (`miniApp: null` is still returned); only stderr diagnostics improve.
+- 89489e7: `app status` now surfaces the server's `serviceStatus` (PREPARE / RUNNING / …) alongside the client-derived review state, in both JSON and plain text. Also exposes `shutdownCandidateStatus` and `scheduledShutdownAt` from the same `/review-status` endpoint, so operators can see whether an approved app is actually live — or scheduled for shutdown — without making a second `app service-status` call.
+
+  `--watch` mode re-prints on either review-state OR service-status changes; the service-status call is best-effort, so a transient failure still lets the derived review state through.
+
+- 8113b7b: `app register` now prints a hint pointing at `aitcc app categories --selectable` whenever the manifest validator rejects `categoryIds`. The hint is plain-text only (stderr); the `--json` payload is unchanged so agent-plugin's parser stays stable.
+
 ## 0.1.12
 
 ### Patch Changes
