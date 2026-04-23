@@ -1,6 +1,6 @@
 import { defineCommand } from 'citty';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
-import { fetchWorkspaceDetail } from '../api/workspaces.js';
+import { fetchWorkspaceDetail, fetchWorkspacePartner } from '../api/workspaces.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, setCurrentWorkspaceId } from '../session.js';
@@ -22,6 +22,11 @@ import {
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
 //   workspace show [--workspace <id>]:
 //     { ok: true, workspaceId, workspaceName, extra }                 exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
+//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//   workspace partner [--workspace <id>]:
+//     { ok: true, workspaceId, registered, approvalType,
+//       rejectMessage, partner }                                      exit 0
 //     { ok: false, reason: 'no-workspace-selected' }                  exit 2
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
 //
@@ -231,6 +236,94 @@ const showCommand = defineCommand({
   },
 });
 
+// Shared helper for any workspace subcommand that takes an optional
+// --workspace flag and falls back to the selected workspace. Returns
+// either a numeric workspace id or emits the appropriate JSON/stderr
+// failure and returns null — callers should exit(Usage) on null.
+async function resolveWorkspaceArg(
+  args: { workspace?: unknown; json: boolean },
+  selected: number | undefined,
+): Promise<number | null> {
+  if (args.workspace) {
+    const raw = String(args.workspace);
+    const parsed = parsePositiveInt(raw);
+    if (parsed === null) {
+      const message = `--workspace must be a positive integer (got ${raw})`;
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-id', message });
+      } else {
+        process.stderr.write(`${message}\n`);
+      }
+      return null;
+    }
+    return parsed;
+  }
+  if (selected === undefined) {
+    if (args.json) {
+      emitJson({ ok: false, reason: 'no-workspace-selected' });
+    } else {
+      process.stderr.write(
+        'No workspace selected. Pass `--workspace <id>` or run `aitcc workspace use <id>`.\n',
+      );
+    }
+    return null;
+  }
+  return selected;
+}
+
+const partnerCommand = defineCommand({
+  meta: {
+    name: 'partner',
+    description: 'Show the partner (billing/payout) registration state for the selected workspace.',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID to inspect. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const session = await readSession();
+    if (!session) {
+      emitNotAuthenticated(args.json);
+      return exitAfterFlush(ExitCode.NotAuthenticated);
+    }
+    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
+    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+
+    try {
+      const state = await fetchWorkspacePartner(workspaceId, session.cookies);
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          registered: state.registered,
+          approvalType: state.approvalType,
+          rejectMessage: state.rejectMessage,
+          partner: state.partner,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`Workspace ${workspaceId} partner:\n`);
+      process.stdout.write(`  registered: ${state.registered}\n`);
+      process.stdout.write(`  approvalType: ${state.approvalType ?? 'null'}\n`);
+      if (state.rejectMessage) {
+        process.stdout.write(`  rejectMessage: ${state.rejectMessage}\n`);
+      }
+      if (state.partner) {
+        process.stdout.write('  partner:\n');
+        for (const [k, v] of Object.entries(state.partner)) {
+          process.stdout.write(`    ${k}: ${formatScalar(v)}\n`);
+        }
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 export const workspaceCommand = defineCommand({
   meta: {
     name: 'workspace',
@@ -240,5 +333,6 @@ export const workspaceCommand = defineCommand({
     ls: lsCommand,
     use: useCommand,
     show: showCommand,
+    partner: partnerCommand,
   },
 });

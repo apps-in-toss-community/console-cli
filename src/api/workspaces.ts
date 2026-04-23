@@ -45,3 +45,39 @@ export async function fetchWorkspaceDetail(
   const { id: _id, name: _name, ...extra } = raw;
   return { workspaceId: id, workspaceName: name, extra };
 }
+
+// Partner = the billing/payout entity that must be registered before
+// promotions/IAP can be used. `registered: false` + `approvalType: 'DRAFT'`
+// is the initial state we observed on a fresh workspace. `partner` is the
+// detail record once approval lands; keep it opaque until we see a live
+// example.
+export interface WorkspacePartnerState {
+  readonly registered: boolean;
+  readonly approvalType: string | null;
+  readonly rejectMessage: string | null;
+  readonly partner: Readonly<Record<string, unknown>> | null;
+}
+
+export async function fetchWorkspacePartner(
+  workspaceId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<WorkspacePartnerState> {
+  const url = `${WORKSPACES_BASE}/workspaces/${workspaceId}/partner`;
+  const raw = await requestConsoleApi<Record<string, unknown>>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  const registered = raw.registered;
+  if (typeof registered !== 'boolean') {
+    throw new Error(`Unexpected workspace partner shape for id=${workspaceId}`);
+  }
+  const approvalType = typeof raw.approvalType === 'string' ? raw.approvalType : null;
+  const rejectMessage = typeof raw.rejectMessage === 'string' ? raw.rejectMessage : null;
+  const partner =
+    raw.partner && typeof raw.partner === 'object'
+      ? (raw.partner as Readonly<Record<string, unknown>>)
+      : null;
+  return { registered, approvalType, rejectMessage, partner };
+}
