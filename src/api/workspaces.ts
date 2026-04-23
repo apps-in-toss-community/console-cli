@@ -81,3 +81,65 @@ export async function fetchWorkspacePartner(
       : null;
   return { registered, approvalType, rejectMessage, partner };
 }
+
+// `console-workspace-terms/:type/skip-permission` returns the terms a
+// workspace owner must agree to before the feature gated by `:type`
+// becomes available. The supported types are enumerated here verbatim
+// from the console UI — each one gates a distinct feature surface
+// (Toss login scopes, biz workspace eligibility, promotion-money,
+// in-app advertising, in-app purchase). Other values currently 404.
+export const WORKSPACE_TERM_TYPES = [
+  'TOSS_LOGIN',
+  'BIZ_WORKSPACE',
+  'TOSS_PROMOTION_MONEY',
+  'IAA',
+  'IAP',
+] as const;
+export type WorkspaceTermType = (typeof WORKSPACE_TERM_TYPES)[number];
+
+export interface WorkspaceTerm {
+  readonly required: boolean;
+  readonly termsId: number;
+  readonly revisionId: number;
+  readonly title: string;
+  readonly contentsUrl: string;
+  readonly actionType: string;
+  readonly isAgreed: boolean;
+  readonly isOneTimeConsent: boolean;
+}
+
+export async function fetchWorkspaceTerms(
+  workspaceId: number,
+  type: WorkspaceTermType,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<readonly WorkspaceTerm[]> {
+  const url = `${WORKSPACES_BASE}/workspaces/${workspaceId}/console-workspace-terms/${type}/skip-permission`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (!Array.isArray(raw)) {
+    throw new Error(`Unexpected workspace terms shape for type=${type}`);
+  }
+  return raw.map((entry, i): WorkspaceTerm => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`Unexpected workspace terms entry at index ${i} for type=${type}`);
+    }
+    const e = entry as Record<string, unknown>;
+    // The console UI currently always sends all fields, and Zod-level
+    // strict validation would break if Toss adds an enum value. Trust
+    // the types we rely on and pass through with a narrow normalisation.
+    return {
+      required: Boolean(e.required),
+      termsId: typeof e.termsId === 'number' ? e.termsId : 0,
+      revisionId: typeof e.revisionId === 'number' ? e.revisionId : 0,
+      title: typeof e.title === 'string' ? e.title : '',
+      contentsUrl: typeof e.contentsUrl === 'string' ? e.contentsUrl : '',
+      actionType: typeof e.actionType === 'string' ? e.actionType : '',
+      isAgreed: Boolean(e.isAgreed),
+      isOneTimeConsent: Boolean(e.isOneTimeConsent),
+    };
+  });
+}
