@@ -3,6 +3,7 @@ import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
 import {
   fetchAppEventCatalogs,
+  fetchAppServiceStatus,
   fetchAppTemplates,
   fetchBundles,
   fetchCerts,
@@ -1141,5 +1142,64 @@ describe('fetchImpressionCategoryList', () => {
       );
     const got = await fetchImpressionCategoryList(cookies, { fetchImpl });
     expect(got[0]?.categoryList[0]?.subCategoryList).toEqual([]);
+  });
+});
+
+describe('fetchAppServiceStatus', () => {
+  it('hits /mini-app/:id/review-status (singular) and returns the service status triple', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            shutdownCandidateStatus: null,
+            scheduledShutdownAt: null,
+            serviceStatus: 'PREPARE',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchAppServiceStatus(3095, 29405, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/review-status',
+    );
+    expect(got).toEqual({
+      shutdownCandidateStatus: null,
+      scheduledShutdownAt: null,
+      serviceStatus: 'PREPARE',
+    });
+  });
+
+  it('preserves shutdown fields when populated', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            shutdownCandidateStatus: 'SCHEDULED',
+            scheduledShutdownAt: '2026-06-01T00:00:00',
+            serviceStatus: 'RUNNING',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchAppServiceStatus(3095, 29405, cookies, { fetchImpl });
+    expect(got.shutdownCandidateStatus).toBe('SCHEDULED');
+    expect(got.scheduledShutdownAt).toBe('2026-06-01T00:00:00');
+    expect(got.serviceStatus).toBe('RUNNING');
+  });
+
+  it('rejects a response missing serviceStatus', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({ resultType: 'SUCCESS', success: { shutdownCandidateStatus: null } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    await expect(fetchAppServiceStatus(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(
+      /missing serviceStatus/,
+    );
   });
 });

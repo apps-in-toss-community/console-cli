@@ -819,6 +819,56 @@ export async function fetchImpressionCategoryList(
   });
 }
 
+// --- App service status (per-mini-app shutdown/service state) ---
+//
+// GET /mini-app/:id/review-status (singular `mini-app`) returns the
+// runtime service status of a single mini-app. Distinct from the
+// workspace-level `mini-apps/review-status` (plural) which reports the
+// pending/approved state of every app in a workspace; this one is the
+// server-authoritative view of whether the app is live, preparing, or
+// scheduled for shutdown.
+//
+// Observed shape on a PREPARE app:
+//   { shutdownCandidateStatus: null, scheduledShutdownAt: null,
+//     serviceStatus: 'PREPARE' }
+
+export interface AppServiceStatus {
+  readonly shutdownCandidateStatus: string | null;
+  readonly scheduledShutdownAt: string | null;
+  readonly serviceStatus: string;
+}
+
+export async function fetchAppServiceStatus(
+  workspaceId: number,
+  miniAppId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<AppServiceStatus> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/review-status`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected app service-status shape for app=${miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const serviceStatus = data.serviceStatus;
+  if (typeof serviceStatus !== 'string') {
+    throw new Error(
+      `Unexpected app service-status shape for app=${miniAppId}: missing serviceStatus`,
+    );
+  }
+  return {
+    shutdownCandidateStatus:
+      typeof data.shutdownCandidateStatus === 'string' ? data.shutdownCandidateStatus : null,
+    scheduledShutdownAt:
+      typeof data.scheduledShutdownAt === 'string' ? data.scheduledShutdownAt : null,
+    serviceStatus,
+  };
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,

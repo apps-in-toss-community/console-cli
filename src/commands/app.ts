@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 import {
   fetchAppEventCatalogs,
+  fetchAppServiceStatus,
   fetchAppTemplates,
   fetchBundles,
   fetchCerts,
@@ -1338,6 +1339,11 @@ const metricsCommand = defineCommand({
 //     { ok: true, categories: CategoryTreeEntry[] }                               exit 0
 //     { ok: true, authenticated: false }                                          exit 10
 //
+//   app service-status <id> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, serviceStatus, shutdownCandidateStatus,
+//       scheduledShutdownAt }                                                     exit 0
+//     { ok: false, reason: 'invalid-id' | ... }                                   exit 2
+//
 // Share-reward promotions for an app. Empty array is the common case
 // (no promotions set up). Per-record shape is passed through opaquely
 // until a populated response is observed.
@@ -1854,6 +1860,56 @@ const categoriesCommand = defineCommand({
   },
 });
 
+const serviceStatusCommand = defineCommand({
+  meta: {
+    name: 'service-status',
+    description:
+      'Show the server-authoritative runtime status of a mini-app (serviceStatus, shutdown schedule).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app service-status: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const st = await fetchAppServiceStatus(workspaceId, appId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, ...st });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}):\n`);
+      process.stdout.write(`  serviceStatus: ${st.serviceStatus}\n`);
+      process.stdout.write(`  shutdownCandidateStatus: ${st.shutdownCandidateStatus ?? 'null'}\n`);
+      process.stdout.write(`  scheduledShutdownAt: ${st.scheduledShutdownAt ?? 'null'}\n`);
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1914,6 +1970,7 @@ export const appCommand = defineCommand({
     events: eventsCommand,
     templates: templatesCommand,
     categories: categoriesCommand,
+    'service-status': serviceStatusCommand,
     register: registerCommand,
   },
 });
