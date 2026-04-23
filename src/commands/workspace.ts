@@ -3,6 +3,7 @@ import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import {
   fetchWorkspaceDetail,
   fetchWorkspacePartner,
+  fetchWorkspaceSegments,
   fetchWorkspaceTerms,
   WORKSPACE_TERM_TYPES,
   type WorkspaceTerm,
@@ -42,6 +43,11 @@ import {
 //     { ok: false, reason: 'invalid-type', allowed: TYPES[] }         exit 2
 //     { ok: false, reason: 'no-workspace-selected' }                  exit 2
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
+//   workspace segments ls [--category <cat>] [--search <text>] [--page N] [--workspace <id>]:
+//     { ok: true, workspaceId, category, segments: [...], totalPage, currentPage }  exit 0
+//     { ok: false, reason: 'invalid-page', message }                                exit 2
+//     { ok: false, reason: 'no-workspace-selected' }                                exit 2
+//     { ok: false, reason: 'invalid-id', message }                                  exit 2
 //
 // Every workspace subcommand inherits the standard auth failure modes from
 // whoami: { ok: true, authenticated: false } exit 10, network-error exit 11,
@@ -439,6 +445,107 @@ const termsCommand = defineCommand({
   },
 });
 
+const segmentsLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List user segments in the selected workspace (the 세그먼트 menu).',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    category: {
+      type: 'string',
+      description: 'Category bucket (tab). Defaults to "생성된 세그먼트" — the UI\'s initial tab.',
+    },
+    search: { type: 'string', description: 'Name-contains filter. Empty matches everything.' },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const session = await readSession();
+    if (!session) {
+      emitNotAuthenticated(args.json);
+      return exitAfterFlush(ExitCode.NotAuthenticated);
+    }
+    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
+    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+
+    const pageRaw = String(args.page);
+    const pageNum = Number(pageRaw);
+    if (!Number.isFinite(pageNum) || !Number.isInteger(pageNum) || pageNum < 0) {
+      const message = `--page must be a non-negative integer (got ${JSON.stringify(pageRaw)})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-page', message });
+      else process.stderr.write(`${message}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    try {
+      const page = await fetchWorkspaceSegments(
+        {
+          workspaceId,
+          ...(args.category !== undefined ? { category: String(args.category) } : {}),
+          ...(args.search !== undefined ? { search: String(args.search) } : {}),
+          page: pageNum,
+        },
+        session.cookies,
+      );
+      const category = args.category !== undefined ? String(args.category) : '생성된 세그먼트';
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          category,
+          segments: page.contents,
+          totalPage: page.totalPage,
+          currentPage: page.currentPage,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (page.contents.length === 0) {
+        process.stdout.write(
+          `Workspace ${workspaceId} (${category}): no segments on page ${page.currentPage}\n`,
+        );
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `Workspace ${workspaceId} (${category}): ${page.contents.length} segment(s), page ${page.currentPage} of ${page.totalPage}\n`,
+      );
+      for (const s of page.contents) {
+        const id =
+          typeof s.id === 'string' || typeof s.id === 'number'
+            ? s.id
+            : typeof s.segmentId === 'string' || typeof s.segmentId === 'number'
+              ? s.segmentId
+              : '-';
+        const name =
+          typeof s.name === 'string' ? s.name : typeof s.title === 'string' ? s.title : '-';
+        const userCount =
+          typeof s.userCount === 'number'
+            ? String(s.userCount)
+            : typeof s.count === 'number'
+              ? String(s.count)
+              : '-';
+        process.stdout.write(`${id}\t${name}\t${userCount}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const segmentsCommand = defineCommand({
+  meta: {
+    name: 'segments',
+    description: 'Inspect user segments defined in a workspace.',
+  },
+  subCommands: {
+    ls: segmentsLsCommand,
+  },
+});
+
 export const workspaceCommand = defineCommand({
   meta: {
     name: 'workspace',
@@ -450,5 +557,6 @@ export const workspaceCommand = defineCommand({
     show: showCommand,
     partner: partnerCommand,
     terms: termsCommand,
+    segments: segmentsCommand,
   },
 });
