@@ -455,26 +455,71 @@ const statusCommand = defineCommand({
     if (!ctx) return;
     const { session, workspaceId } = ctx;
 
-    const emit = (status: DerivedStatus) => {
+    // `serviceStatus` is a server-side string (PREPARE / RUNNING / …) that
+    // is orthogonal to the client-derived review `state`. We surface both
+    // so operators see the review stage and the runtime stage at once —
+    // important because an app can be `approved` (review done) yet still
+    // `PREPARE` (not live), and we never want the --json consumer to have
+    // to make a second call to tell them apart.
+    const emit = (
+      status: DerivedStatus,
+      service: {
+        serviceStatus: string;
+        shutdownCandidateStatus: string | null;
+        scheduledShutdownAt: string | null;
+      } | null,
+    ) => {
       if (args.json) {
-        emitJson({ ok: true, workspaceId, appId, ...status });
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          ...status,
+          // `null` only in the unlikely case the service-status endpoint
+          // failed but with-draft succeeded — we fall through rather than
+          // hard-failing, because the derived review state is still useful.
+          serviceStatus: service?.serviceStatus ?? null,
+          shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
+          scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
+        });
       } else {
+        const svc = service ? ` [${service.serviceStatus}]` : '';
         process.stdout.write(
-          `App ${appId} (ws ${workspaceId}): ${status.state}` +
+          `App ${appId} (ws ${workspaceId}): ${status.state}${svc}` +
             (status.rejectedMessage ? `\n  reason: ${status.rejectedMessage}` : '') +
+            (service?.scheduledShutdownAt
+              ? `\n  scheduled shutdown: ${service.scheduledShutdownAt}`
+              : '') +
             '\n',
         );
       }
     };
 
     try {
-      const once = async (): Promise<DerivedStatus> => {
-        const env = await fetchMiniAppWithDraft(workspaceId, appId, session.cookies);
-        return deriveReviewState(env);
+      const once = async (): Promise<
+        [
+          DerivedStatus,
+          {
+            serviceStatus: string;
+            shutdownCandidateStatus: string | null;
+            scheduledShutdownAt: string | null;
+          } | null,
+        ]
+      > => {
+        // Fire both requests in parallel — they share the same session
+        // cookie and the console backend has no cross-rate-limit we've
+        // observed. `service-status` is best-effort: if it fails we still
+        // want the review state through.
+        const [env, service] = await Promise.all([
+          fetchMiniAppWithDraft(workspaceId, appId, session.cookies),
+          fetchAppServiceStatus(workspaceId, appId, session.cookies).catch(() => null),
+        ]);
+        return [deriveReviewState(env), service];
       };
 
       if (!args.watch) {
-        emit(await once());
+        const [status, service] = await once();
+        emit(status, service);
         return exitAfterFlush(ExitCode.Ok);
       }
 
@@ -485,14 +530,17 @@ const statusCommand = defineCommand({
       // interrupted — we don't synthesise a "watch-ended" record.
       // Human mode prints a one-line update only when the state changes.
       let lastState: ReviewState | null = null;
+      let lastServiceStatus: string | null = null;
       while (true) {
-        const status = await once();
+        const [status, service] = await once();
+        const svc = service?.serviceStatus ?? null;
         if (args.json) {
-          emit(status);
-        } else if (status.state !== lastState) {
-          emit(status);
+          emit(status, service);
+        } else if (status.state !== lastState || svc !== lastServiceStatus) {
+          emit(status, service);
         }
         lastState = status.state;
+        lastServiceStatus = svc;
         if (status.state !== 'under-review') {
           return exitAfterFlush(ExitCode.Ok);
         }
