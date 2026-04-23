@@ -1,5 +1,6 @@
 import { defineCommand } from 'citty';
 import {
+  fetchAppEventCatalogs,
   fetchBundles,
   fetchCerts,
   fetchConversionMetrics,
@@ -1314,6 +1315,10 @@ const metricsCommand = defineCommand({
 //     { ok: true, workspaceId, appId, campaigns: [...], paging: {...} }   exit 0
 //     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' | ... } exit 2
 //
+//   app events ls <id> [--workspace <id>] [--page N] [--size N] [--search <text>] [--refresh]:
+//     { ok: true, workspaceId, appId, events: [...], cacheTime, paging: {...} }   exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' | ... } exit 2
+//
 // Share-reward promotions for an app. Empty array is the common case
 // (no promotions set up). Per-record shape is passed through opaquely
 // until a populated response is observed.
@@ -1506,6 +1511,118 @@ const messagesCommand = defineCommand({
   },
 });
 
+const eventsLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List custom event catalogs recorded for a mini-app (the 이벤트 menu).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    size: { type: 'string', description: 'Page size.', default: '20' },
+    search: { type: 'string', description: 'Event-name filter. Empty matches everything.' },
+    refresh: {
+      type: 'boolean',
+      description: 'Bypass the server cache and rebuild the catalog list.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app events ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const pageResult = parseNonNegativeInt(String(args.page), 'page');
+    if ('error' in pageResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
+      else process.stderr.write(`${pageResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sizeResult = parseNonNegativeInt(String(args.size), 'size');
+    if ('error' in sizeResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-size', message: sizeResult.error });
+      else process.stderr.write(`${sizeResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchAppEventCatalogs(
+        {
+          workspaceId,
+          miniAppId: appId,
+          pageNumber: pageResult.value,
+          pageSize: sizeResult.value,
+          ...(args.search !== undefined ? { search: String(args.search) } : {}),
+          ...(args.refresh ? { refresh: true } : {}),
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          events: result.results,
+          cacheTime: result.cacheTime ?? null,
+          paging: result.paging,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (result.results.length === 0) {
+        const ct = result.cacheTime ? ` (cached ${result.cacheTime})` : '';
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no event catalogs${ct}\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): ${result.results.length} event(s) on page ${result.paging.pageNumber} of ${result.paging.totalPages}\n`,
+      );
+      for (const e of result.results) {
+        const name =
+          typeof e.name === 'string' ? e.name : typeof e.eventName === 'string' ? e.eventName : '-';
+        const count =
+          typeof e.count === 'number'
+            ? String(e.count)
+            : typeof e.totalCount === 'number'
+              ? String(e.totalCount)
+              : '-';
+        process.stdout.write(`${name}\t${count}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const eventsCommand = defineCommand({
+  meta: {
+    name: 'events',
+    description: 'Inspect custom event catalogs (log search) for a mini-app.',
+  },
+  subCommands: {
+    ls: eventsLsCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1563,6 +1680,7 @@ export const appCommand = defineCommand({
     metrics: metricsCommand,
     'share-rewards': shareRewardsCommand,
     messages: messagesCommand,
+    events: eventsCommand,
     register: registerCommand,
   },
 });

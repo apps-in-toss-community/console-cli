@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
 import {
+  fetchAppEventCatalogs,
   fetchBundles,
   fetchCerts,
   fetchConversionMetrics,
@@ -853,5 +854,129 @@ describe('fetchSmartMessageCampaigns', () => {
     expect(got.paging.pageSize).toBe(7);
     expect(got.paging.hasNext).toBe(false);
     expect(got.paging.totalCount).toBe(1);
+  });
+});
+
+describe('fetchAppEventCatalogs', () => {
+  it('POSTs to /log/catalogs/search with isRefresh/pageNumber/pageSize/search body', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody: unknown = null;
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = (init?.method ?? 'GET').toUpperCase();
+      calledBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            results: [],
+            cacheTime: '2026-04-23T14:17:56.598344405',
+            paging: {
+              pageNumber: 0,
+              pageSize: 20,
+              hasNext: false,
+              totalCount: 0,
+              totalPages: 0,
+            },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchAppEventCatalogs({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(calledMethod).toBe('POST');
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/log/catalogs/search',
+    );
+    expect(calledBody).toEqual({
+      isRefresh: false,
+      pageNumber: 0,
+      pageSize: 20,
+      search: '',
+    });
+    expect(got.results).toEqual([]);
+    expect(got.cacheTime).toBe('2026-04-23T14:17:56.598344405');
+    expect(got.paging).toEqual({
+      pageNumber: 0,
+      pageSize: 20,
+      hasNext: false,
+      totalCount: 0,
+      totalPages: 0,
+    });
+  });
+
+  it('forwards refresh/search/paging', async () => {
+    let calledBody: unknown = null;
+    const fetchImpl: FetchLike = async (_input, init) => {
+      calledBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            results: [],
+            cacheTime: null,
+            paging: { pageNumber: 1, pageSize: 5, hasNext: true, totalCount: 17, totalPages: 4 },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchAppEventCatalogs(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        pageNumber: 1,
+        pageSize: 5,
+        search: 'purchase',
+        refresh: true,
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledBody).toEqual({
+      isRefresh: true,
+      pageNumber: 1,
+      pageSize: 5,
+      search: 'purchase',
+    });
+    expect(got.paging.totalPages).toBe(4);
+    expect(got.cacheTime).toBeUndefined();
+  });
+
+  it('passes event records through opaquely', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            results: [{ name: 'signup_complete', count: 42, unknownField: 'later' }],
+            paging: { pageNumber: 0, pageSize: 20, hasNext: false, totalCount: 1, totalPages: 1 },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchAppEventCatalogs({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(got.results).toHaveLength(1);
+    expect(got.results[0]).toEqual({
+      name: 'signup_complete',
+      count: 42,
+      unknownField: 'later',
+    });
+  });
+
+  it('rejects non-object success payloads', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchAppEventCatalogs({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/Unexpected event-catalogs shape/);
   });
 });
