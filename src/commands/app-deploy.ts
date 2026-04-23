@@ -7,7 +7,7 @@ import {
   postDeploymentsInitialize,
   putBundleToUploadUrl,
 } from '../api/mini-apps.js';
-import { AitBundleError, readAitBundle } from '../config/ait-bundle.js';
+import { AitBundleError, type AitBundleInfo, readAitBundle } from '../config/ait-bundle.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
@@ -21,6 +21,7 @@ import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shar
 //
 //   success (all requested steps completed):
 //     { ok: true, workspaceId, appId, deploymentId,
+//       bundleFormat: 'ait' | 'zip',
 //       uploaded: true, reviewed: boolean, released: boolean,
 //       bundle: { ... } | null,
 //       reviewResult: { ... } | null,
@@ -28,7 +29,8 @@ import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shar
 //
 //   dry run:
 //     { ok: true, dryRun: true, workspaceId, appId, deploymentId,
-//       bytes, steps: ['upload', ...], memo: string|null,
+//       bundleFormat: 'ait' | 'zip', bytes,
+//       steps: ['upload', ...], memo: string|null,
 //       releaseNotes: string|null, confirmed: boolean }            exit 0
 //
 //   usage errors:
@@ -74,9 +76,7 @@ export interface DeployArgs {
 
 export interface DeployDeps {
   readonly fetchImpl?: FetchLike;
-  readonly readBundleImpl?: (
-    path: string,
-  ) => Promise<{ readonly deploymentId: string; readonly bytes: Uint8Array }>;
+  readonly readBundleImpl?: (path: string) => Promise<AitBundleInfo>;
 }
 
 function parseAppIdStrict(raw: string): number | null {
@@ -165,7 +165,7 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
   //    print matches what a real run would do (bytes count, embedded
   //    deploymentId).
   const readBundle = deps.readBundleImpl ?? readAitBundle;
-  let bundleInfo: { readonly deploymentId: string; readonly bytes: Uint8Array };
+  let bundleInfo: AitBundleInfo;
   try {
     bundleInfo = await readBundle(args.path);
   } catch (err) {
@@ -233,6 +233,7 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
         workspaceId,
         appId,
         deploymentId,
+        bundleFormat: bundleInfo.format,
         bytes: bundleInfo.bytes.byteLength,
         steps,
         memo: memo ?? null,
@@ -364,6 +365,7 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
       workspaceId,
       appId,
       deploymentId,
+      bundleFormat: bundleInfo.format,
       uploaded,
       reviewed,
       released: release,
