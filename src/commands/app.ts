@@ -2,12 +2,14 @@ import { defineCommand } from 'citty';
 import {
   fetchBundles,
   fetchCerts,
+  fetchConversionMetrics,
   fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchMiniAppWithDraft,
   fetchReviewStatus,
   fetchUserReports,
+  type MetricsTimeUnit,
   type RatingSortDirection,
   type RatingSortField,
 } from '../api/mini-apps.js';
@@ -1115,6 +1117,191 @@ const certsCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app metrics <id> [--workspace <id>] [--time-unit DAY|WEEK|MONTH]
+//                    [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--refresh]:
+//     { ok: true, workspaceId, appId, timeUnitType, startDate, endDate,
+//       cacheTime?, metrics: [...] }                                exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-date'
+//                        | 'invalid-time-unit' | ... }              exit 2
+//
+// Conversion metrics for an app over a date range. An empty `metrics`
+// array is the common case for PREPARE-state apps (no live traffic);
+// per-record shape is passed through opaquely. Default window: the last
+// 30 days ending today (host local date). `--refresh` bypasses the
+// server-side cache.
+
+const VALID_TIME_UNITS: readonly MetricsTimeUnit[] = ['DAY', 'WEEK', 'MONTH'];
+
+function parseIsoDate(raw: string, field: string): { value: string } | { error: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { error: `--${field} must be YYYY-MM-DD (got ${JSON.stringify(raw)})` };
+  }
+  const d = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) {
+    return { error: `--${field} is not a valid date (got ${JSON.stringify(raw)})` };
+  }
+  return { value: raw };
+}
+
+function todayLocalIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function daysAgoLocalIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const metricsCommand = defineCommand({
+  meta: {
+    name: 'metrics',
+    description: 'Show conversion metrics for a mini-app over a date range.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    'time-unit': {
+      type: 'string',
+      description: 'Bucket size: DAY | WEEK | MONTH.',
+      default: 'DAY',
+    },
+    start: {
+      type: 'string',
+      description: 'Start date (YYYY-MM-DD). Defaults to 30 days before --end.',
+    },
+    end: {
+      type: 'string',
+      description: 'End date (YYYY-MM-DD). Defaults to today (host local).',
+    },
+    refresh: {
+      type: 'boolean',
+      description: 'Bypass server-side cache.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app metrics: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const timeUnit = String(args['time-unit']).toUpperCase();
+    if (!VALID_TIME_UNITS.includes(timeUnit as MetricsTimeUnit)) {
+      const message = `--time-unit must be one of ${VALID_TIME_UNITS.join('|')} (got ${JSON.stringify(args['time-unit'])})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-time-unit', message });
+      else process.stderr.write(`${message}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const endDate = args.end ? String(args.end) : todayLocalIso();
+    const endResult = parseIsoDate(endDate, 'end');
+    if ('error' in endResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-date', message: endResult.error });
+      else process.stderr.write(`${endResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const startDate = args.start ? String(args.start) : daysAgoLocalIso(30);
+    const startResult = parseIsoDate(startDate, 'start');
+    if ('error' in startResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-date', message: startResult.error });
+      else process.stderr.write(`${startResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    if (startResult.value > endResult.value) {
+      const message = `--start (${startResult.value}) must be on or before --end (${endResult.value})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-date', message });
+      else process.stderr.write(`${message}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchConversionMetrics(
+        {
+          workspaceId,
+          miniAppId: appId,
+          timeUnitType: timeUnit as MetricsTimeUnit,
+          startDate: startResult.value,
+          endDate: endResult.value,
+          refresh: args.refresh,
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          timeUnitType: timeUnit,
+          startDate: startResult.value,
+          endDate: endResult.value,
+          ...(result.cacheTime !== undefined ? { cacheTime: result.cacheTime } : {}),
+          metrics: result.metrics,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      const header = `App ${appId} (ws ${workspaceId}) · ${timeUnit} · ${startResult.value} → ${endResult.value}`;
+      if (result.metrics.length === 0) {
+        process.stdout.write(`${header}: no metrics\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`${header}: ${result.metrics.length} bucket(s)\n`);
+      for (const m of result.metrics) {
+        const date =
+          typeof m.date === 'string'
+            ? m.date
+            : typeof m.bucketDate === 'string'
+              ? m.bucketDate
+              : '';
+        const impressions =
+          typeof m.impressions === 'number'
+            ? m.impressions
+            : typeof m.impressionCount === 'number'
+              ? m.impressionCount
+              : '';
+        const clicks =
+          typeof m.clicks === 'number'
+            ? m.clicks
+            : typeof m.clickCount === 'number'
+              ? m.clickCount
+              : '';
+        process.stdout.write(`${date}\t${impressions}\t${clicks}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1169,6 +1356,7 @@ export const appCommand = defineCommand({
     reports: reportsCommand,
     bundles: bundlesCommand,
     certs: certsCommand,
+    metrics: metricsCommand,
     register: registerCommand,
   },
 });

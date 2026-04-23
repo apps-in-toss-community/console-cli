@@ -367,6 +367,75 @@ export async function fetchBundles(
   return { contents, totalPage, currentPage };
 }
 
+// --- Conversion metrics ---
+//
+// GET /workspaces/:wid/mini-app/:aid/conversion-metrics
+//   ?refresh=false&timeUnitType=DAY|WEEK|MONTH&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+//
+// Response envelope (observed 2026-04-23 on app 29405, empty case):
+//   { metrics: [], cacheTime: '2026-04-23T13:49:42.693498831' }
+//
+// All apps in the current workspace are PREPARE-state (no live traffic),
+// so the shape of a populated `metrics[]` entry isn't observed yet — we
+// pass records through opaquely until a live app lands. `cacheTime` is
+// the server-side cache timestamp (ISO-ish with nanoseconds); we surface
+// it verbatim so agent-plugin can reason about freshness.
+//
+// `refresh=true` bypasses the server cache; we default to `false` to
+// match the console UI's default request and avoid hammering the
+// underlying data warehouse.
+
+export type MetricsTimeUnit = 'DAY' | 'WEEK' | 'MONTH';
+
+export interface MetricsResult {
+  readonly metrics: readonly Readonly<Record<string, unknown>>[];
+  readonly cacheTime: string | undefined;
+}
+
+export interface FetchMetricsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly timeUnitType: MetricsTimeUnit;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly refresh?: boolean;
+}
+
+export async function fetchConversionMetrics(
+  params: FetchMetricsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<MetricsResult> {
+  const qs = new URLSearchParams();
+  qs.set('refresh', String(params.refresh ?? false));
+  qs.set('timeUnitType', params.timeUnitType);
+  qs.set('startDate', params.startDate);
+  qs.set('endDate', params.endDate);
+  const url =
+    `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/conversion-metrics` +
+    `?${qs.toString()}`;
+
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object') {
+    throw new Error(`Unexpected metrics shape for app=${params.miniAppId}`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const metricsRaw = rec.metrics;
+  if (!Array.isArray(metricsRaw)) {
+    throw new Error(`Unexpected metrics shape: metrics is not an array (app=${params.miniAppId})`);
+  }
+  const metrics = metricsRaw.map((m) => {
+    if (m === null || typeof m !== 'object') return {};
+    return m as Record<string, unknown>;
+  });
+  const cacheTime = typeof rec.cacheTime === 'string' ? rec.cacheTime : undefined;
+  return { metrics, cacheTime };
+}
+
 // --- mTLS certs ---
 //
 // GET /workspaces/:wid/mini-app/:aid/certs → array of cert records.

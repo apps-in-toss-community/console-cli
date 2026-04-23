@@ -4,6 +4,7 @@ import type { FetchLike } from './http.js';
 import {
   fetchBundles,
   fetchCerts,
+  fetchConversionMetrics,
   fetchDeployedBundle,
   fetchMiniAppRatings,
   fetchMiniApps,
@@ -525,5 +526,133 @@ describe('fetchCerts', () => {
         headers: { 'content-type': 'application/json' },
       });
     await expect(fetchCerts(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(/not an array/);
+  });
+});
+
+describe('fetchConversionMetrics', () => {
+  it('builds the expected URL with defaults (refresh=false)', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { metrics: [], cacheTime: '2026-04-23T13:00:00' },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchConversionMetrics(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        timeUnitType: 'DAY',
+        startDate: '2026-04-01',
+        endDate: '2026-04-22',
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/conversion-metrics?refresh=false&timeUnitType=DAY&startDate=2026-04-01&endDate=2026-04-22',
+    );
+    expect(got).toEqual({ metrics: [], cacheTime: '2026-04-23T13:00:00' });
+  });
+
+  it('sets refresh=true when requested', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: { metrics: [] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await fetchConversionMetrics(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        timeUnitType: 'WEEK',
+        startDate: '2026-01-01',
+        endDate: '2026-04-22',
+        refresh: true,
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('refresh=true');
+    expect(calledUrl).toContain('timeUnitType=WEEK');
+  });
+
+  it('passes each metrics record through as an opaque record', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            metrics: [
+              { date: '2026-04-01', impressions: 100, clicks: 10 },
+              { date: '2026-04-02', impressions: 120, clicks: 14 },
+            ],
+            cacheTime: '2026-04-23T13:00:00',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchConversionMetrics(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        timeUnitType: 'DAY',
+        startDate: '2026-04-01',
+        endDate: '2026-04-02',
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(got.metrics).toHaveLength(2);
+    expect(got.metrics[0]).toMatchObject({ date: '2026-04-01', impressions: 100 });
+    expect(got.cacheTime).toBe('2026-04-23T13:00:00');
+  });
+
+  it('throws when metrics is not an array', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { metrics: 'oops' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchConversionMetrics(
+        {
+          workspaceId: 3095,
+          miniAppId: 29405,
+          timeUnitType: 'DAY',
+          startDate: '2026-04-01',
+          endDate: '2026-04-22',
+        },
+        cookies,
+        { fetchImpl },
+      ),
+    ).rejects.toThrow(/not an array/);
+  });
+
+  it('leaves cacheTime undefined when absent', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { metrics: [] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const got = await fetchConversionMetrics(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        timeUnitType: 'DAY',
+        startDate: '2026-04-01',
+        endDate: '2026-04-22',
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(got.cacheTime).toBeUndefined();
   });
 });
