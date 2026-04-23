@@ -1,5 +1,77 @@
 # @ait-co/console-cli
 
+## 0.1.11
+
+### Patch Changes
+
+- 1196c3e: Add `aitcc app bundles ls <id>` and `aitcc app bundles deployed <id>` to inspect upload bundles.
+
+  Endpoints:
+
+  - `GET /workspaces/:wid/mini-app/:aid/bundles[?page=&tested=&deployStatus=]` — page-based pagination, `{contents, totalPage, currentPage}`
+  - `GET /workspaces/:wid/mini-app/:aid/bundles/deployed` — returns the single currently-deployed bundle (or `null`)
+
+  `bundles ls` flags: `--page N`, `--tested true|false`, `--deploy-status STR` (e.g. `DEPLOYED`), plus `--workspace`, `--json`. `bundles deployed` only takes `--workspace` and `--json`.
+
+  These are the read half of the deploy surface; `aitcc deploy` (task #24) will write new bundles through a separate upload endpoint once observed. For now `app bundles ls` lets the CLI and agent-plugin see what's already there, and `app bundles deployed` answers "what version is live?" for a given app — the quickest way to confirm a deploy from the terminal.
+
+- 265dfb0: Add `aitcc app certs ls <id>` to list mTLS certificates issued for a mini-app.
+
+  Endpoint: `GET /workspaces/:wid/mini-app/:aid/certs` — a simple array. Empty `[]` is the common case (no certs provisioned); per-record shape is passed through opaquely until a populated response is observed.
+
+  Scaffolded under a `certs` group so follow-ups (`certs create`, `certs revoke`) land as sibling subcommands without reshuffling the command tree.
+
+- 2ed6f7a: Add `aitcc app metrics <id>` to read conversion metrics for a mini-app.
+
+  Endpoint: `GET /workspaces/:wid/mini-app/:aid/conversion-metrics?refresh=&timeUnitType=DAY|WEEK|MONTH&startDate=&endDate=`. Defaults to the last 30 days (host local) at DAY granularity.
+
+  Flags: `--time-unit DAY|WEEK|MONTH`, `--start YYYY-MM-DD`, `--end YYYY-MM-DD`, `--refresh` (bypass server cache). Validates the date range locally (exit 2 with `invalid-date` if `start > end`).
+
+  PREPARE-state apps return `metrics: []` with a `cacheTime` ISO timestamp; per-record shape is passed through opaquely until a live-traffic response is observed.
+
+- a54cf8b: Add `aitcc app ratings <id>` to list user ratings and reviews for a submitted mini-app.
+
+  The console UI's "평점 및 리뷰" tab is powered by `GET /mini-app/:id/app-ratings?page&size&sortField&sortDirection`. The response envelope carries `{ratings, paging, averageRating, totalReviewCount}`, so the CLI surfaces all four directly: the rollup numbers in both human and JSON output, and the per-review records (score, nickname, content, timestamp) as a tab-separated table in human mode / opaque records in JSON.
+
+  Flags:
+
+  - `--page N` (0-indexed, default 0) and `--size N` (default 20) for pagination
+  - `--sort-field CREATED_AT|SCORE` (default `CREATED_AT`) and `--sort-direction ASC|DESC` (default `DESC`) to match the fields the console UI emits
+  - `--workspace <id>` falls through to the selected workspace
+
+  JSON exit codes match the other `app` subcommands: `invalid-id` / `invalid-config` → exit 2, live API/network/auth failures follow the shared `api-error` / `network-error` / `authenticated: false` contract.
+
+- 9b07f49: Add `aitcc app reports <id>` to list user-submitted reports (신고 내역) for a mini-app.
+
+  Endpoint: `GET /workspaces/:wid/mini-apps/:aid/user-reports?pageSize=N[&cursor=...]`. Note the **plural** `mini-apps` in the path — same split-personality as `mini-apps/review-status`. Cursor-based pagination (unlike ratings, which is page-based): the server hands back `{reports, nextCursor, hasMore}` and the caller passes `--cursor` opaquely on the next call.
+
+  Flags:
+
+  - `--page-size N` (default 20)
+  - `--cursor <str>` — opaque token from a previous response's `nextCursor`
+  - `--workspace <id>` falls through to the selected workspace
+  - `--json`
+
+  JSON exit codes follow the shared `app` subcommand contract (invalid-id / invalid-config → exit 2, api-error / network-error / `authenticated: false` for live failures).
+
+- a8dbf98: Add `aitcc app share-rewards ls <id>` to list share-reward promotions for a mini-app.
+
+  Endpoint: `GET /workspaces/:wid/mini-app/:aid/share-rewards?search=` — a simple array. The console UI always sends `search=` (empty matches everything); the CLI mirrors that shape so the request is indistinguishable from the UI's XHR.
+
+  Flag: `--search <text>` for a title-contains filter. Per-record shape is passed through opaquely until a populated response is observed.
+
+- fa17ba7: Add `aitcc notices` — read Apps in Toss notices (공지사항) from the terminal.
+
+  Subcommands:
+
+  - `aitcc notices ls [--page N] [--size N] [--search STR]` — list notices with page-based pagination and optional title substring filter
+  - `aitcc notices show <id>` — print a single notice (title, subtitle, category, publish time, full body) or JSON-dump it with `--json`
+  - `aitcc notices categories` — list the 7 category buckets with their post counts
+
+  Lives on a separate Toss service (`api-public.toss.im/api-public/v3/ipd-thor`) with a hard-coded `workspaceId=129` that's shared across every console user — there's no per-user notice bucket. Session cookies captured at login are domain-matched against `.toss.im` so they're sent automatically without any extra handshake.
+
+  New API client module at `src/api/ipd-thor.ts` so later ipd-thor surfaces (post feedback, likes, series) have a place to live. Commands/`requireSession` helper factored out of `resolveWorkspaceContext` since notices don't need a workspace id.
+
 ## 0.1.10
 
 ### Patch Changes
