@@ -316,7 +316,7 @@ Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple 
 - CLI의 조직 원칙은 **리소스-스코프 subcommand** (`app`, `workspace`, `me`, `notices`). 루트-레벨 alias는 이 원칙을 깨고 "다른 리소스에도 alias를 만들자"는 선례를 남긴다.
 - 세션 상태(`session.json`)는 `currentWorkspaceId`만 기억하고 `currentAppId`는 의도적으로 기억하지 않는다. 인자 없는 `aitcc status`를 지원하려면 "선택된 앱" mode-state를 추가해야 하는데, 그 UX 이득보다 관리 비용이 크다 (앱 삭제 시 dangling state, multi-app workflow에서의 혼동 등).
 - 인자를 요구하는 alias (`aitcc status <id>`)는 `aitcc app status <id>` 대비 고작 4글자를 아낄 뿐이다. 중복 surface + 추가 테스트 + 문서 항목을 정당화하지 못한다.
-- `deploy`/`logs`도 같은 이유로 `app deploy` / `app logs`로 들어가 일관성을 유지한다.
+- `deploy`/`logs`도 같은 원칙(리소스-스코프 + 선택된 앱 state 회피)을 적용할 것을 **기본 안**으로 둔다. 최종 위치(`aitcc app deploy`/`app logs` vs 루트)는 각 기능이 확정될 때 그 시점의 요구로 결정하되, 루트 도입을 원한다면 "왜 지금은 다른가"를 이 섹션에 추가해야 한다.
 
 결론: `aitcc app status <id>`가 의도된 단일 표면. 루트 `aitcc status`는 향후에도 추가하지 않는 것을 기본 방침으로 한다.
 
