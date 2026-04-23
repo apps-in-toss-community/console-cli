@@ -1,6 +1,13 @@
 import { defineCommand } from 'citty';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
-import { fetchWorkspaceDetail, fetchWorkspacePartner } from '../api/workspaces.js';
+import {
+  fetchWorkspaceDetail,
+  fetchWorkspacePartner,
+  fetchWorkspaceTerms,
+  WORKSPACE_TERM_TYPES,
+  type WorkspaceTerm,
+  type WorkspaceTermType,
+} from '../api/workspaces.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, setCurrentWorkspaceId } from '../session.js';
@@ -27,6 +34,12 @@ import {
 //   workspace partner [--workspace <id>]:
 //     { ok: true, workspaceId, registered, approvalType,
 //       rejectMessage, partner }                                      exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
+//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//   workspace terms [--type TYPE | --all] [--workspace <id>]:
+//     { ok: true, workspaceId, type, terms: WorkspaceTerm[] }         exit 0  (single type)
+//     { ok: true, workspaceId, byType: { TYPE: WorkspaceTerm[] } }    exit 0  (--all)
+//     { ok: false, reason: 'invalid-type', allowed: TYPES[] }         exit 2
 //     { ok: false, reason: 'no-workspace-selected' }                  exit 2
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
 //
@@ -324,6 +337,108 @@ const partnerCommand = defineCommand({
   },
 });
 
+function formatTermLines(term: WorkspaceTerm): string {
+  // One agreement per line in the plain-text rendering; the title + a
+  // [agreed]/[pending] tag is the useful signal for a human operator.
+  // Keep the contentsUrl on a second indented line so ops can Ctrl-click
+  // to review it directly without switching to --json.
+  const tag = term.isAgreed ? '[agreed]' : '[pending]';
+  const req = term.required ? ' required' : '';
+  return `  ${tag}${req}  ${term.title}\n    ${term.contentsUrl}\n`;
+}
+
+const termsCommand = defineCommand({
+  meta: {
+    name: 'terms',
+    description:
+      'Show the console terms-of-agreement state that gate workspace-level features (Toss login, IAP, IAA, biz workspace, promotion money).',
+  },
+  args: {
+    type: {
+      type: 'string',
+      description: `Term bucket to inspect: ${WORKSPACE_TERM_TYPES.join(' | ')}. Omit to query every bucket.`,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID to inspect. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const session = await readSession();
+    if (!session) {
+      emitNotAuthenticated(args.json);
+      return exitAfterFlush(ExitCode.NotAuthenticated);
+    }
+    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
+    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+
+    const typesToQuery: readonly WorkspaceTermType[] = (() => {
+      if (!args.type) return WORKSPACE_TERM_TYPES;
+      const raw = String(args.type).toUpperCase();
+      if ((WORKSPACE_TERM_TYPES as readonly string[]).includes(raw)) {
+        return [raw as WorkspaceTermType];
+      }
+      return [];
+    })();
+    if (typesToQuery.length === 0) {
+      const message = `--type must be one of: ${WORKSPACE_TERM_TYPES.join(', ')}`;
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-type', allowed: [...WORKSPACE_TERM_TYPES] });
+      } else {
+        process.stderr.write(`${message}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    try {
+      // Single-type path keeps the JSON payload flat; --all (or the
+      // default) groups results by type so consumers don't have to call
+      // five times. Fire them in parallel — each is an independent GET
+      // and the server has no cross-bucket rate-limit we've observed.
+      const results = await Promise.all(
+        typesToQuery.map(
+          async (t) => [t, await fetchWorkspaceTerms(workspaceId, t, session.cookies)] as const,
+        ),
+      );
+
+      if (typesToQuery.length === 1) {
+        const [type, terms] = results[0] as readonly [WorkspaceTermType, readonly WorkspaceTerm[]];
+        if (args.json) {
+          emitJson({ ok: true, workspaceId, type, terms });
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        process.stdout.write(`Workspace ${workspaceId} terms (${type}):\n`);
+        if (terms.length === 0) {
+          process.stdout.write('  (no terms required)\n');
+        } else {
+          for (const t of terms) process.stdout.write(formatTermLines(t));
+        }
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      // --all path
+      const byType: Record<string, readonly WorkspaceTerm[]> = {};
+      for (const [t, terms] of results) byType[t] = terms;
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, byType });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      for (const [type, terms] of results) {
+        process.stdout.write(`\n[${type}]\n`);
+        if (terms.length === 0) {
+          process.stdout.write('  (no terms required)\n');
+        } else {
+          for (const t of terms) process.stdout.write(formatTermLines(t));
+        }
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 export const workspaceCommand = defineCommand({
   meta: {
     name: 'workspace',
@@ -334,5 +449,6 @@ export const workspaceCommand = defineCommand({
     use: useCommand,
     show: showCommand,
     partner: partnerCommand,
+    terms: termsCommand,
   },
 });

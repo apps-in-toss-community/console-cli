@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
-import { fetchWorkspaceDetail, fetchWorkspacePartner } from './workspaces.js';
+import { fetchWorkspaceDetail, fetchWorkspacePartner, fetchWorkspaceTerms } from './workspaces.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -146,5 +146,95 @@ describe('fetchWorkspacePartner', () => {
     expect(got.approvalType).toBeNull();
     expect(got.rejectMessage).toBeNull();
     expect(got.partner).toBeNull();
+  });
+});
+
+describe('fetchWorkspaceTerms', () => {
+  it('hits /console-workspace-terms/:type/skip-permission with the type segment', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              required: true,
+              termsId: 11660,
+              revisionId: 56702,
+              title: '[제휴용] 개인(신용)정보 보안관리 약정서',
+              contentsUrl: 'https://service.toss.im/terms/11660/revisions/56702',
+              actionType: 'NONE',
+              isAgreed: false,
+              isOneTimeConsent: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchWorkspaceTerms(3095, 'TOSS_LOGIN', cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/console-workspace-terms/TOSS_LOGIN/skip-permission',
+    );
+    expect(got).toHaveLength(1);
+    expect(got[0]).toEqual({
+      required: true,
+      termsId: 11660,
+      revisionId: 56702,
+      title: '[제휴용] 개인(신용)정보 보안관리 약정서',
+      contentsUrl: 'https://service.toss.im/terms/11660/revisions/56702',
+      actionType: 'NONE',
+      isAgreed: false,
+      isOneTimeConsent: false,
+    });
+  });
+
+  it('returns an empty array when the feature has no prerequisite terms', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const got = await fetchWorkspaceTerms(3095, 'IAA', cookies, { fetchImpl });
+    expect(got).toEqual([]);
+  });
+
+  it('rejects a non-array success payload', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { not: 'an array' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchWorkspaceTerms(3095, 'IAP', cookies, { fetchImpl })).rejects.toThrow(
+      /Unexpected workspace terms shape/,
+    );
+  });
+
+  it('coerces missing string fields to empty strings so consumers can trust the types', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              required: true,
+              // all other fields missing
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchWorkspaceTerms(3095, 'BIZ_WORKSPACE', cookies, { fetchImpl });
+    expect(got[0]).toEqual({
+      required: true,
+      termsId: 0,
+      revisionId: 0,
+      title: '',
+      contentsUrl: '',
+      actionType: '',
+      isAgreed: false,
+      isOneTimeConsent: false,
+    });
   });
 });
