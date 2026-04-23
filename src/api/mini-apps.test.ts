@@ -10,6 +10,7 @@ import {
   fetchMiniApps,
   fetchReviewStatus,
   fetchShareRewards,
+  fetchSmartMessageCampaigns,
   fetchUserReports,
 } from './mini-apps.js';
 
@@ -721,5 +722,136 @@ describe('fetchShareRewards', () => {
     await expect(
       fetchShareRewards({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/not an array/);
+  });
+});
+
+describe('fetchSmartMessageCampaigns', () => {
+  it('POSTs to /smart-message/campaigns with page/size on the URL and filter body', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody: unknown = null;
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = (init?.method ?? 'GET').toUpperCase();
+      calledBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            items: [],
+            paging: { pageNumber: 0, pageSize: 20, hasNext: false, totalCount: 0 },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchSmartMessageCampaigns({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(calledMethod).toBe('POST');
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/smart-message/campaigns?page=0&size=20',
+    );
+    expect(calledBody).toEqual({
+      sort: [{ field: 'regTs', direction: 'DESC' }],
+      search: '',
+      filters: {},
+    });
+    expect(got).toEqual({
+      items: [],
+      paging: { pageNumber: 0, pageSize: 20, hasNext: false, totalCount: 0 },
+    });
+  });
+
+  it('forwards search, page, size, sort, and filters', async () => {
+    let calledUrl = '';
+    let calledBody: unknown = null;
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledBody = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            items: [],
+            paging: { pageNumber: 2, pageSize: 50, hasNext: true, totalCount: 123 },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    await fetchSmartMessageCampaigns(
+      {
+        workspaceId: 3095,
+        miniAppId: 29405,
+        page: 2,
+        size: 50,
+        search: 'launch',
+        sort: [{ field: 'modTs', direction: 'ASC' }],
+        filters: { channelTypes: ['PUSH'] },
+      },
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledUrl).toContain('page=2');
+    expect(calledUrl).toContain('size=50');
+    expect(calledBody).toEqual({
+      sort: [{ field: 'modTs', direction: 'ASC' }],
+      search: 'launch',
+      filters: { channelTypes: ['PUSH'] },
+    });
+  });
+
+  it('passes campaign records through opaquely', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            items: [{ id: 7, title: 'Welcome', status: 'SCHEDULED', newField: 'future-proof' }],
+            paging: { pageNumber: 0, pageSize: 20, hasNext: false, totalCount: 1 },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchSmartMessageCampaigns({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(got.items).toHaveLength(1);
+    expect(got.items[0]).toEqual({
+      id: 7,
+      title: 'Welcome',
+      status: 'SCHEDULED',
+      newField: 'future-proof',
+    });
+    expect(got.paging.totalCount).toBe(1);
+  });
+
+  it('rejects non-object success payloads', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchSmartMessageCampaigns({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/Unexpected smart-message campaigns shape/);
+  });
+
+  it('falls back to defaults when the server omits paging fields', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { items: [{ id: 1 }] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const got = await fetchSmartMessageCampaigns(
+      { workspaceId: 3095, miniAppId: 29405, page: 3, size: 7 },
+      cookies,
+      { fetchImpl },
+    );
+    expect(got.paging.pageNumber).toBe(3);
+    expect(got.paging.pageSize).toBe(7);
+    expect(got.paging.hasNext).toBe(false);
+    expect(got.paging.totalCount).toBe(1);
   });
 });
