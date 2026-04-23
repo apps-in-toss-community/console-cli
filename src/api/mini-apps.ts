@@ -467,6 +467,50 @@ export async function fetchCerts(
   });
 }
 
+// --- Share rewards ---
+//
+// GET /workspaces/:wid/mini-app/:aid/share-rewards[?search=]
+//
+// Response envelope (observed 2026-04-23 on app 29405, empty case):
+//   []
+//
+// Simple array. The console UI passes `search=` as a title-contains
+// filter (observed as the default XHR on the 공유 리워드 page) — the empty
+// string matches everything. Per-record shape is passed through opaquely
+// until a populated response is observed; promotions won't exist on
+// unreleased apps.
+
+export interface FetchShareRewardsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly search?: string;
+}
+
+export async function fetchShareRewards(
+  params: FetchShareRewardsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<readonly Readonly<Record<string, unknown>>[]> {
+  const qs = new URLSearchParams();
+  // Match the console UI's default (always sends `search=`). Callers that
+  // don't pass a filter still include it as empty so the request shape
+  // matches what the server expects.
+  qs.set('search', params.search ?? '');
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/share-rewards?${qs.toString()}`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (!Array.isArray(raw)) {
+    throw new Error(`Unexpected share-rewards shape for app=${params.miniAppId}: not an array`);
+  }
+  return raw.map((r) => {
+    if (r === null || typeof r !== 'object') return {};
+    return r as Record<string, unknown>;
+  });
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,

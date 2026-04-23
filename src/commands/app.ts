@@ -8,6 +8,7 @@ import {
   fetchMiniApps,
   fetchMiniAppWithDraft,
   fetchReviewStatus,
+  fetchShareRewards,
   fetchUserReports,
   type MetricsTimeUnit,
   type RatingSortDirection,
@@ -1302,6 +1303,99 @@ const metricsCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app share-rewards ls <id> [--workspace <id>] [--search <text>]:
+//     { ok: true, workspaceId, appId, rewards: [...] }       exit 0
+//     { ok: false, reason: 'invalid-id' | ... }              exit 2
+//
+// Share-reward promotions for an app. Empty array is the common case
+// (no promotions set up). Per-record shape is passed through opaquely
+// until a populated response is observed.
+
+const shareRewardsLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List share-reward promotions configured for a mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    search: {
+      type: 'string',
+      description: 'Filter by title (server-side title-contains match). Empty matches everything.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app share-rewards ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const rewards = await fetchShareRewards(
+        {
+          workspaceId,
+          miniAppId: appId,
+          ...(args.search !== undefined ? { search: String(args.search) } : {}),
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, rewards });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (rewards.length === 0) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no share-reward promotions\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}): ${rewards.length} share-reward(s)\n`);
+      for (const r of rewards) {
+        const id =
+          typeof r.id === 'string' || typeof r.id === 'number'
+            ? r.id
+            : typeof r.rewardId === 'string' || typeof r.rewardId === 'number'
+              ? r.rewardId
+              : '-';
+        const title =
+          typeof r.title === 'string' ? r.title : typeof r.name === 'string' ? r.name : '-';
+        const status = typeof r.status === 'string' ? r.status : '-';
+        process.stdout.write(`${id}\t${title}\t${status}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const shareRewardsCommand = defineCommand({
+  meta: {
+    name: 'share-rewards',
+    description: 'Inspect share-reward promotions for a mini-app.',
+  },
+  subCommands: {
+    ls: shareRewardsLsCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1357,6 +1451,7 @@ export const appCommand = defineCommand({
     bundles: bundlesCommand,
     certs: certsCommand,
     metrics: metricsCommand,
+    'share-rewards': shareRewardsCommand,
     register: registerCommand,
   },
 });
