@@ -57,6 +57,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc app bundles deployed <id>` | ✅ | 현재 배포된 번들 (single record or null). `GET /mini-app/:id/bundles/deployed`. Deploy 확인용 — "지금 살아있는 버전이 뭐지?" 질문에 바로 답. |
 | `aitcc app certs ls <id>` | ✅ | 앱 mTLS 인증서 목록. `GET /mini-app/:id/certs` — simple array. Follow-up `certs create`/`revoke`는 UI flow 관찰 후. |
 | `aitcc app metrics <id>` | ✅ | 앱 전환 지표. `GET /mini-app/:id/conversion-metrics?refresh=&timeUnitType=DAY\|WEEK\|MONTH&startDate=&endDate=`. 기본 창은 오늘 기준 최근 30일, `--time-unit`/`--start`/`--end`/`--refresh` 제공. PREPARE 상태 앱은 `metrics: []` + `cacheTime` (서버 캐시 ISO 타임스탬프)만 반환. Per-record shape는 live 트래픽 관찰 후 pin. |
+| `aitcc app share-rewards ls <id>` | ✅ | 앱 공유 리워드 프로모션 목록. `GET /mini-app/:id/share-rewards?search=`. 서버가 `search=` 쿼리를 기대해 비어 있어도 항상 포함. `--search <text>`로 title-contains 필터. Simple array. |
 | `aitcc notices ls / show <id> / categories` | ✅ | 앱인토스 공지사항. 별도 서비스 (`api-public.toss.im/api-public/v3/ipd-thor`, hard-coded `workspaceId=129` — 모든 유저 공유). `ls`는 page-based + `--search` title-contains 필터, `show`는 single post, `categories`는 7개 버킷 post count. 세션 쿠키(`.toss.im` 도메인)로 자동 인증. |
 
 Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.

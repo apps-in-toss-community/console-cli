@@ -9,6 +9,7 @@ import {
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchReviewStatus,
+  fetchShareRewards,
   fetchUserReports,
 } from './mini-apps.js';
 
@@ -654,5 +655,71 @@ describe('fetchConversionMetrics', () => {
       { fetchImpl },
     );
     expect(got.cacheTime).toBeUndefined();
+  });
+});
+
+describe('fetchShareRewards', () => {
+  it('builds the expected URL with empty search by default', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const got = await fetchShareRewards({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29405/share-rewards?search=',
+    );
+    expect(got).toEqual([]);
+  });
+
+  it('passes through a search filter and url-encodes it', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await fetchShareRewards({ workspaceId: 3095, miniAppId: 29405, search: '친구 초대' }, cookies, {
+      fetchImpl,
+    });
+    expect(calledUrl).toContain('search=%EC%B9%9C%EA%B5%AC+%EC%B4%88%EB%8C%80');
+  });
+
+  it('passes each reward record through as an opaque record', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            { id: 1, title: '친구 초대 리워드', status: 'ACTIVE' },
+            { id: 2, title: 'OG 보상', status: 'ENDED' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchShareRewards({ workspaceId: 3095, miniAppId: 29405 }, cookies, {
+      fetchImpl,
+    });
+    expect(got).toHaveLength(2);
+    expect(got[0]).toMatchObject({ id: 1, title: '친구 초대 리워드', status: 'ACTIVE' });
+    expect(got[1]).toMatchObject({ id: 2, status: 'ENDED' });
+  });
+
+  it('throws when the response is not an array', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { id: 1 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchShareRewards({ workspaceId: 3095, miniAppId: 29405 }, cookies, { fetchImpl }),
+    ).rejects.toThrow(/not an array/);
   });
 });
