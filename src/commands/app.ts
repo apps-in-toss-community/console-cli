@@ -251,6 +251,17 @@ const showCommand = defineCommand({
       const envelope = await fetchMiniAppWithDraft(workspaceId, appId, session.cookies);
       const miniApp = pickMiniAppView(envelope, view);
 
+      // Emit a one-line stderr hint when `--view current` comes back
+      // empty but a draft exists — this is the most common confusion
+      // (unreviewed apps have a populated draft and an empty current).
+      // stderr so both JSON and plain callers see it without the JSON
+      // shape changing.
+      if (miniApp === null && view === 'current' && envelope.draft !== null) {
+        process.stderr.write(
+          `App ${appId} has no \`current\` view yet (not reviewed). Re-run with \`--view draft\` to see the pending record.\n`,
+        );
+      }
+
       if (args.json) {
         emitJson({
           ok: true,
@@ -263,10 +274,10 @@ const showCommand = defineCommand({
       }
 
       if (miniApp === null) {
+        // Plain-text path keeps the stdout summary (the stderr hint is
+        // already out of the way). Avoid duplicating it here.
         if (view === 'current' && envelope.draft !== null) {
-          process.stdout.write(
-            `App ${appId} has no \`current\` view yet (not reviewed). Try --view draft.\n`,
-          );
+          process.stdout.write(`App ${appId} has no \`current\` view yet.\n`);
         } else {
           process.stdout.write(`App ${appId} has no data for view=${view}.\n`);
         }
