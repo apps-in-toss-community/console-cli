@@ -39,6 +39,7 @@ import {
   emitNotAuthenticated,
   resolveWorkspaceContext,
 } from './_shared.js';
+import { runDeploy } from './app-deploy.js';
 import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
@@ -2559,6 +2560,93 @@ const registerCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app deploy <path> --app <id> [--deployment-id <uuid>] [--memo <text>]
+//              [--request-review --release-notes <text>]
+//              [--release --confirm] [--workspace <id>]
+//              [--dry-run] [--json]:
+//
+// One-shot wrapper over `app bundles upload|review|release`. Always
+// performs the 3-step upload; downstream review/release steps run only
+// when their opt-in flags are passed. See `runDeploy` for the full
+// success/failure shape — this citty wrapper is just an argument shim.
+//
+// deploymentId auto-detect: if `--deployment-id` is omitted, the .ait is
+// cracked to read `_metadata.deploymentId` from `app.json`. This is the
+// primary convenience the wrapper adds over the three-command dance.
+const deployCommand = defineCommand({
+  meta: {
+    name: 'deploy',
+    description:
+      'Upload a bundle, optionally request review, optionally release. ' +
+      'Auto-detects deploymentId from the .ait if --deployment-id is omitted.',
+  },
+  args: {
+    path: { type: 'positional', description: 'Path to the .ait bundle file.', required: true },
+    app: {
+      type: 'string',
+      description: 'Mini-app ID. Required — no top-level "selected app" concept yet.',
+    },
+    'deployment-id': {
+      type: 'string',
+      description:
+        'deploymentId of the bundle. Defaults to app.json._metadata.deploymentId inside the .ait.',
+    },
+    memo: { type: 'string', description: 'Optional memo attached to the uploaded bundle.' },
+    'request-review': {
+      type: 'boolean',
+      description: 'After upload, submit the bundle for review.',
+      default: false,
+    },
+    'release-notes': {
+      type: 'string',
+      description: 'Release notes for the review request. Required with --request-review.',
+    },
+    release: {
+      type: 'boolean',
+      description:
+        'After review submit, publish the bundle. Requires the bundle to already be APPROVED; ' +
+        'typically used on a second `app deploy` run.',
+      default: false,
+    },
+    confirm: {
+      type: 'boolean',
+      description: 'Required with --release — confirms the destructive publish step.',
+      default: false,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    'dry-run': {
+      type: 'boolean',
+      description: 'Print the planned pipeline without touching the server.',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    await runDeploy({
+      path: typeof args.path === 'string' ? args.path : '',
+      app: typeof args.app === 'string' ? args.app : undefined,
+      json: args.json,
+      dryRun: args['dry-run'],
+      requestReview: args['request-review'],
+      release: args.release,
+      confirm: args.confirm,
+      ...(args['deployment-id'] !== undefined
+        ? { deploymentId: args['deployment-id'] as string }
+        : {}),
+      ...(args.memo !== undefined ? { memo: args.memo as string } : {}),
+      ...(args['release-notes'] !== undefined
+        ? { releaseNotes: args['release-notes'] as string }
+        : {}),
+      ...(args.workspace !== undefined ? { workspace: args.workspace as string } : {}),
+    });
+  },
+});
+
 export const appCommand = defineCommand({
   meta: {
     name: 'app',
@@ -2580,5 +2668,6 @@ export const appCommand = defineCommand({
     categories: categoriesCommand,
     'service-status': serviceStatusCommand,
     register: registerCommand,
+    deploy: deployCommand,
   },
 });
