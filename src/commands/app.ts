@@ -9,6 +9,7 @@ import {
   fetchMiniAppWithDraft,
   fetchReviewStatus,
   fetchShareRewards,
+  fetchSmartMessageCampaigns,
   fetchUserReports,
   type MetricsTimeUnit,
   type RatingSortDirection,
@@ -1309,6 +1310,10 @@ const metricsCommand = defineCommand({
 //     { ok: true, workspaceId, appId, rewards: [...] }       exit 0
 //     { ok: false, reason: 'invalid-id' | ... }              exit 2
 //
+//   app messages ls <id> [--workspace <id>] [--page N] [--size N] [--search <text>]:
+//     { ok: true, workspaceId, appId, campaigns: [...], paging: {...} }   exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-page' | 'invalid-size' | ... } exit 2
+//
 // Share-reward promotions for an app. Empty array is the common case
 // (no promotions set up). Per-record shape is passed through opaquely
 // until a populated response is observed.
@@ -1396,6 +1401,111 @@ const shareRewardsCommand = defineCommand({
   },
 });
 
+const messagesLsCommand = defineCommand({
+  meta: {
+    name: 'ls',
+    description: 'List smart-message campaigns (formerly "push" — the 스마트 발송 menu).',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    page: { type: 'string', description: 'Page number (0-indexed).', default: '0' },
+    size: { type: 'string', description: 'Page size.', default: '20' },
+    search: { type: 'string', description: 'Title-contains filter. Empty matches everything.' },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app messages ls: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const pageResult = parseNonNegativeInt(String(args.page), 'page');
+    if ('error' in pageResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
+      else process.stderr.write(`${pageResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const sizeResult = parseNonNegativeInt(String(args.size), 'size');
+    if ('error' in sizeResult) {
+      if (args.json) emitJson({ ok: false, reason: 'invalid-size', message: sizeResult.error });
+      else process.stderr.write(`${sizeResult.error}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await fetchSmartMessageCampaigns(
+        {
+          workspaceId,
+          miniAppId: appId,
+          page: pageResult.value,
+          size: sizeResult.value,
+          ...(args.search !== undefined ? { search: String(args.search) } : {}),
+        },
+        session.cookies,
+      );
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          campaigns: result.items,
+          paging: result.paging,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      if (result.items.length === 0) {
+        process.stdout.write(`App ${appId} (ws ${workspaceId}): no smart-message campaigns\n`);
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(
+        `App ${appId} (ws ${workspaceId}): ${result.items.length} campaign(s) on page ${result.paging.pageNumber} of ${result.paging.totalCount}\n`,
+      );
+      for (const c of result.items) {
+        const id =
+          typeof c.id === 'string' || typeof c.id === 'number'
+            ? c.id
+            : typeof c.campaignId === 'string' || typeof c.campaignId === 'number'
+              ? c.campaignId
+              : '-';
+        const title =
+          typeof c.title === 'string' ? c.title : typeof c.name === 'string' ? c.name : '-';
+        const status = typeof c.status === 'string' ? c.status : '-';
+        process.stdout.write(`${id}\t${title}\t${status}\n`);
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const messagesCommand = defineCommand({
+  meta: {
+    name: 'messages',
+    description: 'Inspect smart-message (formerly push) campaigns for a mini-app.',
+  },
+  subCommands: {
+    ls: messagesLsCommand,
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -1452,6 +1562,7 @@ export const appCommand = defineCommand({
     certs: certsCommand,
     metrics: metricsCommand,
     'share-rewards': shareRewardsCommand,
+    messages: messagesCommand,
     register: registerCommand,
   },
 });

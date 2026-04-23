@@ -511,6 +511,87 @@ export async function fetchShareRewards(
   });
 }
 
+// --- Smart-message campaigns ---
+//
+// "스마트 발송" (smart-message) is the replacement for the legacy
+// push-notifications menu. List endpoint is a POST with the filter body
+// in JSON and paging in the querystring — that shape is the console
+// UI's XHR, and we mirror it so the request is indistinguishable.
+//
+// Empirical response shape (live workspace 3095, PREPARE-state app):
+//   { items: [], paging: { pageNumber, pageSize, hasNext, totalCount } }
+// Items are passed through opaquely until a populated campaign is
+// observed.
+
+export type SmartMessageSort = { field: string; direction: 'ASC' | 'DESC' };
+// Open-ended filters bag. The UI currently sends `{}` or
+// `{ channelTypes: [] }` depending on which tab is active — we keep
+// the type permissive because more facets may surface over time.
+export type SmartMessageFilters = Readonly<Record<string, unknown>>;
+
+export interface FetchSmartMessageCampaignsParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly page?: number;
+  readonly size?: number;
+  readonly search?: string;
+  readonly sort?: readonly SmartMessageSort[];
+  readonly filters?: SmartMessageFilters;
+}
+
+export interface SmartMessagePaging {
+  readonly pageNumber: number;
+  readonly pageSize: number;
+  readonly hasNext: boolean;
+  readonly totalCount: number;
+}
+
+export interface SmartMessageCampaignsResult {
+  readonly items: readonly Readonly<Record<string, unknown>>[];
+  readonly paging: SmartMessagePaging;
+}
+
+export async function fetchSmartMessageCampaigns(
+  params: FetchSmartMessageCampaignsParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<SmartMessageCampaignsResult> {
+  const page = params.page ?? 0;
+  const size = params.size ?? 20;
+  const qs = new URLSearchParams();
+  qs.set('page', String(page));
+  qs.set('size', String(size));
+  const url = `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}/smart-message/campaigns?${qs.toString()}`;
+  const body = {
+    sort: params.sort ?? [{ field: 'regTs', direction: 'DESC' }],
+    search: params.search ?? '',
+    filters: params.filters ?? {},
+  };
+  const raw = await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    body,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected smart-message campaigns shape for app=${params.miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const items = Array.isArray(data.items) ? data.items : [];
+  const rawPaging = data.paging as Record<string, unknown> | undefined;
+  const paging: SmartMessagePaging = {
+    pageNumber: typeof rawPaging?.pageNumber === 'number' ? rawPaging.pageNumber : page,
+    pageSize: typeof rawPaging?.pageSize === 'number' ? rawPaging.pageSize : size,
+    hasNext: Boolean(rawPaging?.hasNext),
+    totalCount: typeof rawPaging?.totalCount === 'number' ? rawPaging.totalCount : items.length,
+  };
+  return {
+    items: items.map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>) : {})),
+    paging,
+  };
+}
+
 export async function fetchDeployedBundle(
   workspaceId: number,
   miniAppId: number,
