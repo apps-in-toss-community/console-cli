@@ -75,7 +75,7 @@ Apps in Toss 콘솔을 Playwright로 로그인 후 훑어 확인한 API 표면. 
 ## Medium Priority
 
 - [ ] **`aitcc logs [--tail]`** — app-level 로그. sdk-example 등록 후 endpoint 확정 필요.
-- [ ] **`aitcc status [appId]`** — 앱별 상태 + 최신 배포 요약. review-status + mini-app detail 조합.
+- [x] ~~**`aitcc status [appId]`** — 앱별 상태 + 최신 배포 요약.~~ **폐기 (not-doing)**. `aitcc app status <id>` 로 이미 구현됨(review state + serviceStatus, `--watch`/`--json` 포함). 루트-레벨 `aitcc status`는 추가하지 않는다 — 이유는 CLAUDE.md "Status" 섹션의 "왜 top-level `aitcc status`가 없는가" 참고.
 - [ ] **`aitcc members ls / invite <email> / remove <id>`** — 워크스페이스 멤버 관리. invite는 UI `초대하기` flow 한 번 실행해 XHR 캡처 후 구현. remove/권한변경은 UI에 노출돼있지 않아 별도 탐색 필요.
 - [ ] **`aitcc keys ls / create`** — 콘솔 API 키 목록/발급. 발급 후 관리 페이지 XHR도 재탐색 필요(현재 키 없어 404).
 - [x] **`aitcc app register`** (was planned as `aitcc app create <name>`) — `+ 등록하기` flow 자동화. 매니페스트(YAML/JSON) + 이미지 업로드 + create/review 제출. 구현 완료, 테스트 커버 완료. **단, submit payload shape는 번들 분석 기반 inferred** — dog-food로 sdk-example를 실제 등록해 payload가 맞는지 확인/교정하는 것이 남은 High Priority 작업.
