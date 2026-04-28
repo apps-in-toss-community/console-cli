@@ -99,3 +99,15 @@ Every command accepts `--json`. When set:
 ## Status
 
 `login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.
+
+## Pre-commit hook
+
+Optional but recommended. After cloning, activate the standard pre-commit hook (runs `biome check` on staged files):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+This is a developer convenience for fast feedback before push. CI runs the same checks as the enforcement layer, so contributors who don't activate the hook will still see lint failures in their PR.
+
+선택 사항이지만 권장합니다. clone 후 표준 pre-commit hook을 활성화하면 staged 파일에 `biome check`가 자동으로 돕니다 (push 전에 빠른 피드백). 활성화하지 않아도 동일한 검사가 CI에서 실행되므로 PR 단계에서 lint 실패를 볼 수 있습니다.
