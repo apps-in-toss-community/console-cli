@@ -1,15 +1,17 @@
 # CLAUDE.md
 
-## 프로젝트 성격 (중요)
+## 프로젝트 성격
 
-**`apps-in-toss-community`는 비공식(unofficial) 오픈소스 커뮤니티다.** 토스 팀과 제휴 없음. 사용자에게 보이는 산출물에서 "공식/official/토스가 제공하는/powered by Toss" 등 제휴·후원·인증 암시 표현을 **쓰지 않는다**. 대신 "커뮤니티/오픈소스/비공식"을 사용한다. 의심스러우면 빼라.
+`apps-in-toss-community`는 **비공식(unofficial) 오픈소스 커뮤니티** — "공식/토스가 제공하는/powered by Toss" 표현 금지. 상세는 umbrella `../CLAUDE.md` "프로젝트 성격" 참조.
 
-**특히 주의**: 이 CLI는 헤드리스 브라우저로 콘솔을 자동화한다. **공식 API를 호출하는 것이 아니다** — 공개 개발자 콘솔 UI를 사용자의 인증된 브라우저 세션으로 driving할 뿐이므로, 콘솔 UI가 바뀌면 셀렉터가 깨질 수 있음을 README에 명시한다.
+**이 CLI 특유의 주의**: 헤드리스 브라우저로 콘솔을 자동화하지만 **공식 API를 호출하는 것이 아니다** — 공개 개발자 콘솔 UI를 사용자의 인증된 브라우저 세션으로 driving할 뿐이므로, 콘솔 UI가 바뀌면 셀렉터/엔드포인트가 깨질 수 있음을 README에 명시한다.
 
 ## 짝 repo
 
-- **`sdk-example`** (downstream consumer) — console-cli가 완성되면 sdk-example을 **앱인토스 실제 미니앱으로 배포**(현재 GitHub Pages 배포에 더해)해서 E2E 검증. 이게 CLI의 주요 품질 게이트.
-- **`agent-plugin`** — `/ait deploy`, `/ait logs` 같은 skill이 **Bash로 이 CLI를 shell out** 호출한다. MCP wrapping하지 않는다(umbrella MCP 전략의 "CLI를 MCP로 wrapping하지 않는다" 원칙). `--json` 플래그로 출력을 파싱하면 충분하다.
+이 repo와 직접 관련된 짝만 — 전체 그림은 umbrella `../CLAUDE.md`의 "짝(pair) 관계" 참조.
+
+- **`sdk-example`** (downstream consumer) — console-cli가 완성되면 sdk-example을 앱인토스 실제 미니앱으로 배포해 E2E 검증. CLI의 주요 품질 게이트.
+- **`agent-plugin`** — `/ait deploy`, `/ait logs` 같은 skill이 **Bash로 이 CLI를 shell out** 호출. MCP wrapping 안 함. `--json` 출력으로 충분.
 
 독립 실행 가능. 다른 repo 변경 없이 배포 가능.
 
@@ -22,63 +24,45 @@
 1. 최초 실행 시 사용자의 시스템 Chrome(또는 Chromium-family)을 CDP로 spawn해 사용자가 직접 로그인.
 2. 로그인 완료 감지 즉시 `Network.getAllCookies`로 HttpOnly 포함 세션 쿠키 전체를 로컬 XDG 경로(`$XDG_CONFIG_HOME/aitcc/session.json`, fallback `~/.config/aitcc/session.json`)에 `0600`으로 저장.
 3. 이후 명령은 저장된 쿠키를 `Cookie:` 헤더로 직렬화해 `fetch()`로 콘솔 API 직접 호출. Playwright 등 브라우저 재기동 없음.
-4. `aitcc login | logout | whoami | upgrade`가 현재 MVP. `deploy | logs | status`는 umbrella `../TODO.md`의 `console-cli` 섹션 참고. (조직 TODO는 umbrella가 single source of truth, 이 repo의 `TODO.md`는 stub.)
-5. `agent-plugin`이 이 CLI를 Bash로 호출 (MCP wrapping 없음).
+4. `agent-plugin`이 이 CLI를 Bash로 호출 (MCP wrapping 없음).
 
-### 보안 고려
+### 보안
 
 - 세션 쿠키는 **절대 로그/stdout에 출력 금지**. `--verbose`도 민감 정보 redact.
 - `whoami` 라이브 호출이 노출하는 건 `user.name` / `email` / `role` / `workspaces`뿐.
-- Chrome은 ephemeral `--user-data-dir`에서 spawn되어 사용자의 일상 브라우저 프로필과 완전히 격리. 세션 캡처 후 temp 디렉토리 삭제.
+- Chrome은 ephemeral `--user-data-dir`에서 spawn → 사용자의 일상 브라우저 프로필과 완전히 격리. 세션 캡처 후 temp 디렉토리 삭제.
 
 ## 아키텍처
 
 ### Command surface (`citty`)
 
-CLI는 [`citty`](https://github.com/unjs/citty) 기반. 이유: subcommand 트리, `--help`/`--version` 자동 생성, UnJS 생태계와의 궁합. 큰 의존성(oclif 등) 대비 bundle size가 작아 `bun build --compile`에 유리.
+CLI는 [`citty`](https://github.com/unjs/citty) 기반. 이유: subcommand 트리, `--help`/`--version` 자동 생성, `bun build --compile`에 유리한 작은 bundle.
 
-MVP (0.1.x scaffold에서 다룬 범위):
+**커버 범위 (0.1.x)**: `login` / `logout` / `whoami` / `upgrade` / `completion` 루트 명령에 더해 리소스-스코프 subcommand:
 
-| Command | Status | Purpose |
-| --- | --- | --- |
-| `aitcc --version` | ✅ | build time에 `package.json`의 `version`을 `AITCC_VERSION` define으로 주입. |
-| `aitcc --help` | ✅ | `citty` 자동 생성. |
-| `aitcc whoami` | ✅ | 세션 쿠키로 콘솔 `members/me/user-info`를 호출해 라이브 데이터 반환. `--offline`로 캐시된 정체만 읽기. 세션 없으면 exit 10. |
-| `aitcc login` | ✅ | CDP로 시스템 Chrome을 격리된 `--user-data-dir`에 띄우고 Toss 비즈니스 sign-in URL로 이동. 메인 프레임이 `apps-in-toss.toss.im/workspace*`에 도달하면 `Network.getAllCookies`로 HttpOnly 포함 모든 쿠키 덤프, 세션 저장. |
-| `aitcc logout` | ✅ | `session.json` 삭제. 파일이 없어도 no-op (exit 0). |
-| `aitcc upgrade` | ✅ | GitHub Releases latest 조회 → 임베드 버전과 비교 → 플랫폼/아키 바이너리 다운로드 → atomic 교체. |
-| `aitcc app ls` | ✅ | 현재 워크스페이스의 미니앱 목록. `--json`으로 agent-plugin 소비. |
-| `aitcc app register` | ✅ | YAML/JSON 매니페스트 + 이미지 업로드 + 등록+심사 요청 one-shot. submit payload shape는 dog-food task #23 (2026-04-22) 에서 실제 네트워크로 확정됨. 완전한 body로 제출 시 앱이 즉시 "검토 중" 상태로 진입. |
-| `aitcc app show <id>` | ✅ | `GET /mini-app/:id/with-draft` 로 draft + current 전체 뷰. `--view draft|current|merged` 로 어느 쪽 볼지 선택. 기본값은 `draft` — 미검수 앱에서 current는 비어있음. |
-| `aitcc app status <id>` | ✅ | 앱의 리뷰 상태 (under-review / rejected / approved / approved-with-edits / not-submitted / unknown). `--watch --interval <sec>` 로 상태가 바뀔 때까지 polling. `/with-draft` envelope 필드 (`approvalType`, `current`, `rejectedMessage`, `draft`) 조합으로 derive. |
-| `aitcc app ratings <id>` | ✅ | 사용자 평점·리뷰 목록. `GET /mini-app/:id/app-ratings?page&size&sortField&sortDirection`. `--page`/`--size`/`--sort-field CREATED_AT\|SCORE`/`--sort-direction ASC\|DESC` 지원. 응답에 `averageRating`, `totalReviewCount`, `paging.hasNext` 포함. |
-| `aitcc app reports <id>` | ✅ | 사용자 신고 내역. `GET /mini-apps/:id/user-reports?pageSize&cursor` (**plural** `mini-apps`). Cursor-based pagination — `--cursor`로 다음 페이지 opaque token 전달. 응답: `{reports, nextCursor, hasMore}`. |
-| `aitcc app bundles ls <id>` | ✅ | 앱 업로드 번들 목록. `GET /mini-app/:id/bundles[?page&tested&deployStatus]` — page-based pagination, `{contents, totalPage, currentPage}`. `--page`/`--tested true\|false`/`--deploy-status STR` 필터. |
-| `aitcc app bundles deployed <id>` | ✅ | 현재 배포된 번들 (single record or null). `GET /mini-app/:id/bundles/deployed`. Deploy 확인용 — "지금 살아있는 버전이 뭐지?" 질문에 바로 답. |
-| `aitcc app bundles upload <id> <path> --deployment-id <uuid> [--memo]` | ✅ | `.ait` 번들 업로드 3-step dance. `POST /deployments/initialize {deploymentId}` → `PUT <uploadUrl>` (S3 presigned, Content-Type application/zip) → `POST /deployments/complete {deploymentId}` → optional `POST /bundles/memos {deploymentId, memo}`. `deploymentId`는 `.ait` 내부 `app.json._metadata.deploymentId`에서 추출. `bundles upload`는 여전히 explicit flag 요구 (low-level); 자동 추출은 `app deploy` 래퍼에 위임. `--dry-run` 제공. Initialize 응답의 `deployment.reviewStatus !== 'PREPARE'`이면 S3 PUT 전에 `bundle-not-prepare`로 거절. |
-| `aitcc app bundles review <id> --deployment-id <uuid>` | ✅ | 업로드된 번들 심사 요청 또는 철회. `POST /bundles/reviews` body `{deploymentId, releaseNotes, featureList?, screenshotImagePaths?}`, `--withdraw`로 `POST /bundles/reviews/withdrawal`. Submit 시 `--release-notes <text>` 필수. |
-| `aitcc app bundles release <id> --deployment-id <uuid> --confirm` | ✅ | APPROVED 번들을 실제 출시(end-user 가시). `POST /bundles/release` body `{deploymentId, contentImages?}`. Destructive write path — `--confirm` flag 없으면 `not-confirmed` 로 거절. |
-| `aitcc app bundles test-push <id> --deployment-id <uuid>` | ✅ | 업로더에게 토스 앱으로 push 발송해 번들을 테스트하게 함. `POST /bundles/test-push {deploymentId}`. |
-| `aitcc app bundles test-links <id>` | ✅ | 미니앱 테스트용 per-device URL 반환. `GET /bundles/test-links`. 번들 업로드 이후 QA 공유용 URL set. |
-| `aitcc app deploy <path> --app <id>` | ✅ | One-shot 배포 래퍼. `bundles upload` (+ optional `review` + optional `release`)를 하나의 명령으로 연결. `--deployment-id` 생략 시 번들에서 자동 추출 (`src/config/ait-bundle.ts`) — 두 포맷 모두 지원: (1) **AIT** (modern `@apps-in-toss/ait-format`, `AITBUNDL` magic + protobuf 헤더 + 내부 zip blob. `deploymentId`는 헤더 protobuf field 2에서 직접 읽음 — protobufjs 의존 없음), (2) **legacy zip** (`PK` magic, `app.json._metadata.deploymentId` 추출. fflate 사용). Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFormat: 'ait' \| 'zip'` 포함. 스텝은 opt-in: `--request-review --release-notes <text>`로 review 추가, `--release --confirm`으로 release 추가. `--release`는 bundle이 이미 APPROVED일 때만 동작 — 일반적으로 두 번째 실행에서 사용. `--dry-run --json`은 네트워크 없이 plan만 출력. Partial failure 시 `uploaded`/`reviewed`/`released` 플래그를 JSON에 포함해 agent-plugin이 재시도할 스텝을 판단. |
-| `aitcc app certs ls <id>` | ✅ | 앱 mTLS 인증서 목록. `GET /mini-app/:id/certs` — simple array. Follow-up `certs create`/`revoke`는 UI flow 관찰 후. |
-| `aitcc app metrics <id>` | ✅ | 앱 전환 지표. `GET /mini-app/:id/conversion-metrics?refresh=&timeUnitType=DAY\|WEEK\|MONTH&startDate=&endDate=`. 기본 창은 오늘 기준 최근 30일, `--time-unit`/`--start`/`--end`/`--refresh` 제공. PREPARE 상태 앱은 `metrics: []` + `cacheTime` (서버 캐시 ISO 타임스탬프)만 반환. Per-record shape는 live 트래픽 관찰 후 pin. |
-| `aitcc app share-rewards ls <id>` | ✅ | 앱 공유 리워드 프로모션 목록. `GET /mini-app/:id/share-rewards?search=`. 서버가 `search=` 쿼리를 기대해 비어 있어도 항상 포함. `--search <text>`로 title-contains 필터. Simple array. |
-| `aitcc app messages ls <id>` | ✅ | 스마트 발송(구 푸시알림) 캠페인 목록. `POST /mini-app/:id/smart-message/campaigns?page&size` with body `{sort:[{field,direction}], search, filters}`. 응답: `{items, paging: {pageNumber, pageSize, hasNext, totalCount}}`. `--page`/`--size`/`--search` 지원. Filters/sort는 현재 UI 기본값만 전송; 캠페인 record shape는 live 관찰로 pin. |
-| `aitcc app events ls <id>` | ✅ | 앱 커스텀 이벤트 카탈로그(로그 검색). `POST /mini-app/:id/log/catalogs/search` with body `{isRefresh, pageNumber, pageSize, search}`. 응답: `{results, cacheTime, paging: {pageNumber, pageSize, hasNext, totalCount, totalPages}}`. PREPARE 상태 앱은 `results: []` + 서버 캐시 ISO 타임스탬프만 반환. `--page`/`--size`/`--search`/`--refresh` 지원. |
-| `aitcc app templates ls <id>` | ✅ | 스마트 발송 composer 템플릿 picker. `GET /mini-app/:id/templates/search?page&size&contentReachType&isSmartMessage`. 응답: `{page: {totalPageCount}, groupSendContextSimpleView}` — 후자는 CLI에서 `templates`로 rename해서 노출. `--content-reach-type FUNCTIONAL\|MARKETING`, `--smart-message true\|false` 필터. Per-template record shape는 live 관찰로 pin. |
-| `aitcc app categories` | ✅ | 앱 등록 시 쓰는 카테고리 트리. `GET /impression/category-list` (workspace-independent). 3개 그룹(금융/게임/생활) × 카테고리 × 서브카테고리. `--selectable`로 `isSelectable: true`만 필터. `app register` 매니페스트의 `categoryIds` 값을 찾을 때 lookup 용도. |
-| `aitcc app service-status <id>` | ✅ | 서버 권위 미니앱 런타임 상태. `GET /mini-app/:id/review-status` (singular — workspace-level `mini-apps/review-status` 와 구분). 응답: `{serviceStatus, shutdownCandidateStatus, scheduledShutdownAt}`. `serviceStatus`는 `PREPARE\|RUNNING\|…` 등 server source-of-truth. `app status`는 `/with-draft` derive라 client-side 판단이고, 이쪽은 서버가 직접 계산. |
-| `aitcc notices ls / show <id> / categories` | ✅ | 앱인토스 공지사항. 별도 서비스 (`api-public.toss.im/api-public/v3/ipd-thor`, hard-coded `workspaceId=129` — 모든 유저 공유). `ls`는 page-based + `--search` title-contains 필터, `show`는 single post, `categories`는 7개 버킷 post count. 세션 쿠키(`.toss.im` 도메인)로 자동 인증. |
-| `aitcc workspace partner` | ✅ | 워크스페이스의 파트너(정산/페이아웃) 등록 상태. `GET /workspaces/:id/partner` — `{registered, approvalType, rejectMessage, partner}`. 초기 상태는 `registered: false, approvalType: 'DRAFT'`. `--workspace <id>`로 다른 워크스페이스 조회 가능. Partner record shape는 approval 승인 후 live 관찰로 pin. |
-| `aitcc workspace terms` | ✅ | 워크스페이스가 기능별로 동의해야 하는 약관 목록과 동의 상태. `GET /workspaces/:id/console-workspace-terms/:type/skip-permission`. 5개 타입: `TOSS_LOGIN`, `BIZ_WORKSPACE`, `TOSS_PROMOTION_MONEY`, `IAA`, `IAP`. `--type <TYPE>`로 단일 버킷, 기본은 5개 전부 병렬 조회 후 묶어 출력. `--json`에선 단일 타입은 `terms[]`, 전체 조회는 `byType: {TYPE: terms[]}`. 각 term은 `{required, termsId, revisionId, title, contentsUrl, actionType, isAgreed, isOneTimeConsent}`. |
-| `aitcc workspace segments ls` | ✅ | 워크스페이스의 유저 세그먼트 목록 (세그먼트 메뉴). `GET /workspaces/:id/segments/list?category&search&page`. workspace-level endpoint (mini-app 별이 아님). `--category`(기본 "생성된 세그먼트"), `--search`, `--page`, `--workspace` 지원. 응답: `{contents, totalPage, currentPage}`. Per-segment record shape는 live 관찰로 pin. |
-| `aitcc me terms` | ✅ | 로그인된 계정이 동의한 콘솔-레벨 약관. `GET /console-user-terms/me` — 단일 앱인토스 콘솔 이용약관. workspace/app-scoped가 아닌 user-scoped 약관. Shape는 workspace terms와 동일. |
-| `aitcc completion <bash\|zsh\|fish>` | ✅ | Shell completion 스크립트 emit. citty엔 completion generator 없어서 정적 top-level + 한 단계 subcommand 매핑만 하드코딩 (`app bundles ls` 같은 3단계 이하는 셸 fallback). 설치: bash는 `source <(aitcc completion bash)`, zsh는 `aitcc completion zsh > "${fpath[1]}/_aitcc"`, fish는 `~/.config/fish/completions/aitcc.fish`. `install.sh`가 `$SHELL` 감지해 설치 후 one-liner 안내 출력 (rc 파일 자동 수정은 하지 않음). |
+- `app ls / show / status / register / deploy / ratings / reports / certs / metrics / share-rewards / messages / events / templates / categories / service-status` 및 `app bundles {ls, deployed, upload, review, release, test-push, test-links}`
+- `workspace partner / terms / segments ls`
+- `me terms`
+- `notices ls / show / categories`
 
-Next (tracked in umbrella `../TODO.md` `console-cli` 섹션, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
+각 명령의 정확한 플래그·응답 shape는 `aitcc <cmd> --help`와 `src/commands/`가 source of truth — 표를 여기서 유지하면 갱신 비용이 크다. 새 명령을 추가할 때 `--json` 계약 + exit code를 함께 정의하고 dog-food 결과로 quirks 섹션을 갱신한다.
+
+**Next** (umbrella `../TODO.md`의 `console-cli` 섹션): `app logs` (deferred — 아래 "App runtime logs" 참조), 그 외 backlog 항목.
 
 **Non-goals for 0.1.x**: 플러그인 시스템, multi-account switching, release-notes 생성. 모두 Dave의 명시적 `minor`/`major` 승인 뒤에.
+
+### API quirks (dog-food로 확정된 것)
+
+새 명령을 짤 때 추측하지 말고 이 목록을 먼저 확인:
+
+- **`app register` submit shape**: `POST /workspaces/:wid/mini-app/review`에 `{miniApp, impression}` nested wrapper + `impression.categoryIds: [number]` (object 배열 아님). 이름 그대로 "등록 + 심사 제출 원샷" — 별도 update/review-trigger 엔드포인트 없음. 한 번 "flat + categoryList: [{id}]"로 regression한 적이 있는데 (0.1.7), `GET /mini-app/:id`가 **current view만** 반환하는 것을 draft 소실로 오해한 결과. `GET /mini-app/:id/with-draft`를 읽으면 모든 필드가 정상 persist됨. 자세한 경위는 `apps-in-toss-community/.playwright-mcp/FORM-SCHEMA-CAPTURED.md` "FINAL" 섹션 + `xhr-captures/` 참조.
+- **Plural vs singular path**: `app reports`만 `GET /mini-apps/:id/user-reports` (plural). 그 외 `mini-app/:id/...` (singular). `app service-status`는 `GET /mini-app/:id/review-status` (singular) — workspace-level `mini-apps/review-status`와 구분.
+- **PREPARE 상태 앱**: `app metrics`, `app events`는 빈 배열 + `cacheTime` (서버 캐시 ISO 타임스탬프)만 반환.
+- **Cursor vs page pagination**: `app reports`만 cursor-based (`{reports, nextCursor, hasMore}`), 나머지 list는 page-based (`{contents, totalPage, currentPage}` 또는 `{items, paging}`).
+- **`/with-draft` envelope**: `app status`는 `approvalType` + `current` + `rejectedMessage` + `draft` 조합으로 client-side derive. 서버 권위 상태가 필요하면 `app service-status` (`/review-status`).
+- **`app share-rewards`**: 서버가 `?search=`를 항상 기대 — 비어 있어도 query param 자체는 포함해야 함.
+- **`notices`**: 별도 서비스 (`api-public.toss.im/api-public/v3/ipd-thor`, hard-coded `workspaceId=129` — 모든 유저 공유). 세션 쿠키(`.toss.im` 도메인)로 자동 인증.
+- **`completion`**: citty엔 generator 없어서 정적 top-level + 한 단계 subcommand 매핑만 하드코딩 (`app bundles ls` 같은 3단계 이하는 셸 fallback).
 
 ### Exit codes
 
@@ -94,16 +78,12 @@ Next (tracked in umbrella `../TODO.md` `console-cli` 섹션, 이 scaffold 단계
 ### Session storage
 
 - **위치**: XDG Base Directory. `$XDG_CONFIG_HOME/aitcc/session.json` → fallback `~/.config/aitcc/session.json` (Linux/macOS), `%APPDATA%\aitcc\session.json` (Windows).
-- **권한**: 디렉토리 `0700`, 파일 `0600`. `fs.mkdir({ mode: 0o700 })` + `fs.writeFile({ mode: 0o600 })`. Windows에선 mode 호출이 best-effort no-op, 유저 프로필 ACL에 의존.
-- **Shape**: `schemaVersion: 2`, `user`, `cookies`, `origins`, `capturedAt`, `currentWorkspaceId?`. `cookies`/`origins`은 Playwright `storageState` 그대로. v1 파일은 `readSession`이 자동으로 v2로 마이그레이트.
+- **권한**: 디렉토리 `0700`, 파일 `0600`. Windows에선 mode 호출이 best-effort no-op, 유저 프로필 ACL에 의존.
+- **Shape**: `{ schemaVersion: 2, user: { id, email, displayName }, cookies: CdpCookie[], origins: [], capturedAt, currentWorkspaceId? }`. `cookies`는 CDP `Network.getAllCookies` 응답 그대로 저장 → http 레이어가 `Cookie:` 헤더로 직렬화. v1 파일은 `readSession`이 자동으로 v2로 마이그레이트.
 
-### Session storage 선택 근거 (plain `0600` vs keychain)
+**왜 plain `0600` 파일 (vs OS keychain)?**
 
-**현재: plain `0600` 파일.** 근거:
-
-- OS keychain (`keytar`, Windows Credential Manager, Secret Service)은 **네이티브 의존성**이라 `bun build --compile`이 플랫폼별로 깔끔하게 번들하지 못한다. 현재 Bun 기준 cross-platform 지원이 불완전.
-- XDG 디렉토리 안 `0600` 파일은 첫 릴리즈의 **pragmatic floor**. `gh`/`gcloud`/`firebase` CLI 모두 과거에 거쳐 온 형태.
-- **나중에 keychain으로 마이그레이션이 쉬움**: `cookies`/`origins`만 keychain으로 옮기고 나머지는 `session.json`에 남긴다. 기존 데이터 migration 없음. Backlog 아이템.
+OS keychain은 native dependency라 `bun build --compile`이 플랫폼별로 깔끔하게 번들하지 못한다. XDG `0600` 파일은 첫 릴리즈의 pragmatic floor — `gh`/`gcloud`/`firebase` 모두 거쳐 온 형태. 나중에 마이그레이션 쉬움 (`cookies`/`origins`만 keychain으로). Backlog 아이템.
 
 ### Login 선택 근거 (CDP capture vs OAuth callback server)
 
@@ -111,40 +91,28 @@ Next (tracked in umbrella `../TODO.md` `console-cli` 섹션, 이 scaffold 단계
 
 - 공개된 `client_id=4uktpjgqd0cp9txybqzuxc2y6w0cuupb`에 등록된 redirect_uri는 production `apps-in-toss.toss.im/sign-up` 고정. `http://127.0.0.1:<port>/callback`은 허용되지 않음.
 - 인증 쿠키는 **HttpOnly**라 브라우저 JS로 capture 불가능. 반드시 CDP 레벨에서 `Network.getAllCookies`를 호출해야 함.
-- Playwright 번들(~300 MB)을 끌어오면 `bun build --compile` 사이즈가 무너짐. 대신 시스템에 이미 설치된 Chrome/Edge/Chromium을 spawn해 CDP로 드라이빙함으로써 **바이너리에 브라우저가 포함되지 않는다**.
+- Playwright 번들(~300 MB)을 끌어오면 `bun build --compile` 사이즈가 무너짐. 시스템에 이미 설치된 Chrome/Edge/Chromium을 spawn해 CDP로 드라이빙 → **바이너리에 브라우저가 포함되지 않는다**.
 
-흐름:
-1. `src/chrome.ts`가 OS별 Chrome 경로(override: `AITCC_BROWSER`)를 찾아 ephemeral `--user-data-dir`로 spawn. `--remote-debugging-port=0`으로 OS가 고른 포트를 stderr의 `DevTools listening on ws://…` 배너에서 파싱.
-2. `src/cdp.ts`의 minimal CDP client(순수 WHATWG WebSocket, 외부 의존 없음)가 `Target.attachToTarget` → `Page.frameNavigated`를 구독.
-3. 메인 프레임 URL이 `apps-in-toss.toss.im/workspace[/*]`에 도달하면 login 완료로 간주.
-4. `Network.getAllCookies`로 브라우저 세션의 쿠키(HttpOnly 포함) 전체 덤프.
-5. `src/api/me.ts`의 `fetchConsoleMemberUserInfo`가 쿠키로 `/console/api-public/v3/appsintossconsole/members/me/user-info` 호출해 실 사용자 정보를 확보 — 쿠키 liveness check 겸 whoami 기본값 채움.
-6. Chrome kill + user-data-dir 삭제.
+흐름: `src/chrome.ts`가 OS별 Chrome 경로를 찾아 ephemeral `--user-data-dir`로 spawn → `src/cdp.ts`의 minimal CDP client(WHATWG WebSocket, 외부 의존 없음)가 `Page.frameNavigated` 구독 → 메인 프레임 URL이 `apps-in-toss.toss.im/workspace[/*]`에 도달하면 login 완료 → `Network.getAllCookies` → `src/api/me.ts`가 `/console/api-public/v3/appsintossconsole/members/me/user-info`로 liveness check → Chrome kill + user-data-dir 삭제.
 
-agent-plugin 호환성은 동일: 인터랙티브 login은 skill 안에서 절대 호출하지 않고, `whoami --json`이 `authenticated: false`면 사용자에게 `aitcc login`을 직접 돌리라고 안내한다.
+agent-plugin 호환성: 인터랙티브 login은 skill 안에서 절대 호출하지 않고, `whoami --json`이 `authenticated: false`면 사용자에게 `aitcc login`을 직접 돌리라고 안내한다.
 
 ### 구현 세부
 
 - **Chrome 탐지**: `chromeCandidates()`가 `$AITCC_BROWSER` → OS별 기본 경로(macOS는 `/Applications/*.app/Contents/MacOS/...`, Windows는 `PROGRAMFILES*/Google/Chrome/Application/chrome.exe`, Linux는 PATH 상의 `google-chrome`/`chromium`/`microsoft-edge`) 순으로 시도. 전부 실패 시 `ChromeNotFoundError` → exit 14.
-- **WebSocket 의존성 없음**: Node 22+ / Bun 둘 다 `globalThis.WebSocket`을 제공하므로 `ws` 패키지는 쓰지 않는다. `bun build --compile`에 native peer 문제 없이 들어간다.
-- **Toss 공용 envelope**: `src/api/http.ts`가 `{ resultType: 'SUCCESS'|'FAIL', success, error? }` 래퍼를 unwrap하고, 실패는 `TossApiError`(401 or `errorCode: '4010'`이면 `isAuthError === true`)로 변환.
+- **WebSocket 의존성 없음**: Node 22+ / Bun 둘 다 `globalThis.WebSocket` 제공 → `ws` 패키지 사용 안 함. `bun build --compile`에 native peer 문제 없이 들어간다.
+- **Toss 공용 envelope**: `src/api/http.ts`가 `{ resultType: 'SUCCESS'|'FAIL', success, error? }` 래퍼를 unwrap, 실패는 `TossApiError`(401 or `errorCode: '4010'`이면 `isAuthError === true`)로 변환.
 - **Timeout**: `--timeout <sec>`(기본 300). 내부 타이머는 `unref()` 처리.
-- **세션 shape**: `{ schemaVersion: 2, user: { id, email, displayName }, cookies: CdpCookie[], origins: [], capturedAt, currentWorkspaceId? }`. `cookies`는 CDP `Network.getAllCookies` 응답 그대로 저장해 http 레이어가 `Cookie:` 헤더로 그대로 직렬화. v1 파일은 `readSession`이 자동으로 v2로 업그레이드.
-- **Logout**: 세션 파일을 `unlink`. `ENOENT`면 "no active session"으로 exit 0 — idempotent.
+- **Logout**: 세션 파일 `unlink`. `ENOENT`면 "no active session"으로 exit 0 — idempotent.
 
 ### App registration (`aitcc app register`)
 
-`aitcc app register` 는 콘솔의 미니앱 등록 플로우(두 스텝짜리 마법사 + 5개 필수 동의 체크박스)를 **단일 매니페스트 파일**로 자동화한다.
+콘솔의 미니앱 등록 플로우(두 스텝짜리 마법사 + 5개 필수 동의 체크박스)를 **단일 매니페스트 파일**로 자동화한다. Submit shape는 위 "API quirks"의 `app register` 항목 참조.
 
-**Submit shape는 dog-food #23 (2026-04-22)에서 확정됨.** 초기 구현의 `{miniApp, impression}` nested wrapper + `impression.categoryIds: [number]` shape이 **정답**이었다. 한 번 "flat + categoryList: [{id}]"로 regression한 적이 있었는데 (0.1.7), 이건 `GET /mini-app/:id`가 **current view만** 반환하는 것을 draft가 소실된 것으로 오해한 결과였다 — `GET /mini-app/:id/with-draft`를 읽으면 모든 필드가 정상적으로 persist돼 있다. 자세한 경위는 `apps-in-toss-community/.playwright-mcp/FORM-SCHEMA-CAPTURED.md` "FINAL" 섹션과 `xhr-captures/` 디렉토리 참고.
-
-**`/mini-app/review`는 이름 그대로 "앱 등록 + 심사 제출 원샷"**. 완전한 body를 보내면 앱이 즉시 "검토 중" 상태로 진입 — 별도 update 엔드포인트나 review-trigger 엔드포인트는 없다.
-
-**매니페스트 경로**:
-
-1. `--config <path>` 가 주어지면 그 경로 (상대 경로는 cwd 기준 resolve).
+**매니페스트 경로 resolution**:
+1. `--config <path>` (상대 경로는 cwd 기준).
 2. 아니면 `./aitcc.app.yaml` → `./aitcc.app.json` 순으로 auto-detect.
-3. 매니페스트 내부의 이미지 경로 (logo, horizontalThumbnail, verticalScreenshots 등) 는 **매니페스트 파일의 디렉토리 기준**으로 resolve.
+3. 매니페스트 내부의 이미지 경로는 **매니페스트 파일의 디렉토리 기준**으로 resolve.
 
 **매니페스트 스키마** (`src/config/app-manifest.ts`):
 
@@ -173,156 +141,113 @@ horizontalScreenshots:                    # 각 1504×741 PNG
   - ./assets/h1.png
 ```
 
-**이미지 dimension 은 업로드 전에 로컬 검증**. 서버도 `?validWidth=W&validHeight=H` 쿼리로 하드 검증하지만, agent-plugin 이 structured error 를 받을 수 있도록 먼저 로컬에서 체크한다 (`src/config/image-validator.ts`).
+이미지 dimension은 업로드 전에 로컬 검증 (`src/config/image-validator.ts`). 서버도 `?validWidth=W&validHeight=H` 쿼리로 하드 검증하지만, agent-plugin이 structured error를 받을 수 있도록 먼저 로컬에서 체크.
 
-**실행 흐름**:
-
-1. 세션 로드 + workspace 확정 (`resolveWorkspaceContext`).
-2. 매니페스트 parse + 필드 validation.
-3. 이미지 dimension 검증 (로컬).
-4. 각 이미지 순차 업로드 (`POST /resource/:wid/upload?validWidth=W&validHeight=H` multipart). 응답은 `{ resultType: 'SUCCESS', success: <imageUrl string> }`.
-5. `buildSubmitPayload(manifest, uploadedUrls)` 로 submit body 조립.
-6. `POST /workspaces/:wid/mini-app/review` 로 create + review-request 동시 제출 (bundle `Xc` 함수 기준).
-
-**--json 계약** (`runRegister` doc comment 가 source of truth):
-
-| Exit | stdout 형태 |
-|---|---|
-| 0 | `{"ok":true,"workspaceId":3095,"appId":123,"reviewState":"PENDING"}` (success) or `{"ok":true,"dryRun":true,"workspaceId":3095,"payload":{...}}` (dry-run) |
-| 2 | `{"ok":false,"reason":"no-workspace-selected"}` / `invalid-config` + `message` / `missing-required-field` + `field` + `message` / `image-dimension-mismatch` + `path`/`expected`/`actual`/`message` / `image-unreadable` + `path`/`message` / `terms-not-accepted` + `message` |
-| 10 | `{"ok":true,"authenticated":false}` |
-| 11 | `{"ok":false,"reason":"network-error","message":...}` |
-| 17 | `{"ok":false,"reason":"api-error","status":400,"errorCode":...,"message":...}` |
+**실행 흐름**: 세션 로드 + workspace 확정 → 매니페스트 parse + validation → 이미지 dimension 검증(로컬) → 각 이미지 순차 업로드 (`POST /resource/:wid/upload?validWidth=W&validHeight=H` multipart, 응답은 `{ resultType: 'SUCCESS', success: <imageUrl string> }`) → `buildSubmitPayload(manifest, uploadedUrls)` → `POST /workspaces/:wid/mini-app/review` 로 create + review-request 동시 제출.
 
 **안전 장치**:
 
-- **`--dry-run`**: 매니페스트 parse + 이미지 dimension 검증 + payload 조립까지 수행하고 submit body를 출력만 함. 업로드/제출 없음. `--accept-terms` 불필요. 실제 submit 전 확인용.
-- **`--accept-terms`**: 실제 submit은 콘솔 UI의 필수 법적 동의 체크박스(공통 5개 + 카테고리 의존 추가 조항 — `VALIDATION-RULES.md` 참조)를 우회한다. 사용자가 명시적으로 `--accept-terms`를 지정하지 않으면 CLI는 submit을 거부하고 exit 2로 종료한다 (`terms-not-accepted`). 이 플래그는 사용자가 `VALIDATION-RULES.md` 혹은 콘솔 UI에서 해당 조항들을 읽고 동의한다는 **CLI-level 확약**이다 — 서버 payload에 담기지 않는다 (dog-food로 확인된 shape에 해당 필드 없음; 서버가 쿠키 기반 로그인 세션만 믿고 submit을 받아줌).
+- **`--dry-run`**: 매니페스트 parse + 이미지 dimension 검증 + payload 조립까지만. 업로드/제출 없음. `--accept-terms` 불필요.
+- **`--accept-terms`**: 실제 submit은 콘솔 UI의 필수 법적 동의 체크박스(공통 5개 + 카테고리 의존 추가 조항 — `VALIDATION-RULES.md` 참조)를 우회. 사용자가 명시적으로 지정하지 않으면 CLI는 submit을 거부하고 exit 2 (`terms-not-accepted`). **CLI-level 확약**일 뿐 서버 payload엔 담기지 않는다 — 서버는 쿠키 기반 세션만 믿고 submit을 받음.
+
+### App deploy (`aitcc app deploy`)
+
+`bundles upload` (+ optional `review` + optional `release`)를 하나로 묶는 래퍼. `--deployment-id` 생략 시 번들에서 자동 추출 (`src/config/ait-bundle.ts`) — 두 포맷 모두 지원:
+
+1. **AIT** (modern `@apps-in-toss/ait-format`): `AITBUNDL` magic + protobuf 헤더 + 내부 zip blob. `deploymentId`는 헤더 protobuf field 2에서 직접 읽음 (protobufjs 의존 없음).
+2. **Legacy zip**: `PK` magic, `app.json._metadata.deploymentId` 추출 (fflate).
+
+Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFormat: 'ait' | 'zip'` 포함.
+
+스텝 opt-in: `--request-review --release-notes <text>`로 review 추가, `--release --confirm`으로 release 추가. `--release`는 bundle이 이미 APPROVED일 때만 동작 — 일반적으로 두 번째 실행에서 사용. Partial failure 시 `uploaded`/`reviewed`/`released` 플래그를 JSON에 포함해 agent-plugin이 재시도 스텝을 판단.
+
+`bundles upload`는 여전히 explicit `--deployment-id` 요구 (low-level); 자동 추출은 `app deploy` 래퍼에 위임.
 
 ## 기술 스택
 
-- **TypeScript** (ESM only, strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`)
-- **tsdown** — Node용 dist 빌드 (`pnpm build`)
-- **Bun** — 플랫폼별 standalone 바이너리 컴파일 (`bun build --compile`, `pnpm build:bin`). pnpm은 의존성 관리만.
-- **citty** — CLI 프레임워크
-- **vitest** — 테스트
-- **pnpm** — 패키지 매니저 (10.33.0)
-- **Biome** — lint + formatter (umbrella 공통)
-- **Changesets** — 릴리즈 (Type A: npm publish + binary release)
+공통 부분(Node 24, pnpm 10.33.0, TypeScript strict, Biome, Changesets, pre-commit hook 등)은 umbrella `../CLAUDE.md`의 "공통 스택" 참조. 이 repo 고유:
+
+- **TypeScript** strict + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`, ESM only
+- **tsdown** — Node용 dist 빌드 (`pnpm build` → `dist/cli.mjs` + `.d.mts`)
+- **Bun** — 플랫폼별 standalone 바이너리 (`bun build --compile`, `pnpm build:bin`). pnpm은 의존성 관리만.
+- **citty** (CLI), **vitest** (테스트)
+
+핵심 명령: `pnpm dev` (watch), `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm build:bin`, `pnpm lint[:fix]`. 전체는 `package.json` 참조.
 
 ## Build / Release
 
-### Build pipeline
-
-- **Dev 의존성 관리**: pnpm 10.33.0. `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
-- **Node dist (npm 경로)**: `tsdown`으로 `dist/cli.mjs` + `.d.mts` 산출. `@ait-co/console-cli` npm 패키지가 이걸 싣는다.
-- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/aitcc-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 아직 partial이라 제외).
-- **버전 임베딩**: build-time define `AITCC_VERSION`이 `package.json`의 `version`을 읽어 tsdown / Bun 양쪽 경로에 주입.
-
-### 명령어
-
-```bash
-pnpm build          # tsdown으로 dist/ (npm install -g 용)
-pnpm build:bin      # Bun으로 dist-bin/ 플랫폼별 바이너리 (GitHub Releases 용)
-pnpm dev            # watch 모드
-pnpm typecheck      # tsc --noEmit
-pnpm test           # vitest run
-pnpm lint           # biome check .
-pnpm lint:fix       # biome check --write .
-pnpm format         # biome format --write .
-```
+배포 정책 일반(Type A 매트릭스, 버전 정책, Changesets 흐름, Version Packages PR 타이밍)은 umbrella `../CLAUDE.md` "배포 전략" 및 `../meta/release-strategy.md` 참조. 이 repo 고유:
 
 ### 배포 채널
 
-사용자 설치 경로 3가지:
-
-1. **GitHub Releases 바이너리** (primary) — `install.sh` one-liner로 플랫폼 감지 + 다운로드. Node 불필요. `$HOME/.local/bin/aitcc` (0755)에 설치. `AITCC_VERSION=v0.1.1`로 pin 가능.
-2. **npm global** — `npm i -g @ait-co/console-cli`. `dist/cli.mjs`를 싣고 Node 24+ 런타임 필요. `agent-plugin`이 이 경로를 사용(개발 환경엔 보통 Node가 이미 있음).
+1. **GitHub Releases 바이너리** (primary) — `install.sh` one-liner, Node 불필요. `$HOME/.local/bin/aitcc` (0755). `AITCC_VERSION=v0.1.1`로 pin 가능.
+2. **npm global** — `npm i -g @ait-co/console-cli`. Node 24+ 런타임. `agent-plugin`이 이 경로 사용.
 3. **Homebrew tap** — deferred, 0.1.x 범위 밖.
 
-**왜 바이너리가 primary인데도 npm publish 하는가?**
-1. `agent-plugin`은 이미 Node를 PATH에 전제한다. npm 배포는 plugin이 `@ait-co/console-cli`를 peer로 선언하고 사용자가 기존 패키지 매니저로 설치하게 해준다 — skill 안에서 별도 installer를 설득할 필요 없음.
-2. TypeScript consumer(장래 다른 org 툴의 programmatic 사용)가 `import type { DeployResult } from '@ait-co/console-cli'`를 할 수 있게. 별도 `@ait-co/console-cli-types` 패키지를 쪼갤 필요 없음.
+**왜 바이너리가 primary인데도 npm publish?** (1) `agent-plugin`은 이미 Node를 PATH에 전제 → npm 배포로 peer dep 선언 가능. (2) TypeScript consumer가 `import type { DeployResult } from '@ait-co/console-cli'` 가능 → 별도 `*-types` 패키지 불필요. 두 경로는 Changesets로 동기화.
 
-두 경로는 Changesets로 동기화 — version bump는 한 번, `npm publish`와 바이너리 release가 같은 tag에서 돈다.
+### 빌드 파이프라인
+
+- **Node dist**: `tsdown`으로 `dist/cli.mjs` + `.d.mts`. `@ait-co/console-cli` npm 패키지가 싣는다.
+- **플랫폼 바이너리**: `bun build --compile --target=<target>` via `scripts/build-bin.ts`, 출력은 `dist-bin/aitcc-<os>-<arch>[.exe]`. Targets: `linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `windows-x64` (Bun의 `windows-arm64` 지원이 partial이라 제외).
+- **버전 임베딩**: build-time define `AITCC_VERSION`이 `package.json`의 `version`을 tsdown / Bun 양쪽 경로에 주입.
+
+### Release pipeline (이 repo 고유 부분)
+
+- `.github/workflows/release.yml`의 `publish:` 입력은 **`pnpm exec changeset publish`** (raw `npm publish` 아님 — `changesets/action`이 `🦋 New tag:` stdout 라인을 파싱해 GitHub Release를 만들고, `@changesets/cli publish`만 그 라인을 emit).
+- **이어서** `release-binaries.yml`이 `release.published` 이벤트로 트리거 → Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 생성 → `gh release upload`. 이 체인이 돌려면 `GITHUB_TOKEN`이 **App token** — default `GITHUB_TOKEN`으로는 `release.published`가 firing되지 않는다.
+- `install.sh`는 `releases/latest`를 읽으므로 `AITCC_VERSION` pin 안 하면 항상 최신.
 
 ### Self-update (`aitcc upgrade`)
 
 알고리즘:
-1. `GET https://api.github.com/repos/apps-in-toss-community/console-cli/releases/latest` (공개 repo라 인증 불필요; 익명 rate limit 회피를 위해 `GITHUB_TOKEN` env 있으면 존중).
+1. `GET https://api.github.com/repos/apps-in-toss-community/console-cli/releases/latest` (공개 repo, 익명 rate limit 회피용으로 `GITHUB_TOKEN` env 존중).
 2. `tag_name`의 `v` 제거 후 임베드 버전과 비교. 같으면 "already up to date"로 exit 0. `--force`는 체크 우회.
 3. 현재 실행 파일 경로 확인. Bun 컴파일 바이너리에선 `process.execPath`가 바이너리 자체. npm/Node에선 `process.execPath`가 `node`이므로 self-upgrade를 **거부**하고 `npm i -g @ait-co/console-cli@latest`를 안내.
 4. 플랫폼/아키에 맞는 asset name 골라 `<exePath>.new.<timestamp>`로 다운로드.
-5. **(계획됨, 현재 미구현)** `SHA256SUMS` asset으로 SHA-256 검증. 0.1.x 스캐폴드의 `src/commands/upgrade.ts`는 아직 이 단계를 수행하지 않는다 — umbrella `../TODO.md`의 `console-cli` 섹션에 추적. (`install.sh`는 이미 검증한다.)
-6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe를 rename할 수 없어서 `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리("boot 시 stale `.old` 청소" 체크 — 현재는 `.old` 파일만 남기고 정리 로직은 미구현, TODO).
-7. **(계획됨, 현재 미구현)** 새 바이너리를 `--version`으로 re-exec 해서 smoke test.
+5. **(계획됨, 미구현)** `SHA256SUMS` asset으로 SHA-256 검증 — umbrella `../TODO.md` `console-cli` 섹션에 추적. (`install.sh`는 이미 검증.)
+6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe rename 불가 → `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리 (정리 로직 자체는 미구현, TODO).
+7. **(계획됨, 미구현)** 새 바이너리 `--version`으로 re-exec 해서 smoke test.
 
 ### `install.sh`
 
 - `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `aitcc-<os>-<arch>`.
-- Download: `releases/latest/download/<name>` + `SHA256SUMS`. `SHA256SUMS`에서 바이너리 이름에 해당하는 라인만 필터링 후 `shasum -a 256 -c` 또는 `sha256sum -c`로 검증 (둘 중 사용 가능한 쪽).
-- 설치 위치: `${AITCC_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v aitcc`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
-- 엣지 케이스 (umbrella `../TODO.md` `console-cli` 섹션 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AITCC_QUIET=1`.
+- Download: `releases/latest/download/<name>` + `SHA256SUMS`. 바이너리 라인만 필터링 후 `shasum -a 256 -c` 또는 `sha256sum -c`로 검증.
+- 설치 위치: `${AITCC_INSTALL_DIR:-$HOME/.local/bin}` → `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v aitcc`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner 출력.
+- 엣지 케이스 (umbrella `../TODO.md` `console-cli` 섹션): `shasum`/`sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AITCC_QUIET=1`.
 
-### Release flow (Type A per umbrella)
+### macOS 바이너리 서명
 
-- `.changeset/` 활성.
-- `.github/workflows/release.yml`의 `publish:` 입력은 **`pnpm exec changeset publish`** (raw `npm publish`가 아님 — `changesets/action`이 `🦋 New tag:` stdout 라인을 파싱해 GitHub Release를 만들기 때문. `@changesets/cli publish`만 그 라인을 emit한다).
-- Trigger: `main`에서 "Version Packages" PR merge.
-- `changesets/action`:
-  1. `package.json` version bump + CHANGELOG 갱신 (이 단계는 Version Packages PR 생성 run).
-  2. PR merge 후: `pnpm exec changeset publish` 호출 → 내부적으로 npm publish를 shell-out. `NPM_CONFIG_PROVENANCE=true` 환경변수가 provenance 서명을 활성화하고, OIDC token이 있으면 자동으로 trusted publishing 경로를 탄다.
-  3. `🦋 New tag: v{x.y.z}` 라인을 파싱해 tag push + GitHub Release 생성 (`createGithubReleases: true`). Tag format은 single-package repo이므로 `v{version}`.
-- **이어서** `release-binaries.yml`이 `release.published` 이벤트로 트리거 → Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 생성 → `gh release upload`로 방금 만든 release에 asset 붙임. (이 체인이 돌려면 `GITHUB_TOKEN`이 **App token** — default `GITHUB_TOKEN`으로는 `release.published`가 firing되지 않는다.)
-- `install.sh`는 `releases/latest`를 읽으므로, `AITCC_VERSION`으로 pin하지 않으면 항상 최신.
+Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple stock `codesign`이 `invalid or unsupported format for signature`로 거부하는 경우가 있다. `0.1.x`는 **ad-hoc 서명**으로 우회, CI는 [`rcodesign`](https://github.com/indygreg/apple-platform-rs) 사용:
 
-### Release policy
+- `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서 (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명.
+- `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 다운로드.
+- `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback (이때는 이미 정상 Mach-O라 stock으로도 통과).
 
-- **Type A** per umbrella (`../CLAUDE.md`의 "배포 전략"). npm publish + GitHub Release 바이너리 자동 업로드.
-- 현재 **`0.1.x` patch only** 구간. minor/major는 Dave 명시 지시 시에만. 애매하면 patch로 추측하지 말고 확인.
-- 다음 minor 이벤트는 곧바로 `1.0.0` (umbrella 규칙).
-- Changesets 일상 흐름: PR 중 `/changeset` 호출 → `.changeset/*.md` 생성 (기본 patch) → merge → changesets/action이 "Version Packages" PR 생성 → Dave가 검토 후 merge → 릴리즈 파이프라인 발사.
+정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성 제거 가능 — umbrella `../TODO.md` backlog.
 
-### ⚠️ Version Packages PR merge 타이밍
+## 운영 메모
 
-**Version Packages PR을 merge한 뒤 release.yml이 끝날 때까지(약 1분) 다른 feat/fix PR을 merge하지 말 것.**
+### TODO
 
-- 재현한 실패 사례 (2026-04-23, v0.1.13): Version Packages PR #54 merge 직후 새 feat PR #55를 곧바로 merge했더니, `release.yml`이 #54의 merge commit을 checkout한 시점에 이미 `.changeset/feat-completion.md`가 남아 있어 `publish` 분기 대신 "PR 업데이트" 분기를 탐. 결과: v0.1.13은 `package.json`만 bump되고 **npm publish / GitHub Release 생성이 skip됨**.
-- 복구는 간단: 다음 Version Packages PR(v0.1.14 등)을 merge하면 누락된 changeset들을 한번에 publish한다. v0.1.13 같은 "skip된 버전"은 그대로 남고(npm에 존재하지 않고 `install.sh`도 latest만 가리키므로) 소비자에게 실질적 영향 없음. 단 v0.1.13의 기능들이 v0.1.14 CHANGELOG에 섞여 들어가 혼란스러울 수 있으니 `CHANGELOG.md` 에디트로 정정하는 편이 깔끔.
-- 교훈: "Version Packages PR merge → release.yml run 완료 확인 → 그 다음 PR merge" 순서 유지. 동시 merge는 race를 유발한다.
-
-## Open questions
-
-- `deploy` dry-run 모드는 day one부터 — 모든 mutating command에 `--dry-run` 추가.
-- ~~`aitcc status [appId]` 루트-레벨 명령~~ — 도입하지 않기로 결정. 아래 "Status" 섹션의 "왜 top-level `aitcc status`가 없는가" 참고.
-
-## macOS 바이너리 서명 (현행)
-
-Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple stock `codesign`이 `invalid or unsupported format for signature`로 거부하는 경우가 있다. `0.1.x`에서는 **ad-hoc 서명**을 적용하며, CI는 `rcodesign` (https://github.com/indygreg/apple-platform-rs) 을 사용한다.
-
-- `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서: (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명.
-- `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드.
-- `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도 (이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과).
-
-정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성을 제거할 수 있으나 현재(1.3.13 기준)는 미확인 — umbrella `../TODO.md` `console-cli` 섹션의 backlog에 추적.
-
-## Status
-
-`login` / `logout` / `whoami` / `upgrade` 모두 end-to-end 동작. `login`은 CDP로 시스템 Chrome을 띄워 세션 쿠키 캡처, `whoami`는 `members/me/user-info` 라이브 호출. `deploy` / `logs` / `status` 등 나머지는 umbrella `../TODO.md`의 `console-cli` 섹션 참고 (조직 TODO는 umbrella가 single source of truth). 각 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현한다.
+조직 전체 TODO는 umbrella `../TODO.md`가 single source of truth, 이 repo의 `TODO.md`는 stub. 새 항목은 어느 repo의 일이든 항상 umbrella에.
 
 ### 왜 top-level `aitcc status`가 없는가
 
-초기 TODO에는 `aitcc status [appId]`가 루트-레벨 명령으로 올라와 있었지만, 실제 command surface를 쌓아 본 뒤 **`aitcc app status <id>`만 두고 루트 alias는 만들지 않기로 결정**했다. 근거:
+초기 TODO에는 `aitcc status [appId]`가 루트-레벨로 올라와 있었지만, command surface를 쌓아 본 뒤 **`aitcc app status <id>`만 두고 루트 alias는 안 만들기로 결정**:
 
-- CLI의 조직 원칙은 **리소스-스코프 subcommand** (`app`, `workspace`, `me`, `notices`). 루트-레벨 alias는 이 원칙을 깨고 "다른 리소스에도 alias를 만들자"는 선례를 남긴다.
-- 세션 상태(`session.json`)는 `currentWorkspaceId`만 기억하고 `currentAppId`는 의도적으로 기억하지 않는다. 인자 없는 `aitcc status`를 지원하려면 "선택된 앱" mode-state를 추가해야 하는데, 그 UX 이득보다 관리 비용이 크다 (앱 삭제 시 dangling state, multi-app workflow에서의 혼동 등).
-- 인자를 요구하는 alias (`aitcc status <id>`)는 `aitcc app status <id>` 대비 고작 4글자를 아낄 뿐이다. 중복 surface + 추가 테스트 + 문서 항목을 정당화하지 못한다.
-- `deploy`/`logs`도 같은 원칙(리소스-스코프 + 선택된 앱 state 회피)을 적용할 것을 **기본 안**으로 둔다. 최종 위치(`aitcc app deploy`/`app logs` vs 루트)는 각 기능이 확정될 때 그 시점의 요구로 결정하되, 루트 도입을 원한다면 "왜 지금은 다른가"를 이 섹션에 추가해야 한다.
+- CLI 조직 원칙은 **리소스-스코프 subcommand** (`app`, `workspace`, `me`, `notices`). 루트 alias는 이 원칙을 깨고 다른 리소스에도 alias를 만들자는 선례를 남긴다.
+- 세션 상태(`session.json`)는 `currentWorkspaceId`만 기억하고 `currentAppId`는 의도적으로 안 기억. 인자 없는 `aitcc status`를 지원하려면 "선택된 앱" mode-state가 필요한데 UX 이득보다 관리 비용이 크다 (앱 삭제 시 dangling state, multi-app workflow 혼동).
+- 인자 요구 alias는 `aitcc app status <id>` 대비 4글자만 절약 → 중복 surface + 추가 테스트 + 문서 항목을 정당화 못 함.
 
-결론: `aitcc app status <id>`가 의도된 단일 표면. 루트 `aitcc status`는 향후에도 추가하지 않는 것을 기본 방침으로 한다.
+`deploy`/`logs`도 같은 원칙. 루트 도입 원할 때 "왜 지금은 다른가"를 이 섹션에 추가하는 것이 기본 안.
 
 ### App runtime logs: deferred (엔드포인트 없음)
 
-현재 콘솔 UI에는 서버 런타임 로그 엔드포인트가 노출되지 않는다. 콘솔이 surface하는 건 커스텀 이벤트 카탈로그(`app events` → `/log/catalogs/search`, `app.logEvent()` SDK 호출 집계)와 전환 지표(`app metrics` → `/conversion-metrics`)뿐이고, 원시 runtime 로그(stdout/stderr, 예외 스택, 요청별 라인)는 아니다. 전체 콘솔 번들(`bootstrap.*.js`)에 `runtime`/`telemetry`/`trace`/`crash`/`error-log`/`stream` 경로가 하나도 선언돼 있지 않고, `/mini-app/:id/` 서브페이지 route table에도 "로그" 메뉴가 없음 — 상세 조사는 `.playwright-mcp/LOGS-NOT-FOUND.md` 참조. `aitcc app logs`는 backend surface area가 생길 때까지 deferred.
+콘솔 UI에는 서버 런타임 로그 엔드포인트가 노출되지 않는다. 콘솔이 surface하는 건 커스텀 이벤트 카탈로그(`app events` → `/log/catalogs/search`, `app.logEvent()` 집계)와 전환 지표(`app metrics` → `/conversion-metrics`)뿐. 원시 runtime 로그(stdout/stderr, 예외 스택, 요청별 라인)는 아니다. 전체 콘솔 번들(`bootstrap.*.js`)에 `runtime`/`telemetry`/`trace`/`crash`/`error-log`/`stream` 경로가 하나도 선언돼 있지 않고, `/mini-app/:id/` 서브페이지 route table에도 "로그" 메뉴 없음 — 상세는 `.playwright-mcp/LOGS-NOT-FOUND.md`. `aitcc app logs`는 backend surface area가 생길 때까지 deferred.
+
+## Status
+
+`login` / `logout` / `whoami` / `upgrade`는 end-to-end 동작. App/workspace/me/notices 명령군은 위 "Command surface" 참조. 새 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현.
 
 전체 로드맵은 [landing page](https://apps-in-toss-community.github.io/) 참고.
