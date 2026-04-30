@@ -22,7 +22,7 @@
 1. 최초 실행 시 사용자의 시스템 Chrome(또는 Chromium-family)을 CDP로 spawn해 사용자가 직접 로그인.
 2. 로그인 완료 감지 즉시 `Network.getAllCookies`로 HttpOnly 포함 세션 쿠키 전체를 로컬 XDG 경로(`$XDG_CONFIG_HOME/aitcc/session.json`, fallback `~/.config/aitcc/session.json`)에 `0600`으로 저장.
 3. 이후 명령은 저장된 쿠키를 `Cookie:` 헤더로 직렬화해 `fetch()`로 콘솔 API 직접 호출. Playwright 등 브라우저 재기동 없음.
-4. `aitcc login | logout | whoami | upgrade`가 현재 MVP. `deploy | logs | status`는 TODO.md 참고.
+4. `aitcc login | logout | whoami | upgrade`가 현재 MVP. `deploy | logs | status`는 umbrella `../TODO.md`의 `console-cli` 섹션 참고. (조직 TODO는 umbrella가 single source of truth, 이 repo의 `TODO.md`는 stub.)
 5. `agent-plugin`이 이 CLI를 Bash로 호출 (MCP wrapping 없음).
 
 ### 보안 고려
@@ -76,7 +76,7 @@ MVP (0.1.x scaffold에서 다룬 범위):
 | `aitcc me terms` | ✅ | 로그인된 계정이 동의한 콘솔-레벨 약관. `GET /console-user-terms/me` — 단일 앱인토스 콘솔 이용약관. workspace/app-scoped가 아닌 user-scoped 약관. Shape는 workspace terms와 동일. |
 | `aitcc completion <bash\|zsh\|fish>` | ✅ | Shell completion 스크립트 emit. citty엔 completion generator 없어서 정적 top-level + 한 단계 subcommand 매핑만 하드코딩 (`app bundles ls` 같은 3단계 이하는 셸 fallback). 설치: bash는 `source <(aitcc completion bash)`, zsh는 `aitcc completion zsh > "${fpath[1]}/_aitcc"`, fish는 `~/.config/fish/completions/aitcc.fish`. `install.sh`가 `$SHELL` 감지해 설치 후 one-liner 안내 출력 (rc 파일 자동 수정은 하지 않음). |
 
-Next (tracked in TODO.md, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
+Next (tracked in umbrella `../TODO.md` `console-cli` 섹션, 이 scaffold 단계에는 없음): `deploy [path]`, `logs [--tail]`, `status`, (deferred) `mcp`.
 
 **Non-goals for 0.1.x**: 플러그인 시스템, multi-account switching, release-notes 생성. 모두 Dave의 명시적 `minor`/`major` 승인 뒤에.
 
@@ -253,7 +253,7 @@ pnpm format         # biome format --write .
 2. `tag_name`의 `v` 제거 후 임베드 버전과 비교. 같으면 "already up to date"로 exit 0. `--force`는 체크 우회.
 3. 현재 실행 파일 경로 확인. Bun 컴파일 바이너리에선 `process.execPath`가 바이너리 자체. npm/Node에선 `process.execPath`가 `node`이므로 self-upgrade를 **거부**하고 `npm i -g @ait-co/console-cli@latest`를 안내.
 4. 플랫폼/아키에 맞는 asset name 골라 `<exePath>.new.<timestamp>`로 다운로드.
-5. **(계획됨, 현재 미구현)** `SHA256SUMS` asset으로 SHA-256 검증. 0.1.x 스캐폴드의 `src/commands/upgrade.ts`는 아직 이 단계를 수행하지 않는다 — TODO로 추적. (`install.sh`는 이미 검증한다.)
+5. **(계획됨, 현재 미구현)** `SHA256SUMS` asset으로 SHA-256 검증. 0.1.x 스캐폴드의 `src/commands/upgrade.ts`는 아직 이 단계를 수행하지 않는다 — umbrella `../TODO.md`의 `console-cli` 섹션에 추적. (`install.sh`는 이미 검증한다.)
 6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe를 rename할 수 없어서 `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리("boot 시 stale `.old` 청소" 체크 — 현재는 `.old` 파일만 남기고 정리 로직은 미구현, TODO).
 7. **(계획됨, 현재 미구현)** 새 바이너리를 `--version`으로 re-exec 해서 smoke test.
 
@@ -262,7 +262,7 @@ pnpm format         # biome format --write .
 - `set -eu` / `uname -s` (`Linux`|`Darwin`) / `uname -m` (`x86_64`→`x64`, `arm64`/`aarch64`→`arm64`) / 바이너리 이름 `aitcc-<os>-<arch>`.
 - Download: `releases/latest/download/<name>` + `SHA256SUMS`. `SHA256SUMS`에서 바이너리 이름에 해당하는 라인만 필터링 후 `shasum -a 256 -c` 또는 `sha256sum -c`로 검증 (둘 중 사용 가능한 쪽).
 - 설치 위치: `${AITCC_INSTALL_DIR:-$HOME/.local/bin}`, `mkdir -p` → `chmod 0755` → `mv`. 설치 후 `command -v aitcc`가 비어 있으면 bash/zsh/fish용 `PATH` 추가 one-liner를 출력.
-- 엣지 케이스 (TODO.md 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AITCC_QUIET=1`.
+- 엣지 케이스 (umbrella `../TODO.md` `console-cli` 섹션 참고): `shasum` 없을 때 `sha256sum` fallback, `$HOME` 없을 때 `/tmp` fallback, release asset 업로드 레이스에 대한 exp-backoff 30s 재시도, 기존 root 소유 바이너리 감지, `AITCC_QUIET=1`.
 
 ### Release flow (Type A per umbrella)
 
@@ -304,11 +304,11 @@ Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple 
 - `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 바이너리를 다운로드.
 - `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback으로 시도 (이때는 이미 서명이 있는 정상 Mach-O라 stock으로도 통과).
 
-정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성을 제거할 수 있으나 현재(1.3.13 기준)는 미확인 — TODO.md의 backlog에 추적.
+정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성을 제거할 수 있으나 현재(1.3.13 기준)는 미확인 — umbrella `../TODO.md` `console-cli` 섹션의 backlog에 추적.
 
 ## Status
 
-`login` / `logout` / `whoami` / `upgrade` 모두 end-to-end 동작. `login`은 CDP로 시스템 Chrome을 띄워 세션 쿠키 캡처, `whoami`는 `members/me/user-info` 라이브 호출. `deploy` / `logs` / `status` 등 나머지는 TODO.md. 각 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현한다.
+`login` / `logout` / `whoami` / `upgrade` 모두 end-to-end 동작. `login`은 CDP로 시스템 Chrome을 띄워 세션 쿠키 캡처, `whoami`는 `members/me/user-info` 라이브 호출. `deploy` / `logs` / `status` 등 나머지는 umbrella `../TODO.md`의 `console-cli` 섹션 참고 (조직 TODO는 umbrella가 single source of truth). 각 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현한다.
 
 ### 왜 top-level `aitcc status`가 없는가
 
