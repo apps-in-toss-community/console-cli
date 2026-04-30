@@ -20,7 +20,8 @@
 | `userId`, `id` (member 객체의 user id) | `<user_id>` | 정수. 예: `6825` |
 | `bizUserNo` | `<biz_user_no>` | 정수 |
 | `channelIoHash` | `<channel_io_hash>` | 채널톡 식별 hash |
-| 워크스페이스/회사명 | `<workspace_name>` | 예: `"(주)프로덕트팩토리"` → `"<workspace_name>"`. ID(`3095`)는 유지 |
+| 워크스페이스/회사명 | `<workspace_name>` | 예: `"(주)프로덕트팩토리"` → `"<workspace_name>"`. **본 커뮤니티 워크스페이스(`3095` "(주)프로덕트팩토리" — sdk-example dog-food 호스트)만 이름 그대로 둔다.** |
+| 워크스페이스 ID | `<workspace_id>` | sdk-example dog-food (`3095`)만 그대로 노출. maintainer 개인/테스트 워크스페이스 ID(예: `36577`)는 모두 `<workspace_id>`. |
 | `appName` (kebab-case slug) | `<app_name>` | 예: `"ait-sdk-example"` → `"<app_name>"` |
 | 미니앱 한국어/영어 제목 | `<app_title_ko>` / `<app_title_en>` | 사용자 입력값 |
 | `homePageUri` | `<home_page_uri>` | 예: `https://example.org/...` |

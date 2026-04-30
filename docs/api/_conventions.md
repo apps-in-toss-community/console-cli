@@ -66,6 +66,6 @@ CLI에서 등록 직후 "필드가 사라졌다"고 오해한 적이 있는데(0
 
 - 인증 헤더(`cookie`, `authorization`), 세션 ID, 토큰류는 처음부터 캡처하지 않는다.
 - 사용자 식별 데이터(이메일, 이름, bizUserNo, userId, channelIoHash)는 placeholder로 치환. 상세는 [`_redaction.md`](./_redaction.md).
-- 워크스페이스 ID(`3095`, `36577`)는 그대로 둔다 — 공개 식별자.
+- 워크스페이스 ID는 **sdk-example dog-food (`3095`)만 그대로 노출**한다 — 이건 본 커뮤니티 자체 워크스페이스라 공개 OK. 그 외 maintainer 개인/테스트 워크스페이스 ID는 `<workspace_id>`로 치환.
 - 워크스페이스/회사명은 `<workspace_name>`으로 치환.
 - 이미지 CDN URL의 UUID 부분은 placeholder (`<image_uuid>`)로 치환, host/path 패턴은 유지 — CDN URL 구조 자체는 인벤토리 가치가 있음.

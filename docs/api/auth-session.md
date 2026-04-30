@@ -49,7 +49,7 @@ CLI 로그인 직후의 liveness check. 모든 명령이 부팅 시점에 한 �
         "isOwnerDelegationRequested": false
       },
       {
-        "workspaceId": 36577,
+        "workspaceId": <workspace_id>,
         "workspaceName": "<workspace_name>",
         "role": "OWNER",
         "isOwnerDelegationRequested": false
