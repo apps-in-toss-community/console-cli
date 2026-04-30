@@ -29,6 +29,7 @@
 - ✅ **confirmed**: 실제 캡처된 request/response가 인라인 본문에 포함됨. dog-food 또는 manual capture로 검증됨.
 - ⚠️ **inferred**: 코드(`src/api/*.ts`)와 콘솔 번들 정적 분석(`bootstrap.*.js` grep)으로 path/method는 알지만 본문은 미캡처. 호출 시 실제 shape으로 보강 필요.
 - ❌ **not captured**: path만 알고 그 외 정보 없음.
+- 🚫 **user-inaccessible**: route는 실재(OPTIONS preflight으로 확인)하지만 일반 사용자 OWNER 세션엔 막혀 있음. 운영팀 admin 권한 전용으로 추정.
 
 ## 캡처 방법
 
@@ -54,3 +55,35 @@
 | Mini-apps | [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/register.ts`](../../src/commands/register.ts), [`src/commands/register-payload.ts`](../../src/commands/register-payload.ts) |
 | API Keys | [`src/api/api-keys.ts`](../../src/api/api-keys.ts), [`src/commands/keys.ts`](../../src/commands/keys.ts) |
 | Notices | [`src/api/ipd-thor.ts`](../../src/api/ipd-thor.ts), [`src/commands/notices.ts`](../../src/commands/notices.ts) |
+
+## 다음 캡처 작업
+
+각 도메인 파일에 흩어져 있는 ⚠️/❌ 항목을 한자리에 모은 우선순위 목록. 새로 캡처가 들어오면 해당 endpoint 항목을 ✅로 승격하고 본 표에서 줄을 지운다.
+
+**우선순위 1 — 빈 워크스페이스에서도 가능 (가장 빨리 해소 가능)**:
+
+- `GET /workspaces/<wid>/members/me` — workspace landing 시 자동 호출, `.playwright-mcp/xhr-captures/`에 raw 있을 가능성. ([`workspaces.md`](./workspaces.md))
+- `GET /workspaces/<wid>/partner/is-registered` — 동일. ([`workspaces.md`](./workspaces.md))
+- `GET /workspaces/<wid>/console-workspace-terms/<type>/skip-permission` — 등록 마법사 진입 시 호출. ([`workspaces.md`](./workspaces.md))
+- `GET /workspaces/129/posts`, `/categories` (notices) — 사이드바 자동 호출. ([`notices.md`](./notices.md))
+- `GET /workspaces/129/posts/<post_id>` — 공지 상세 1개 클릭. ([`notices.md`](./notices.md))
+
+**우선순위 2 — sdk-example dog-food 진행 시 자연스럽게 캡처**:
+
+- `POST /workspaces/<wid>/mini-app/pre-review` — AI 사전 검토 버튼. ([`mini-apps.md`](./mini-apps.md))
+- `mini-app-bundles.md` 전체 — `app deploy` 흐름 (initialize → upload → complete → review → release) E2E. ([`mini-app-bundles.md`](./mini-app-bundles.md))
+- `app reports` cursor pagination shape — 한 번이라도 신고 들어오면 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
+
+**우선순위 3 — 운영 데이터 누적 후**:
+
+- `app metrics` heartbeat/retention 실제 응답 (현재는 빈 배열 + `cacheTime`). ([`mini-app-misc.md`](./mini-app-misc.md))
+- `app events` log catalog 한 항목의 실 본문 (현재는 빈 배열). ([`mini-app-misc.md`](./mini-app-misc.md))
+- API key 발급된 후 list 응답 — fallback chain 정리. ([`api-keys.md`](./api-keys.md))
+- Certs 발급된 후 list 응답. ([`mini-app-misc.md`](./mini-app-misc.md))
+
+**우선순위 4 — 별도 액션 필요**:
+
+- `POST /workspaces/<wid>/api-keys` (발급) — 1회성 액션, dog-food 시 별도 진행. ([`api-keys.md`](./api-keys.md))
+- `PUT /workspaces/<wid>/api-keys/<id>/disable` — 발급 후 검증 페어로 동시 캡처. ([`api-keys.md`](./api-keys.md))
+- toss-login `review` / `marketing-agreement` / `encryption-key/email` — 토스 로그인 사용 사례 필요. ([`mini-app-misc.md`](./mini-app-misc.md))
+- `smart-message` / `segments` / `templates` / `maintenance-jobs` 도메인 sub-path — `bootstrap.*.js` grep으로 path 추출 후 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))

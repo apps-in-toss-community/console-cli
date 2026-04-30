@@ -15,6 +15,7 @@
 | POST | `/workspaces/<wid>/mini-app/pre-review` | AI 사전 검토 (옵션) | ❌ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/review-status` | 개별 앱 심사 상태 | ✅ |
 | GET | `/workspaces/<wid>/mini-apps/review-status` | 워크스페이스 전체 앱 심사 상태 요약 | ✅ |
+| DELETE | `/workspaces/<wid>/mini-app/<mini_app_id>` | 앱 삭제 (route는 존재, OWNER 세션엔 막힘) | 🚫 |
 
 ## `POST /workspaces/<wid>/mini-app/review` — 앱 등록 + 심사 제출 (원샷)
 
@@ -65,7 +66,19 @@
 - `miniApp.minAge` / `maxAge`: 콘솔 UI 기본값 19/99 그대로. CLI도 동일.
 - `darkModeIconUri`: 명시적 `null` 허용 (생략해도 됨).
 
-### Success response (HTTP 200)
+### Server raw response (HTTP 200)
+
+서버가 wire 위에서 실제로 보내는 형태:
+
+```json
+{ "resultType": "SUCCESS", "success": { "miniAppId": 29397 } }
+```
+
+표준 envelope의 `success` 안에 `miniAppId` 하나만. 다른 필드는 없다. 응답이 검수 진입 여부를 직접 알려주지 않으므로, 등록 직후 상태를 알고 싶으면 [`/with-draft`](#-get-workspaceswidmini-appmini_app_idwith-draft--앱-상세--draft) 또는 [`/review-status`](#-get-workspaceswidmini-appmini_app_idreview-status--개별-앱-심사-상태)를 별도 호출한다 (UI도 그렇게 동작).
+
+### CLI `--json` output
+
+[`src/commands/register.ts`](../../src/commands/register.ts)는 위 raw 응답을 unwrap한 뒤 자체 형식으로 다시 wrap해서 stdout으로 출력한다:
 
 ```json
 {
@@ -76,13 +89,7 @@
 }
 ```
 
-`reviewState: null`이지만 **이게 "검토 미트리거"를 의미하지는 않는다.** payload가 완성되면 UI에서 곧바로 "검토 중이에요. 결과는 영업일 기준 2일 내 이메일로 알려드릴게요." 배너가 뜬다 (29397에서 확인). 응답이 단순히 그 필드를 채우지 않을 뿐.
-
-내부적으로 서버는 `{ resultType: "SUCCESS", success: { miniAppId } }`를 반환하며, 위 `{ ok, workspaceId, appId, reviewState }`는 CLI(`src/commands/register.ts`)가 `--json` 출력용으로 wrap한 모양이다. raw API 형태는:
-
-```json
-{ "resultType": "SUCCESS", "success": { "miniAppId": 29397 } }
-```
+`reviewState: null`이지만 **이게 "검토 미트리거"를 의미하지는 않는다.** payload가 완성되면 UI에서 곧바로 "검토 중이에요. 결과는 영업일 기준 2일 내 이메일로 알려드릴게요." 배너가 뜬다 (29397에서 확인). CLI 응답이 단순히 이 필드를 채우지 않을 뿐 — 서버 응답에도 review 상태는 포함되지 않으므로 필요하면 `app service-status`로 따로 조회한다.
 
 ### Error response — server-side validation (HTTP 400, errorCode 4000)
 
@@ -267,3 +274,39 @@
 - **Used by**: 콘솔 UI의 "AI 사전 검토" 버튼. CLI 미구현.
 - **Capture status**: ❌ not captured. payload/response 미상.
 - **TODO**: dog-food 시 캡처해서 본 항목 채우기.
+
+## `DELETE /workspaces/<wid>/mini-app/<mini_app_id>` — 앱 삭제 (route 존재, 일반 OWNER 세션에는 막힘)
+
+- **Used by**: 없음 (CLI 미구현).
+- **Capture status**: 🚫 user-inaccessible. 2026-04-23 수동 probe로 동작 확인 (상세 아래).
+
+### Probe 결과
+
+`OPTIONS` preflight 응답에 `access-control-allow-methods: DELETE`가 포함돼 route 자체는 실재함이 확인된다. 그러나 workspace OWNER 세션으로 실제 `DELETE`를 보내면 어떤 변형(plain / `{}` body / `?confirm=true` query)이든 일관되게 다음을 반환한다:
+
+```jsonc
+// HTTP 200 (envelope이 FAIL이라 status는 200)
+{
+  "resultType": "FAIL",
+  "success": null,
+  "error": {
+    "errorType": 0,
+    "errorCode": "500",
+    "reason": "Internal Server Error",
+    "data": {},
+    "title": null
+  }
+}
+// response header: x-toss-event-id: <trace_id>
+// upstream-service-time: ~18ms (timeout 아니라 즉시 실패)
+```
+
+**테스트한 대상 상태별 결과** (2026-04-23, miniAppId 29349/29356/29397):
+- PREPARE 상태 draft (검토 미시작): 500
+- 검토 중인 앱: 500
+
+**해석**: 응답 시간이 빠르고(~18 ms) `errorCode: 500`을 깔끔하게 반환하므로 **timeout이 아니라 서버 로직이 실행돼 의도적으로 거부**한 것. 비교 대상으로 같은 워크스페이스의 sibling DELETE — `DELETE /workspaces/<wid>/members/<bizUserNo>` 와 `DELETE /workspaces/<wid>/invites` — 는 동일 세션으로 정상 동작한다. 즉 이 endpoint만 OWNER 권한 위(아마 토스 운영팀 admin role)에서만 동작하는 것으로 보인다.
+
+**결론**: 사용자(앱 등록 주체)가 자기 앱을 직접 삭제할 방법은 콘솔 SPA에 없다. dog-food 결과로 생긴 `PREPARE` 상태 잔여 앱을 정리하려면 콘솔의 1:1 문의/채널톡으로 운영팀에 요청한다 (대상 `miniAppId` + 위 trace id 첨부 권장).
+
+CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason: "delete-not-supported"`) 두는 게 정직 — 실 endpoint가 열리기 전엔 사용자가 콘솔 운영팀에 직접 요청하라는 안내를 출력해야 한다.

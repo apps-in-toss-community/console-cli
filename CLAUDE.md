@@ -124,7 +124,7 @@ appName: ait-sdk-example        # kebab-case slug
 csEmail: support@example.com    # 고객문의 이메일
 logo: ./assets/logo.png         # 600×600 PNG
 horizontalThumbnail: ./assets/thumb.png   # 1932×828 PNG
-categoryIds: [1, 2]             # >=1. /impression/category-list 참고
+categoryIds: [3882]             # >=1. ID 트리는 docs/api/impression.md (예: 3882 = 생활 > 정보)
 subtitle: 앱인토스 SDK 인터랙티브 예제   # <= 20 chars
 description: |-
   상세 설명 (멀티라인 YAML OK)

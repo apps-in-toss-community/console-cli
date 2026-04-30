@@ -69,3 +69,10 @@ CLI에서 등록 직후 "필드가 사라졌다"고 오해한 적이 있는데(0
 - 워크스페이스 ID는 **sdk-example dog-food (`3095`)만 그대로 노출**한다 — 이건 본 커뮤니티 자체 워크스페이스라 공개 OK. 그 외 maintainer 개인/테스트 워크스페이스 ID는 `<workspace_id>`로 치환.
 - 워크스페이스/회사명은 `<workspace_name>`으로 치환.
 - 이미지 CDN URL의 UUID 부분은 placeholder (`<image_uuid>`)로 치환, host/path 패턴은 유지 — CDN URL 구조 자체는 인벤토리 가치가 있음.
+
+### Placeholder 두 종류
+
+이 문서에 등장하는 `<...>` 표기는 **두 가지가 섞여 있다.** 캡처를 다시 만들 때 헷갈리지 않도록 구분:
+
+- **Redaction placeholder** — 실제 캡처에는 값이 있었지만 민감/개인 정보라 가린 자리. 종류와 정책은 [`_redaction.md`](./_redaction.md). 예: `<email>`, `<user_id>`, `<workspace_name>`, `<image_uuid>`.
+- **Type-shape placeholder** — 본문 캡처가 없거나(⚠️ inferred) shape만 보여주려는 자리. JSON 안에서 `<int>`/`<bool>`/`<string>`/`<url>`/`<int>`/`<message>` 같은 형태. 값을 가린 게 아니라 **자료형**을 가리킨다. 실 캡처가 들어오면 redaction 정책에 따라 redact placeholder 또는 실제 enum 값으로 채워진다.
