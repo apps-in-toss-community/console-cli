@@ -197,6 +197,7 @@ Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFor
 - `.github/workflows/release.yml`의 `publish:` 입력은 **`pnpm exec changeset publish`** (raw `npm publish` 아님 — `changesets/action`이 `🦋 New tag:` stdout 라인을 파싱해 GitHub Release를 만들고, `@changesets/cli publish`만 그 라인을 emit).
 - **이어서** `release-binaries.yml`이 `release.published` 이벤트로 트리거 → Linux/macOS/Windows matrix 빌드 → 바이너리 + `SHA256SUMS` 생성 → `gh release upload`. 이 체인이 돌려면 `GITHUB_TOKEN`이 **App token** — default `GITHUB_TOKEN`으로는 `release.published`가 firing되지 않는다.
 - `install.sh`는 `releases/latest`를 읽으므로 `AITCC_VERSION` pin 안 하면 항상 최신.
+- ⚠️ **Version Packages PR merge 타이밍**: merge 후 `release.yml` 완료까지(~1분) 다른 feat/fix PR merge 금지. 동시 merge 시 release run이 다음 commit을 checkout한 시점에 새 `.changeset/*.md`가 남아 있어 `publish` 분기 대신 "PR 업데이트" 분기를 탐 → npm publish + GitHub Release 생성 skip (재현: 2026-04-23 v0.1.13, PR #54 직후 #55 merge). 복구는 다음 Version Packages PR merge가 누적 changeset을 한번에 publish — skip된 버전은 npm에 존재하지 않으므로 소비자 영향 없음, 다만 CHANGELOG 정정 필요.
 
 ### Self-update (`aitcc upgrade`)
 
