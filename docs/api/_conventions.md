@@ -43,6 +43,7 @@ CLI 측에서는 [`src/api/http.ts`](../../src/api/http.ts)의 `unwrap()`이 이
 |---|---|
 | `4000` | "잘못된 요청입니다" — 서버측 validation 실패 (charset, length, 누락 필드 등). `error.reason`에 한국어 설명. |
 | `4010` | 인증 만료/없음. `aitcc login` 재실행 유도. |
+| `4046` | "검수중인 요청이 있어 검수요청을 할 수 없어요" — `approvalType: REVIEW` 상태에서 `POST /mini-app/review` 재호출 시 발생. 운영팀이 검수 결과(APPROVED/REJECTED)를 내야 잠금 해제. mini-app review-withdraw endpoint 부재로 사용자가 큐에서 빼는 방법은 없음. 상세는 [`mini-apps.md`](./mini-apps.md). |
 
 ## Path / query / body 컨벤션
 
