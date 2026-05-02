@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.20
+
+### Patch Changes
+
+- 259e4ec: Manifest auto-detect now uses `aitcc.yaml` / `aitcc.json` (was `aitcc.app.yaml` / `aitcc.app.json`). The `.app` middle token is removed; legacy filenames are no longer recognized. Pass `--config` explicitly if you need to keep the old name.
+
 ## 0.1.19
 
 ### Patch Changes
