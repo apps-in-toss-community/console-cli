@@ -1,10 +1,11 @@
-import { chmod, rename, writeFile } from 'node:fs/promises';
+import { chmod, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import { defineCommand } from 'citty';
 import { ExitCode } from '../exit.js';
-import { fetchLatestRelease, versionFromTag } from '../github.js';
+import { fetchLatestRelease, findSha256SumsAsset, versionFromTag } from '../github.js';
 import { detectPlatform } from '../platform.js';
 import { compareSemver } from '../semver.js';
+import { parseSha256Sums, sha256OfFile } from '../sha256.js';
 import { VERSION } from '../version.js';
 
 // Distinguishes a Bun-compiled standalone (where `process.execPath` points at
@@ -146,6 +147,67 @@ export const upgradeCommand = defineCommand({
         `Failed to download new binary: ${(err as Error).message}`,
       );
       process.exit(ExitCode.NetworkError);
+    }
+
+    // Verify the downloaded binary against `SHA256SUMS` from the same release
+    // before letting it replace the running executable. Mirrors the check in
+    // `install.sh`. There is no opt-out; the gate exists because the binary
+    // is about to be `chmod 0755` and renamed over `process.execPath`.
+    const sumsAsset = findSha256SumsAsset(release);
+    if (!sumsAsset) {
+      await unlink(stagingPath).catch(() => {});
+      emitError(
+        { reason: 'sums-missing', tag: release.tag_name },
+        `Release ${release.tag_name} has no SHA256SUMS asset. It may still be uploading; retry shortly.`,
+      );
+      process.exit(ExitCode.UpgradeChecksumFailed);
+    }
+
+    let expected: string | undefined;
+    let actual: string;
+    try {
+      const sumsRes = await fetch(sumsAsset.browser_download_url);
+      if (!sumsRes.ok) {
+        throw new Error(`SHA256SUMS download failed: ${sumsRes.status} ${sumsRes.statusText}`);
+      }
+      const sumsText = await sumsRes.text();
+      const sums = parseSha256Sums(sumsText);
+      expected = sums.get(platform.assetName);
+      actual = (await sha256OfFile(stagingPath)).toLowerCase();
+    } catch (err) {
+      await unlink(stagingPath).catch(() => {});
+      emitError(
+        { reason: 'sums-fetch-failed', message: (err as Error).message },
+        `Failed to verify checksum: ${(err as Error).message}`,
+      );
+      process.exit(ExitCode.UpgradeChecksumFailed);
+    }
+
+    if (!expected) {
+      await unlink(stagingPath).catch(() => {});
+      emitError(
+        { reason: 'sums-no-entry', assetName: platform.assetName, tag: release.tag_name },
+        `SHA256SUMS for ${release.tag_name} has no entry for ${platform.assetName}.`,
+      );
+      process.exit(ExitCode.UpgradeChecksumFailed);
+    }
+
+    if (expected.toLowerCase() !== actual) {
+      await unlink(stagingPath).catch(() => {});
+      emitError(
+        {
+          reason: 'sha256-mismatch',
+          assetName: platform.assetName,
+          expected: expected.toLowerCase(),
+          actual,
+        },
+        `Checksum mismatch for ${platform.assetName}: expected ${expected.toLowerCase()}, got ${actual}.`,
+      );
+      process.exit(ExitCode.UpgradeChecksumFailed);
+    }
+
+    if (!args.json) {
+      process.stdout.write('Checksum OK.\n');
     }
 
     // Atomic replace. POSIX `rename(2)` on the same filesystem is atomic.
