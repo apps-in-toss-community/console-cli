@@ -206,7 +206,7 @@ Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFor
 2. `tag_name`의 `v` 제거 후 임베드 버전과 비교. 같으면 "already up to date"로 exit 0. `--force`는 체크 우회.
 3. 현재 실행 파일 경로 확인. Bun 컴파일 바이너리에선 `process.execPath`가 바이너리 자체. npm/Node에선 `process.execPath`가 `node`이므로 self-upgrade를 **거부**하고 `npm i -g @ait-co/console-cli@latest`를 안내.
 4. 플랫폼/아키에 맞는 asset name 골라 `<exePath>.new.<timestamp>`로 다운로드.
-5. **(계획됨, 미구현)** `SHA256SUMS` asset으로 SHA-256 검증 — umbrella [`TODO.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/TODO.md) `console-cli` 섹션에 추적. (`install.sh`는 이미 검증.)
+5. 같은 release의 `SHA256SUMS` asset을 fetch → `parseSha256Sums`로 `<hex>  <name>` 라인 파싱 → 자기 binary line의 expected hash 추출 → staging 파일을 streaming `sha256OfFile`로 해시 → 비교. asset 부재/엔트리 부재/불일치 시 staging 파일 unlink + `ExitCode.UpgradeChecksumFailed` (22). `install.sh`와 동일 게이트, opt-out 없음.
 6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe rename 불가 → `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리 (정리 로직 자체는 미구현, TODO).
 7. **(계획됨, 미구현)** 새 바이너리 `--version`으로 re-exec 해서 smoke test.
 
