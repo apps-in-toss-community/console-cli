@@ -68,6 +68,10 @@ export async function fetchLatestReleaseConditional(
   return { status: 'updated', release, etag };
 }
 
+export function findSha256SumsAsset(release: Release): ReleaseAsset | undefined {
+  return release.assets.find((a) => a.name === 'SHA256SUMS');
+}
+
 // Parse `tag_name` into a comparable semver string. Changesets tags this repo
 // as `@ait-co/console-cli@0.1.2`; older ad-hoc tags may be `v0.1.2`. We
 // accept both.
