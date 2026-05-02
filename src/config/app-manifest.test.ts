@@ -36,7 +36,14 @@ describe('resolveManifestPath', () => {
     );
   });
 
-  it('auto-detects ./aitcc.yaml over ./aitcc.json', async () => {
+  it('auto-detects aitcc.yaml when only yaml exists', async () => {
+    const dir = makeTempDir();
+    writeManifest(dir, 'aitcc.yaml', 'titleKo: yaml\n');
+    const resolved = await resolveManifestPath(undefined, dir);
+    expect(resolved).toBe(resolve(join(dir, 'aitcc.yaml')));
+  });
+
+  it('auto-detects ./aitcc.yaml over ./aitcc.json when both exist', async () => {
     const dir = makeTempDir();
     writeManifest(dir, 'aitcc.yaml', 'titleKo: yaml\n');
     writeManifest(dir, 'aitcc.json', '{"titleKo":"json"}');
@@ -65,6 +72,13 @@ describe('resolveManifestPath', () => {
   it('does not auto-detect legacy aitcc.app.yaml', async () => {
     const dir = makeTempDir();
     writeManifest(dir, 'aitcc.app.yaml', 'titleKo: x\n');
+    const err = await resolveManifestPath(undefined, dir).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+  });
+
+  it('does not auto-detect legacy aitcc.app.json', async () => {
+    const dir = makeTempDir();
+    writeManifest(dir, 'aitcc.app.json', '{}');
     const err = await resolveManifestPath(undefined, dir).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
   });
