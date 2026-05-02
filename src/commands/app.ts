@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve as resolvePath } from 'node:path';
 import { defineCommand } from 'citty';
 import {
   fetchAppEventCatalogs,
@@ -16,6 +18,7 @@ import {
   fetchShareRewards,
   fetchSmartMessageCampaigns,
   fetchUserReports,
+  issueCert,
   type MetricsTimeUnit,
   postBundleMemo,
   postBundleRelease,
@@ -27,6 +30,7 @@ import {
   putBundleToUploadUrl,
   type RatingSortDirection,
   type RatingSortField,
+  revokeCert,
   TEMPLATE_CONTENT_REACH_TYPES,
   type TemplateContentReachType,
 } from '../api/mini-apps.js';
@@ -1730,6 +1734,238 @@ const certsLsCommand = defineCommand({
   },
 });
 
+// --json contract (consumed by agent-plugin):
+//
+//   app certs issue <id> --name <name> [--workspace <id>]
+//                                       [--out <dir>] [--print-key]:
+//     { ok: true, workspaceId, appId, name,
+//       publicKey, privateKey?, savedTo?: { publicKey, privateKey } }   exit 0
+//     { ok: false, reason: 'invalid-id' | 'invalid-name'
+//                        | 'invalid-out-dir' }                          exit 2
+//
+// Issues an mTLS client certificate. The console UI's name placeholder
+// reads "공백, 한글, 특수문자 제외", so the CLI mirrors that rule client-side
+// before any network call: 1+ char, ASCII letters/digits/`-`/`_` only.
+//
+// `privateKey` is only present in the response when `--print-key` is set
+// or when `--out` is *not* set (i.e. the caller has explicitly asked for
+// the material on stdout). With `--out <dir>` (default agent-plugin
+// pattern) two files are written with mode 0o600 — `<name>.crt` (cert)
+// and `<name>.key` (private key) — and the JSON payload only echoes
+// the two paths. The plain-text emitter never prints the private key
+// regardless of flags; it points the user at the file and `--json` if
+// they need it programmatically.
+//
+//   app certs revoke <certId> --app <id> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, certId }                          exit 0
+//     { ok: false, reason: 'invalid-id' | 'missing-cert-id' }           exit 2
+//
+// Hits the wire's `disable` endpoint. Naming follows the user mental
+// model (issue ↔ revoke); the console UI button itself is labelled
+// "삭제" and there is no reactivate path, so `revoke` is the honest
+// surface even though the path is named `disable`.
+
+const CERT_NAME_RE = /^[A-Za-z0-9_-]+$/;
+
+function parseCertName(raw: string | undefined): { value: string } | { error: string } {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return { error: '--name is required (cert display name)' };
+  }
+  if (!CERT_NAME_RE.test(raw)) {
+    return {
+      error:
+        '--name must contain only ASCII letters, digits, `-`, or `_` (no spaces, no Korean, no special chars)',
+    };
+  }
+  return { value: raw };
+}
+
+const certsIssueCommand = defineCommand({
+  meta: {
+    name: 'issue',
+    description: 'Issue a new mTLS certificate for a mini-app.',
+  },
+  args: {
+    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    name: {
+      type: 'string',
+      description: 'Cert display name. ASCII letters/digits/`-`/`_` only.',
+    },
+    out: {
+      type: 'string',
+      description: 'Directory to write `<name>.crt` and `<name>.key` (mode 0600).',
+    },
+    'print-key': {
+      type: 'boolean',
+      description: 'Include the private key in the response (default: cert only).',
+      default: false,
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const appId = parseAppId(args.id);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
+        });
+      } else {
+        process.stderr.write(`app certs issue: invalid id ${JSON.stringify(args.id)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const nameResult = parseCertName(args.name);
+    if ('error' in nameResult) {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'invalid-name', message: nameResult.error });
+      } else {
+        process.stderr.write(`app certs issue: ${nameResult.error}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+    const name = nameResult.value;
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      const result = await issueCert(workspaceId, appId, name, session.cookies);
+
+      let savedTo: { publicKey: string; privateKey: string } | undefined;
+      if (typeof args.out === 'string' && args.out.length > 0) {
+        const dir = resolvePath(args.out);
+        try {
+          await mkdir(dir, { recursive: true });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (args.json) {
+            emitJson({
+              ok: false,
+              reason: 'invalid-out-dir',
+              message: `--out: cannot create ${JSON.stringify(args.out)}: ${message}`,
+            });
+          } else {
+            process.stderr.write(
+              `app certs issue: cannot create --out directory ${JSON.stringify(args.out)}: ${message}\n`,
+            );
+          }
+          return exitAfterFlush(ExitCode.Usage);
+        }
+        const certPath = resolvePath(dir, `${name}.crt`);
+        const keyPath = resolvePath(dir, `${name}.key`);
+        await writeFile(certPath, result.publicKey, { mode: 0o600 });
+        await writeFile(keyPath, result.privateKey, { mode: 0o600 });
+        savedTo = { publicKey: certPath, privateKey: keyPath };
+      }
+
+      if (args.json) {
+        const includeKey = args['print-key'] === true || savedTo === undefined;
+        emitJson({
+          ok: true,
+          workspaceId,
+          appId,
+          name,
+          publicKey: result.publicKey,
+          ...(includeKey ? { privateKey: result.privateKey } : {}),
+          ...(savedTo ? { savedTo } : {}),
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      // Plain output never prints the private key; it points the user at
+      // the saved files (or `--json` / `--print-key` for programmatic use).
+      if (savedTo) {
+        process.stdout.write(
+          `App ${appId} (ws ${workspaceId}): issued cert "${name}"\n` +
+            `  cert: ${savedTo.publicKey}\n` +
+            `  key:  ${savedTo.privateKey}\n`,
+        );
+      } else {
+        process.stdout.write(
+          `App ${appId} (ws ${workspaceId}): issued cert "${name}"\n${result.publicKey}` +
+            (result.publicKey.endsWith('\n') ? '' : '\n') +
+            'Private key not shown. Re-run with --out <dir> or --json --print-key to capture it.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const certsRevokeCommand = defineCommand({
+  meta: {
+    name: 'revoke',
+    description: 'Revoke (disable) an mTLS certificate.',
+  },
+  args: {
+    certId: { type: 'positional', description: 'Cert ID (from `app certs ls`).', required: true },
+    app: {
+      type: 'string',
+      description: 'Mini-app ID the cert belongs to.',
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const certId = typeof args.certId === 'string' ? args.certId.trim() : '';
+    if (certId.length === 0) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'missing-cert-id',
+          message: 'certId positional is required',
+        });
+      } else {
+        process.stderr.write('app certs revoke: certId is required\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const appId = parseAppId(args.app);
+    if (appId === null) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'invalid-id',
+          message: `--app must be a positive integer (got ${JSON.stringify(args.app)})`,
+        });
+      } else {
+        process.stderr.write(`app certs revoke: invalid --app ${JSON.stringify(args.app)}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+
+    try {
+      await revokeCert(workspaceId, appId, certId, session.cookies);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, certId });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}): revoked cert ${certId}\n`);
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 const certsCommand = defineCommand({
   meta: {
     name: 'certs',
@@ -1737,6 +1973,8 @@ const certsCommand = defineCommand({
   },
   subCommands: {
     ls: certsLsCommand,
+    issue: certsIssueCommand,
+    revoke: certsRevokeCommand,
   },
 });
 
