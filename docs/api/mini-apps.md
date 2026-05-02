@@ -29,7 +29,7 @@
 별도 PUT/PATCH endpoint는 존재하지 않는다 — 콘솔 번들(`bootstrap.*.js`)에 mini-app 경로의 PUT/PATCH 호출이 하나도 없고, react-router method enum 외에는 string literal로도 등장하지 않는다. 콘솔의 `/mini-app/<id>/meta/edit` UI도 form 제출 시 동일하게 이 endpoint로 `miniAppId` 포함 POST를 보낸다. update mode의 자세한 동작·제약은 [Update mode 섹션](#update-mode-2026-05-01-확정) 참조.
 
 - **Used by**: [`src/api/mini-apps.ts#createMiniApp`](../../src/api/mini-apps.ts), [`src/commands/register.ts`](../../src/commands/register.ts), [`src/commands/register-payload.ts`](../../src/commands/register-payload.ts)
-- **Capture status**: ✅ confirmed (2026-04-22 dog-food, miniAppId 29349/29356/29397/29405)
+- **Capture status**: ✅ confirmed (dog-food: 29349/29356/29397/29405 @ 2026-04-22, 31146 @ 2026-05-03 final)
 - **Auth**: 세션 쿠키
 - **Request headers**: `Content-Type: application/json`
 
@@ -112,13 +112,16 @@
 
 확인된 server-side rules (CLI는 가능한 만큼 [`src/config/app-manifest.ts`](../../src/config/app-manifest.ts) preflight에서 잡지만 일부는 서버에서만 잡힌다):
 
-| 필드 | 규칙 | 메시지 |
+| 필드 | 규칙 | 메시지 / errorCode |
 |---|---|---|
-| `titleEn` | `^[A-Za-z0-9 :]+$` 만 허용 | "앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요" |
+| `title` (titleKo) | 한글/영문/숫자/공백/`:`/`·`/`?`만, **공백 제외 ≤ 10 code points** | `errorCode: miniApp.InvalidTitle` |
+| `titleEn` | `^[A-Za-z0-9 :·?]+$`, **공백 제외 ≤ 15 code points**, AND **각 단어 title-case 강제** (uppercase first char + lowercase tail; `AITC` / `SDK` 같은 all-caps 거부, `Aitc Sdk Example` ✅) | `errorCode: miniApp.InvalidTitleEn` ("앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요" 메시지는 정규식 위반 시) |
 | `detailDescription` | code point 길이 ≤ 500 | "앱 상세설명은 최대 500자를 넘어갈 수 없어요" |
 | `description` (subtitle) | code point 길이 ≤ 20 | (서버 enforce 확인) |
 | `appName` | apps-in-toss 전체에서 unique | (중복 시 4000) |
 | `images[]` | 최소 PREVIEW/VERTICAL 3장 (검토 진입 조건) | (부족하면 draft 상태로 남음) |
+
+`title` / `titleEn` 길이·case 규칙은 sdk-example#39 등록 시 발견 (2026-05-03). errorCode는 prefix 형태 (`miniApp.InvalidTitle` / `miniApp.InvalidTitleEn`) — 다른 도메인의 숫자형 errorCode (`4000` / `4046` 등)와 다른 패턴이다.
 
 ### Drift history
 
@@ -459,19 +462,21 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 
 CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason: "delete-not-supported"`) 두는 게 정직 — 실 endpoint가 열리기 전엔 사용자가 콘솔 운영팀에 직접 요청하라는 안내를 출력해야 한다.
 
-## sdk-example dog-food 앱 상태 (2026-05-02 시점)
+## sdk-example dog-food 앱 상태 (2026-05-03 시점)
 
-본 인벤토리 캡처에 사용한 4개 앱의 현재 상태 — 외부 contributor가 같은 워크스페이스에서 추가 캡처할 때 참고. 모두 워크스페이스 `3095`(sdk-example dog-food).
+본 인벤토리 캡처에 사용한 5개 앱의 현재 상태. 모두 워크스페이스 `3095`(sdk-example dog-food). **`31146`이 최종 메인 앱**이고, 나머지 4개는 폐기 trail이다 — 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함). 상세는 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) "sdk-example dog-food 앱".
 
 | miniAppId | appName | approvalType | current | draft | firstReleaseDate | 용도 |
 |---|---|---|---|---|---|---|
-| `29349` | `ait-sdk-example` | REVIEW | 있음 | 있음 (probe-temp 키워드) | `null` | **메인** (sdk-example 재배포 대상). REVIEW 잠금 해제 대기. |
+| `31146` | `aitc-sdk-example` | REVIEW | 없음 | 있음 | `null` | **메인 (최종)**. AITC.DEV 브랜드. 등록 직후 검수 큐 진입 (2026-05-03). 추가 변경은 update mode로만. |
+| `29349` | `ait-sdk-example` | REVIEW | 있음 | 있음 (probe-temp 키워드) | `null` | 메인 (구). 폐기 trail. REVIEW 잠금 해제 대기. |
 | `29356` | `ait-sdk-example-probe-b` | REVIEW | 없음 | 있음 | `null` | 폐기. `폐기: SDK 레퍼런스 (b)` 라벨로 검수 큐 진입. |
 | `29397` | `ait-sdk-example-probe-c` | REVIEW | 없음 | 있음 (`...(probe)` title) | `null` | 폐기. REVIEW 잠금이라 라벨 미반영. |
 | `29405` | `ait-sdk-example-final` | REVIEW | 없음 | 있음 | `null` | 폐기. `폐기: SDK 레퍼런스 (final)` 라벨로 검수 큐 진입. |
 
 **중요 메모**:
 - 현재 published된(`firstReleaseDate != null`) 앱은 **0개**. 검수 통과한 적 있는 건 29349/29356인데 출시(release) 토글을 안 누른 상태.
-- 4개 모두 동시에 REVIEW 큐에 있어, 추가 update 시도는 `errorCode: 4046`. 운영팀 처리 후 재시도 (umbrella TODO `Re-rename 29349/29397 after ops review`).
+- 4개(29349/29356/29397/29405) 모두 동시에 REVIEW 큐에 있어, 추가 update 시도는 `errorCode: 4046`. 운영팀 처리 후 재시도 (umbrella TODO `Re-rename 29349/29397 after ops review`).
 - **2026-05-02 재시도**: 4개 모두 여전히 4046. `aitcc app status`가 일부 앱에 `approved-with-edits` / `under-review` 등 다양한 derived state를 보여줘서 일부는 풀린 것처럼 보이지만, `with-draft.success.approvalType === 'REVIEW'`가 권위. payload 함정 3가지(impression strip, `category.id` only, state 라벨 비신뢰)는 위 "Update mode" 섹션에 반영 완료. 운영팀 검수 큐가 여전히 미처리.
 - 위 표는 운영팀 검수 진행에 따라 빠르게 stale해진다. 정확한 상태는 항상 `/with-draft`로 직접 조회.
+- **새 앱 등록 금지**. 31146 등록으로 dog-food 사이클 종료 — REVIEW lock(4046) 걸려도 새 앱 만들지 말고 운영팀 처리 대기.
