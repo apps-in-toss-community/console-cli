@@ -208,7 +208,10 @@ Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFor
 4. 플랫폼/아키에 맞는 asset name 골라 `<exePath>.new.<timestamp>`로 다운로드.
 5. 같은 release의 `SHA256SUMS` asset을 fetch → `parseSha256Sums`로 `<hex>  <name>` 라인 파싱 → 자기 binary line의 expected hash 추출 → staging 파일을 streaming `sha256OfFile`로 해시 → 비교. asset 부재/엔트리 부재/불일치 시 staging 파일 unlink + `ExitCode.UpgradeChecksumFailed` (22). `install.sh`와 동일 게이트, opt-out 없음.
 6. `chmod 0755` 후 **atomic replace**: `fs.renameSync(new, exePath)`. POSIX `rename(2)`은 동일 파일시스템에서 atomic. Windows는 실행 중인 exe rename 불가 → `<exePath>` → `<exePath>.old`, `<new>` → `<exePath>`로 옮기고 `.old`는 다음 기동 때 정리 (정리 로직 자체는 미구현, TODO).
-7. **(계획됨, 미구현)** 새 바이너리 `--version`으로 re-exec 해서 smoke test.
+7. 새 binary로 `--version` 호출(timeout 10초). exit 0 + stdout 비공백이면 통과 → 백업 unlink 후 정상 종료. 실패 시 exit `UpgradeSmokeTestFailed` (23)으로 종료하면서 자동 롤백 시도:
+   - POSIX: replace 직전에 `<exe>.bak.<ts>`로 copy해 둔 백업을 `rename(backup, exe)`으로 되돌림.
+   - Windows: 새 `<exe>` 삭제 + `<exe>.old`를 `<exe>`로 rename.
+   - 롤백 자체가 실패하면 JSON에 `rollbackError`와 백업 경로를 담아 사용자에게 수동 복구 hint 제공.
 
 ### `install.sh`
 
