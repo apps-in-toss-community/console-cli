@@ -13,6 +13,7 @@
 | 도메인 | 파일 | 상태 |
 |---|---|---|
 | 공통 규약 | [`_conventions.md`](./_conventions.md) | — |
+| Error code 카탈로그 | [`_error-codes.md`](./_error-codes.md) | — |
 | Redaction 정책 | [`_redaction.md`](./_redaction.md) | — |
 | Auth · Session | [`auth-session.md`](./auth-session.md) | ✅ confirmed |
 | Workspaces · Members | [`workspaces.md`](./workspaces.md) | ✅ confirmed |
