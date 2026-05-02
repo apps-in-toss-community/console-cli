@@ -200,6 +200,17 @@ stateDiagram-v2
 const categoryIds = source.impression.categoryPaths.map(p => p.category.id);
 ```
 
+##### Payload 함정 (2026-05-02 재현 확인)
+
+서버는 정확한 shape에 까다롭다. 실측한 두 가지 reject 케이스:
+
+- **`miniApp.impression`은 stripped해야 한다.** `/with-draft` 응답의 `success.draft.miniApp`에는 `impression` nested object가 들어있지만(read-side convenience), update payload에 그대로 두면 envelope의 `{miniApp, impression}` 래퍼와 충돌해 `errorCode: 4000` "잘못된 요청입니다." 또는 "카테고리는 2개 이상 설정할 수 없어요." 로 거부된다.
+- **`categoryIds`는 leaf 한 단계 위(`category.id`)까지만.** `subCategory.id`(예: 56 = "뉴스")를 넣으면 `errorCode: null`, `reason: "카테고리 정보가 없음: <id>"`로 거부. 즉 트리 leaf가 아니라 mid-level만 허용. `categoryPaths[].category.id` (예: 3882 = "정보") 가 정답.
+
+##### REVIEW lock 권위 — `app status` state 값 vs `with-draft.success.approvalType`
+
+`aitcc app status <id>`의 `state: approved-with-edits` 같은 derived 라벨은 **REVIEW lock 해제 여부의 권위가 아니다**. 2026-05-02 dog-food: 4개 앱이 각각 `approved-with-edits`(29349/29356) / `under-review`(29397/29405)로 보였지만 update 호출 결과 **4개 모두 `errorCode: 4046`**. 권위는 `with-draft.success.approvalType` 한 곳뿐 — 그 값이 `REVIEW`이면 lock. CLI가 lock 추정으로 분기하지 말고 항상 시도해서 4046을 받는 패턴이 안전하다.
+
 #### Response
 
 ```json
@@ -448,7 +459,7 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 
 CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason: "delete-not-supported"`) 두는 게 정직 — 실 endpoint가 열리기 전엔 사용자가 콘솔 운영팀에 직접 요청하라는 안내를 출력해야 한다.
 
-## sdk-example dog-food 앱 상태 (2026-05-01 시점)
+## sdk-example dog-food 앱 상태 (2026-05-02 시점)
 
 본 인벤토리 캡처에 사용한 4개 앱의 현재 상태 — 외부 contributor가 같은 워크스페이스에서 추가 캡처할 때 참고. 모두 워크스페이스 `3095`(sdk-example dog-food).
 
@@ -462,4 +473,5 @@ CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason
 **중요 메모**:
 - 현재 published된(`firstReleaseDate != null`) 앱은 **0개**. 검수 통과한 적 있는 건 29349/29356인데 출시(release) 토글을 안 누른 상태.
 - 4개 모두 동시에 REVIEW 큐에 있어, 추가 update 시도는 `errorCode: 4046`. 운영팀 처리 후 재시도 (umbrella TODO `Re-rename 29349/29397 after ops review`).
+- **2026-05-02 재시도**: 4개 모두 여전히 4046. `aitcc app status`가 일부 앱에 `approved-with-edits` / `under-review` 등 다양한 derived state를 보여줘서 일부는 풀린 것처럼 보이지만, `with-draft.success.approvalType === 'REVIEW'`가 권위. payload 함정 3가지(impression strip, `category.id` only, state 라벨 비신뢰)는 위 "Update mode" 섹션에 반영 완료. 운영팀 검수 큐가 여전히 미처리.
 - 위 표는 운영팀 검수 진행에 따라 빠르게 stale해진다. 정확한 상태는 항상 `/with-draft`로 직접 조회.
