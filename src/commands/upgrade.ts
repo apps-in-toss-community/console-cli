@@ -270,9 +270,18 @@ export const upgradeCommand = defineCommand({
 
     if (smokeFailure) {
       let rollbackError: string | null = null;
+      // Windows unlink can fail before rename; in that case the failed-binary
+      // is still at exePath and the user must remove it manually before
+      // restoring `<exe>.old`. Track which step the user needs to recover.
+      let recoveryHint: string | null = null;
       try {
         if (process.platform === 'win32') {
-          await unlink(exePath);
+          try {
+            await unlink(exePath);
+          } catch (err) {
+            recoveryHint = `Failed to remove broken binary at ${exePath}; remove it manually then rename ${exePath}.old back to ${exePath}.`;
+            throw err;
+          }
           await rename(`${exePath}.old`, exePath);
         } else if (backupPath) {
           await rename(backupPath, exePath);
@@ -280,6 +289,7 @@ export const upgradeCommand = defineCommand({
       } catch (err) {
         rollbackError = (err as Error).message;
       }
+      const fallbackHint = rollbackError ? `Backup left at ${backupPath ?? `${exePath}.old`}.` : '';
       emitError(
         {
           reason: 'smoke-test-failed',
@@ -288,7 +298,7 @@ export const upgradeCommand = defineCommand({
           ...(rollbackError ? { rollbackError, backupPath } : { rolledBack: true }),
         },
         rollbackError
-          ? `New binary failed --version smoke test: ${smokeFailure}\nRollback also failed: ${rollbackError}\nBackup left at ${backupPath ?? `${exePath}.old`}.`
+          ? `New binary failed --version smoke test: ${smokeFailure}\nRollback also failed: ${rollbackError}\n${recoveryHint ?? fallbackHint}`
           : `New binary failed --version smoke test: ${smokeFailure}\nReverted to previous binary.`,
       );
       process.exit(ExitCode.UpgradeSmokeTestFailed);

@@ -21,8 +21,9 @@ export const ExitCode = {
   // missing entry, or no SHA256SUMS asset on the release).
   UpgradeChecksumFailed: 22,
   // New binary downloaded and verified, but `--version` smoke test after
-  // atomic replace failed (timeout, non-zero exit, or empty stdout). Previous
-  // binary is restored automatically.
+  // atomic replace failed (timeout, non-zero exit, or empty stdout). Rollback
+  // to the previous binary is attempted automatically; the JSON payload
+  // reports `rolledBack: true` on success or `rollbackError` on failure.
   UpgradeSmokeTestFailed: 23,
 } as const;
 
