@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.19
+
+### Patch Changes
+
+- fd3732e: test: add subprocess harness covering `aitcc workspace --json` failure paths (single-line framing, JSON shape, exit codes, stderr-has-no-JSON).
+
 ## 0.1.18
 
 ### Patch Changes
