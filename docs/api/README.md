@@ -87,3 +87,14 @@
 - `PUT /workspaces/<wid>/api-keys/<id>/disable` — 발급 후 검증 페어로 동시 캡처. ([`api-keys.md`](./api-keys.md))
 - toss-login `review` / `marketing-agreement` / `encryption-key/email` — 토스 로그인 사용 사례 필요. ([`mini-app-misc.md`](./mini-app-misc.md))
 - `smart-message` / `segments` / `templates` / `maintenance-jobs` 도메인 sub-path — `bootstrap.*.js` grep으로 path 추출 후 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
+
+## 확인된 endpoint 부재 (anti-inventory)
+
+콘솔 번들 정적 분석으로 **존재하지 않음이 확인된** endpoint들. "찾아볼 필요 없음"을 확정해 두는 항목으로, 새 명령을 짤 때 같은 길을 또 헤매지 않도록 둔다.
+
+| 부재한 endpoint | 영향 | 출처 |
+|---|---|---|
+| `POST /mini-app/<id>/review-withdraw` (또는 동치) | `approvalType: REVIEW` 잠금을 사용자가 직접 풀 방법 없음. 운영팀 검수 결과(APPROVED/REJECTED) 대기 외 우회 없음. `bundles/reviews/withdrawal`, `templates/.../review/withdraw`, `smart-message/.../review-withdraw`는 다른 도메인엔 존재하지만 mini-app 도메인엔 없음. | [`mini-apps.md`](./mini-apps.md) "Update mode" |
+| `DELETE /mini-app/<id>` (정상 동작) | OPTIONS preflight은 통과하지만 실제 DELETE는 HTTP 500. 폐기 처리는 검수 큐에 "폐기:" prefix 라벨로 update해 운영팀 처리 유도가 현재 사실상 유일. | [`mini-apps.md`](./mini-apps.md) "Drift / 폐기 시도" |
+| `GET /mini-app/<id>/runtime-logs` (또는 동치) | 미니앱 서버 런타임 로그(stdout/stderr, exception, request log) 노출 endpoint 자체가 없음. 콘솔이 surface하는 건 `app events` (커스텀 이벤트 카탈로그) + `app metrics` (전환 지표)뿐. `aitcc app logs`는 backend가 생길 때까지 deferred. | [`mini-app-misc.md`](./mini-app-misc.md) "Logs", `console-cli` `CLAUDE.md` "App runtime logs" |
+| Mini-app 자체에 대한 `PUT` / `PATCH` | 콘솔 번들 어디에도 mini-app path의 PUT/PATCH 호출이 없음. `/mini-app/<id>/meta/edit` UI도 form 제출 시 `POST /mini-app/review`에 `miniAppId` 포함 → dual-mode (위 update mode 참조). | [`mini-apps.md`](./mini-apps.md) "Update mode" 도입부 |

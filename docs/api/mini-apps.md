@@ -138,6 +138,24 @@ create payload에 `miniApp.miniAppId`를 추가하면 update mode가 된다. 같
 
 `approvalType`은 envelope의 `success.approvalType` (앱 객체 내부 X). `/with-draft` 응답의 `success`에서 직접 읽는다.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> REVIEW: create<br/>(POST /mini-app/review,<br/>no miniAppId)
+    REVIEW --> APPROVED: ops review<br/>(통과)
+    REVIEW --> REJECTED: ops review<br/>(반려<br/>+ rejectedMessage)
+    APPROVED --> REVIEW: update<br/>(~3s 비동기,<br/>current 유지)
+    REJECTED --> REVIEW: update<br/>(즉시,<br/>draft 덮어씀)
+    REVIEW --> REVIEW: update<br/>❌ errorCode 4046<br/>(잠금)
+
+    note right of REVIEW
+        사용자 측 큐 회수 불가
+        (review-withdraw endpoint 부재)
+    end note
+```
+
+> 자가 전이 `REVIEW → REVIEW`는 실제 상태 변경이 아니라 update 호출이 차단됨을 표현 (HTTP 200 + envelope FAIL).
+
 | 시작 상태 | update 결과 | 동작 |
 |---|---|---|
 | `APPROVED` (검수 통과, 출시 전/후 무관) | `APPROVED` → `REVIEW` (~3초 지연, 비동기) | `current` (live published, 출시된 경우 사용자 노출) **유지**. 새 변경은 `draft`로 들어가고 `approvalType`이 REVIEW로 flip. live 사용자 영향 없음. 운영팀이 새 draft를 검수 → 통과 시 `current`가 새 내용으로 갱신. |
