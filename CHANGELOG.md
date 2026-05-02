@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.17
+
+### Patch Changes
+
+- 0151143: Verify SHA-256 of downloaded binary in `aitcc upgrade` before atomic replace
+
 ## 0.1.16
 
 ### Patch Changes
