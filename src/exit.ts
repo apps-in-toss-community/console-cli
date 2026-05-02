@@ -20,6 +20,10 @@ export const ExitCode = {
   // SHA-256 verification of a downloaded upgrade asset failed (bad sum,
   // missing entry, or no SHA256SUMS asset on the release).
   UpgradeChecksumFailed: 22,
+  // New binary downloaded and verified, but `--version` smoke test after
+  // atomic replace failed (timeout, non-zero exit, or empty stdout). Previous
+  // binary is restored automatically.
+  UpgradeSmokeTestFailed: 23,
 } as const;
 
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];

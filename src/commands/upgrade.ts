@@ -1,5 +1,7 @@
-import { chmod, rename, unlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { chmod, copyFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
+import { promisify } from 'node:util';
 import { defineCommand } from 'citty';
 import { ExitCode } from '../exit.js';
 import { fetchLatestRelease, findSha256SumsAsset, versionFromTag } from '../github.js';
@@ -7,6 +9,8 @@ import { detectPlatform } from '../platform.js';
 import { compareSemver } from '../semver.js';
 import { parseSha256Sums, sha256OfFile } from '../sha256.js';
 import { VERSION } from '../version.js';
+
+const execFileP = promisify(execFile);
 
 // Distinguishes a Bun-compiled standalone (where `process.execPath` points at
 // the binary itself) from a Node-hosted install (where it points at `node`).
@@ -210,6 +214,24 @@ export const upgradeCommand = defineCommand({
       process.stdout.write('Checksum OK.\n');
     }
 
+    // POSIX backup: copy the current binary so a failed smoke test can be
+    // rolled back via `rename(backup, exe)`. We can't hard-link because the
+    // staging dir might be on a different fs or have stricter perms. Windows
+    // gets backup-for-free via the `<exe>.old` move below.
+    const backupPath = process.platform === 'win32' ? null : `${exePath}.bak.${Date.now()}`;
+    if (backupPath) {
+      try {
+        await copyFile(exePath, backupPath);
+      } catch (err) {
+        await unlink(stagingPath).catch(() => {});
+        emitError(
+          { reason: 'backup-failed', message: (err as Error).message, exePath, backupPath },
+          `Failed to create rollback backup at ${backupPath}: ${(err as Error).message}`,
+        );
+        process.exit(ExitCode.Generic);
+      }
+    }
+
     // Atomic replace. POSIX `rename(2)` on the same filesystem is atomic.
     // On Windows a running exe can't be overwritten directly; the staging
     // path is in the same dir, so rename-over works on most shells, and we
@@ -222,12 +244,57 @@ export const upgradeCommand = defineCommand({
         await rename(stagingPath, exePath);
       }
     } catch (err) {
+      if (backupPath) await unlink(backupPath).catch(() => {});
       emitError(
         { reason: 'replace-failed', message: (err as Error).message, exePath, stagingPath },
         `Failed to replace binary at ${exePath}: ${(err as Error).message}`,
       );
       process.exit(ExitCode.Generic);
     }
+
+    // Smoke test: invoke the just-installed binary with `--version`. Catches
+    // "valid bytes but won't run" cases (wrong platform asset, broken
+    // entitlement, OS gating) that SHA-256 verification can't see. Strict
+    // version-string equality is intentionally NOT checked — a release-
+    // pipeline embedding mismatch shouldn't trigger an auto-rollback.
+    let smokeFailure: string | null = null;
+    try {
+      const { stdout } = await execFileP(exePath, ['--version'], {
+        timeout: 10_000,
+        windowsHide: true,
+      });
+      if (!stdout.trim()) smokeFailure = 'empty stdout from --version';
+    } catch (err) {
+      smokeFailure = (err as Error).message;
+    }
+
+    if (smokeFailure) {
+      let rollbackError: string | null = null;
+      try {
+        if (process.platform === 'win32') {
+          await unlink(exePath);
+          await rename(`${exePath}.old`, exePath);
+        } else if (backupPath) {
+          await rename(backupPath, exePath);
+        }
+      } catch (err) {
+        rollbackError = (err as Error).message;
+      }
+      emitError(
+        {
+          reason: 'smoke-test-failed',
+          message: smokeFailure,
+          exePath,
+          ...(rollbackError ? { rollbackError, backupPath } : { rolledBack: true }),
+        },
+        rollbackError
+          ? `New binary failed --version smoke test: ${smokeFailure}\nRollback also failed: ${rollbackError}\nBackup left at ${backupPath ?? `${exePath}.old`}.`
+          : `New binary failed --version smoke test: ${smokeFailure}\nReverted to previous binary.`,
+      );
+      process.exit(ExitCode.UpgradeSmokeTestFailed);
+    }
+
+    if (backupPath) await unlink(backupPath).catch(() => {});
 
     emit(
       {
