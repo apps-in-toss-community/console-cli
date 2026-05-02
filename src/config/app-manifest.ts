@@ -50,7 +50,7 @@ export interface AppManifest {
   readonly horizontalScreenshots: readonly string[];
 }
 
-const DEFAULT_NAMES = ['aitcc.app.yaml', 'aitcc.app.json'] as const;
+const DEFAULT_NAMES = ['aitcc.yaml', 'aitcc.json'] as const;
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -64,7 +64,7 @@ async function fileExists(path: string): Promise<boolean> {
 /**
  * Resolve the manifest file path. When `explicit` is provided, we use it
  * verbatim (resolved against `cwd`) and require it to exist. Otherwise we
- * auto-detect `aitcc.app.yaml` then `aitcc.app.json` under `cwd`.
+ * auto-detect `aitcc.yaml` then `aitcc.json` under `cwd`.
  */
 export async function resolveManifestPath(
   explicit: string | undefined,
