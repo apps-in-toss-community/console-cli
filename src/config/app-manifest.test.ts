@@ -36,24 +36,37 @@ describe('resolveManifestPath', () => {
     );
   });
 
-  it('auto-detects ./aitcc.app.yaml over ./aitcc.app.json', async () => {
+  it('auto-detects ./aitcc.yaml over ./aitcc.json', async () => {
     const dir = makeTempDir();
-    writeManifest(dir, 'aitcc.app.yaml', 'titleKo: yaml\n');
-    writeManifest(dir, 'aitcc.app.json', '{"titleKo":"json"}');
+    writeManifest(dir, 'aitcc.yaml', 'titleKo: yaml\n');
+    writeManifest(dir, 'aitcc.json', '{"titleKo":"json"}');
     const resolved = await resolveManifestPath(undefined, dir);
-    expect(resolved).toBe(resolve(join(dir, 'aitcc.app.yaml')));
+    expect(resolved).toBe(resolve(join(dir, 'aitcc.yaml')));
   });
 
-  it('falls back to aitcc.app.json when only json exists', async () => {
+  it('falls back to aitcc.json when only json exists', async () => {
     const dir = makeTempDir();
-    writeManifest(dir, 'aitcc.app.json', '{}');
+    writeManifest(dir, 'aitcc.json', '{}');
     const resolved = await resolveManifestPath(undefined, dir);
-    expect(resolved).toBe(resolve(join(dir, 'aitcc.app.json')));
+    expect(resolved).toBe(resolve(join(dir, 'aitcc.json')));
   });
 
-  it('throws ManifestError when no manifest is found', async () => {
+  it('throws ManifestError when no manifest is found and surfaces the new default names', async () => {
     const dir = makeTempDir();
-    await expect(resolveManifestPath(undefined, dir)).rejects.toThrow(/manifest/i);
+    const err = await resolveManifestPath(undefined, dir).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    const msg = (err as ManifestError).message;
+    expect(msg).toContain('aitcc.yaml');
+    expect(msg).toContain('aitcc.json');
+    expect(msg).not.toContain('aitcc.app.yaml');
+    expect(msg).not.toContain('aitcc.app.json');
+  });
+
+  it('does not auto-detect legacy aitcc.app.yaml', async () => {
+    const dir = makeTempDir();
+    writeManifest(dir, 'aitcc.app.yaml', 'titleKo: x\n');
+    const err = await resolveManifestPath(undefined, dir).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
   });
 });
 
@@ -82,7 +95,7 @@ horizontalScreenshots:
 
   it('parses a full YAML manifest and resolves image paths relative to the config file', async () => {
     const dir = makeTempDir();
-    const path = writeManifest(dir, 'aitcc.app.yaml', fullManifestYaml);
+    const path = writeManifest(dir, 'aitcc.yaml', fullManifestYaml);
     const manifest = await loadAppManifest(path);
 
     expect(manifest.titleKo).toBe('SDK 레퍼런스');
@@ -109,7 +122,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.json',
+      'aitcc.json',
       JSON.stringify({
         titleKo: 'K',
         titleEn: 'Eng',
@@ -135,7 +148,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       // titleKo missing
       `titleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1.png, v2.png, v3.png]\n`,
     );
@@ -149,7 +162,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: "not-an-array"\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -162,7 +175,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: ''\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -173,7 +186,7 @@ horizontalScreenshots:
 
   it('throws ManifestError for malformed YAML', async () => {
     const dir = makeTempDir();
-    const path = writeManifest(dir, 'aitcc.app.yaml', `::: not valid yaml :::\n:`);
+    const path = writeManifest(dir, 'aitcc.yaml', `::: not valid yaml :::\n:`);
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
     expect((err as ManifestError).kind).toBe('invalid-config');
@@ -183,7 +196,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\nkeywords: [a,b,c,d,e,f,g,h,i,j,k]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -196,7 +209,7 @@ horizontalScreenshots:
     const twentyOne = 'a'.repeat(21);
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: ${twentyOne}\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -208,7 +221,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -220,7 +233,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: not-an-email\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -233,7 +246,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nhomePageUri: javascript:alert(1)\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -249,7 +262,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: "Has-Hyphen"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -262,7 +275,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: "SDK Reference: v2"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const manifest = await loadAppManifest(path);
@@ -275,7 +288,7 @@ horizontalScreenshots:
     const tooLong = 'a'.repeat(501);
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: ${tooLong}\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
@@ -294,7 +307,7 @@ horizontalScreenshots:
     const borderline = '💡'.repeat(250);
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: "${borderline}"\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const manifest = await loadAppManifest(path);
@@ -305,7 +318,7 @@ horizontalScreenshots:
     const dir = makeTempDir();
     const path = writeManifest(
       dir,
-      'aitcc.app.yaml',
+      'aitcc.yaml',
       `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: []\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);

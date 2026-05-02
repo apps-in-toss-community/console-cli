@@ -2533,8 +2533,7 @@ const registerCommand = defineCommand({
     },
     config: {
       type: 'string',
-      description:
-        'Path to the app manifest. Defaults to `./aitcc.app.yaml`, then `./aitcc.app.json`.',
+      description: 'Path to the app manifest. Defaults to `./aitcc.yaml`, then `./aitcc.json`.',
     },
     'dry-run': {
       type: 'boolean',

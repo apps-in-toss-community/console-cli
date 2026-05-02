@@ -35,11 +35,7 @@ async function captureExit(fn: () => Promise<unknown>): Promise<Exited | null> {
   return exited;
 }
 
-function writeManifest(
-  dir: string,
-  body: Record<string, unknown>,
-  name = 'aitcc.app.yaml',
-): string {
+function writeManifest(dir: string, body: Record<string, unknown>, name = 'aitcc.yaml'): string {
   const path = join(dir, name);
   // JSON is a valid YAML subset; avoiding yaml-stringify keeps the test
   // free from a second YAML-formatting dependency.
@@ -134,11 +130,11 @@ describe('runRegister', () => {
     await writeSession(currentWorkspaceId === undefined ? base : { ...base, currentWorkspaceId });
   }
 
-  // Pin `deps.cwd` to the test's tmpdir in every call so the `aitcc.app.yaml`
+  // Pin `deps.cwd` to the test's tmpdir in every call so the `aitcc.yaml`
   // auto-detect path resolves inside the sandbox, not against whatever the
   // ambient `process.cwd()` happens to contain. Tests with explicit
   // `args.config` don't strictly need this, but passing it uniformly keeps
-  // the suite hermetic if someone later drops a repo-root `aitcc.app.yaml`.
+  // the suite hermetic if someone later drops a repo-root `aitcc.yaml`.
   function depsWith(
     overrides: Parameters<typeof runRegister>[1] = {},
   ): Parameters<typeof runRegister>[1] {
