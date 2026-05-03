@@ -32,7 +32,10 @@ import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.j
 // --json contract (consumed by agent-plugin):
 //
 //   success:
-//     { ok: true, workspaceId, appId, reviewState }                        exit 0
+//     { ok: true, workspaceId, appId, reviewState, consoleUrl }            exit 0
+//     consoleUrl:
+//       https://apps-in-toss.toss.im/console/workspace/<wid>/mini-app/<id>
+//       (null when the server response omitted miniAppId)
 //
 //   failures:
 //     { ok: false, reason: 'no-workspace-selected' }                        exit 2
@@ -361,19 +364,29 @@ function emitDryRun(
   }
 }
 
+function consoleUrlFor(workspaceId: number, appId: string | number): string {
+  return `https://apps-in-toss.toss.im/console/workspace/${workspaceId}/mini-app/${appId}`;
+}
+
 function emitSuccess(json: boolean, workspaceId: number, result: CreateMiniAppResult): void {
+  const consoleUrl =
+    result.miniAppId !== undefined ? consoleUrlFor(workspaceId, result.miniAppId) : null;
   if (json) {
     emitJson({
       ok: true,
       workspaceId,
       appId: result.miniAppId ?? null,
       reviewState: result.reviewState ?? null,
+      consoleUrl,
     });
   } else {
     process.stdout.write(
       `Registered mini-app ${result.miniAppId ?? '(id unknown)'} in workspace ${workspaceId}` +
         ` (reviewState=${result.reviewState ?? 'unknown'}).\n`,
     );
+    if (consoleUrl !== null) {
+      process.stdout.write(`🔗 console: ${consoleUrl}\n`);
+    }
   }
 }
 
