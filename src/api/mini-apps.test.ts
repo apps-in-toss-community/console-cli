@@ -16,6 +16,8 @@ import {
   fetchShareRewards,
   fetchSmartMessageCampaigns,
   fetchUserReports,
+  issueCert,
+  revokeCert,
 } from './mini-apps.js';
 
 const cookies: readonly CdpCookie[] = [
@@ -532,6 +534,97 @@ describe('fetchCerts', () => {
         headers: { 'content-type': 'application/json' },
       });
     await expect(fetchCerts(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(/not an array/);
+  });
+});
+
+describe('issueCert', () => {
+  it('POSTs {name} to the singular cert/issue path and returns the PEM pair', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody = '';
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = init?.method ?? 'GET';
+      calledBody = typeof init?.body === 'string' ? init.body : '';
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            privateKey: '-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n',
+            publicKey: '-----BEGIN CERTIFICATE-----\nBBBB\n-----END CERTIFICATE-----\n',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await issueCert(3095, 29349, 'sandbox-2026-05', cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29349/cert/issue',
+    );
+    expect(calledMethod).toBe('POST');
+    expect(JSON.parse(calledBody)).toEqual({ name: 'sandbox-2026-05' });
+    expect(got.privateKey).toMatch(/BEGIN PRIVATE KEY/);
+    expect(got.publicKey).toMatch(/BEGIN CERTIFICATE/);
+  });
+
+  it('throws when privateKey or publicKey is missing', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { publicKey: 'only-cert' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(issueCert(3095, 29349, 'x', cookies, { fetchImpl })).rejects.toThrow(
+      /missing privateKey\/publicKey/,
+    );
+  });
+
+  it('throws when the response is not an object', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: 'nope' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(issueCert(3095, 29349, 'x', cookies, { fetchImpl })).rejects.toThrow(
+      /not an object/,
+    );
+  });
+});
+
+describe('revokeCert', () => {
+  it('POSTs an empty body to the plural certs/<id>/disable path', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody = '';
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = init?.method ?? 'GET';
+      calledBody = typeof init?.body === 'string' ? init.body : '';
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await revokeCert(3095, 29349, 'cert-abc', cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29349/certs/cert-abc/disable',
+    );
+    expect(calledMethod).toBe('POST');
+    expect(calledBody).toBe('{}');
+  });
+
+  it('percent-encodes cert IDs that contain URL-unsafe characters', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await revokeCert(3095, 29349, 'a/b c', cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/29349/certs/a%2Fb%20c/disable',
+    );
   });
 });
 

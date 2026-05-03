@@ -9,6 +9,7 @@
 - `Cookie` 요청 헤더, `Set-Cookie` 응답 헤더
 - `Authorization` 헤더 (현재 콘솔에는 없지만 추가될 수 있음)
 - 세션 ID, CSRF token, 트래킹 ID(`x-toss-trace-id`, `sentry-trace`, `baggage`)
+- **PEM material** — `mTLS cert issue` (`POST .../cert/issue`) 응답의 `privateKey` / `publicKey` 본문은 캡처 인벤토리에 절대 인라인하지 않는다. 본문은 `"-----BEGIN PRIVATE KEY-----\n...PEM...\n-----END PRIVATE KEY-----\n"` 같은 형태로만 표기. 자세한 호출 contract는 [`mini-app-misc.md`](./mini-app-misc.md) "mTLS cert issue / disable / list" 참고. CLI도 같은 정책으로 stdout default leak 금지(`aitcc app certs issue --print-key` opt-in 또는 `--out`만 허용).
 
 ## 치환 규칙
 
