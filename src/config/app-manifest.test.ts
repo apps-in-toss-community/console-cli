@@ -87,7 +87,7 @@ describe('resolveManifestPath', () => {
 describe('loadAppManifest', () => {
   const fullManifestYaml = `
 titleKo: SDK 레퍼런스
-titleEn: SDK Reference
+titleEn: Sdk Reference
 appName: ait-sdk-example
 homePageUri: https://example.com/
 csEmail: support@example.com
@@ -113,7 +113,7 @@ horizontalScreenshots:
     const manifest = await loadAppManifest(path);
 
     expect(manifest.titleKo).toBe('SDK 레퍼런스');
-    expect(manifest.titleEn).toBe('SDK Reference');
+    expect(manifest.titleEn).toBe('Sdk Reference');
     expect(manifest.appName).toBe('ait-sdk-example');
     expect(manifest.homePageUri).toBe('https://example.com/');
     expect(manifest.csEmail).toBe('support@example.com');
@@ -164,7 +164,7 @@ horizontalScreenshots:
       dir,
       'aitcc.yaml',
       // titleKo missing
-      `titleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1.png, v2.png, v3.png]\n`,
+      `titleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1.png, v2.png, v3.png]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -177,7 +177,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: "not-an-array"\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: "not-an-array"\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -190,7 +190,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: ''\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: ''\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -211,7 +211,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\nkeywords: [a,b,c,d,e,f,g,h,i,j,k]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\nkeywords: [a,b,c,d,e,f,g,h,i,j,k]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -224,7 +224,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: ${twentyOne}\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: ${twentyOne}\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -236,7 +236,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -248,7 +248,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: not-an-email\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: not-an-email\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -261,7 +261,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nhomePageUri: javascript:alert(1)\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nhomePageUri: javascript:alert(1)\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -290,10 +290,10 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: "SDK Reference: v2"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: "Sdk : V2"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const manifest = await loadAppManifest(path);
-    expect(manifest.titleEn).toBe('SDK Reference: v2');
+    expect(manifest.titleEn).toBe('Sdk : V2');
   });
 
   it('rejects description longer than 500 characters (dog-food #23 server rule)', async () => {
@@ -303,7 +303,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: ${tooLong}\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: ${tooLong}\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
@@ -322,7 +322,7 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: "${borderline}"\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: "${borderline}"\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const manifest = await loadAppManifest(path);
     expect([...manifest.description].length).toBe(250);
@@ -333,10 +333,126 @@ horizontalScreenshots:
     const path = writeManifest(
       dir,
       'aitcc.yaml',
-      `titleKo: k\ntitleEn: e\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: []\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: []\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
     );
     const err = await loadAppManifest(path).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ManifestError);
     expect((err as ManifestError).field).toBe('categoryIds');
+  });
+
+  // titleKo / titleEn server-side rules surfaced via prefix-form
+  // errorCodes (`miniApp.InvalidTitle{,En}`). Source: sdk-example#39
+  // dog-food (2026-05-03). Preflighting locally saves a register POST
+  // round-trip per typo.
+
+  it('accepts titleKo with mixed Korean/English/digits at the boundary', async () => {
+    // "AITC SDK 예제" — 9 code points excluding spaces (≤ 10 OK).
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: "AITC SDK 예제"\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.titleKo).toBe('AITC SDK 예제');
+  });
+
+  it('rejects titleKo longer than 10 code points excluding spaces', async () => {
+    // 11 Hangul characters, no spaces.
+    const dir = makeTempDir();
+    const eleven = '가'.repeat(11);
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: "${eleven}"\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleKo');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+    expect((err as ManifestError).message).toContain('miniApp.InvalidTitle');
+  });
+
+  it('rejects titleKo containing disallowed characters (e.g. exclamation mark)', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: "앱!"\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleKo');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+    expect((err as ManifestError).message).toContain('miniApp.InvalidTitle');
+  });
+
+  it('accepts titleEn with all words in title-case at the length boundary', async () => {
+    // "Aitc Sdk Example" — 14 code points excluding spaces (≤ 15 OK),
+    // each word title-case.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "Aitc Sdk Example"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.titleEn).toBe('Aitc Sdk Example');
+  });
+
+  it('accepts titleEn exactly at the 15 code-point boundary excluding spaces', async () => {
+    // 15 letters, title-case, no spaces.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "Aaaaaaaaaaaaaaa"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.titleEn).toBe('Aaaaaaaaaaaaaaa');
+  });
+
+  it('rejects titleEn longer than 15 code points excluding spaces', async () => {
+    // 16 letters, no spaces.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "Aaaaaaaaaaaaaaaa"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleEn');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+    expect((err as ManifestError).message).toContain('miniApp.InvalidTitleEn');
+  });
+
+  it('rejects titleEn with all-caps words (server enforces title-case per word)', async () => {
+    // "AITC SDK Example" — `AITC` and `SDK` are all-caps, server rejects.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "AITC SDK Example"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleEn');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+    expect((err as ManifestError).message).toContain('miniApp.InvalidTitleEn');
+  });
+
+  it('rejects titleEn containing disallowed characters (e.g. exclamation mark)', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "App!"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('titleEn');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+    expect((err as ManifestError).message).toContain('miniApp.InvalidTitleEn');
   });
 });
