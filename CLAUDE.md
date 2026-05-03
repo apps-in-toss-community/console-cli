@@ -234,7 +234,7 @@ Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple 
 
 ### TODO
 
-조직 전체 TODO는 umbrella [`TODO.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/TODO.md)가 single source of truth, 이 repo의 `TODO.md`는 stub. 새 항목은 어느 repo의 일이든 항상 umbrella에.
+조직 전체 TODO는 umbrella [`TODO.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/TODO.md)가 single source of truth, 이 repo의 `TODO.md`는 stub. 새 항목은 어느 repo의 일이든 항상 umbrella에. PR 머지 시 작성자가 관련 항목 close + 새 follow-up 추가 — 상세는 umbrella [`CLAUDE.md` "TODO 관리"](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md#todo-관리--umbrella가-single-source-of-truth).
 
 ### 왜 top-level `aitcc status`가 없는가
 
