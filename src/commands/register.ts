@@ -364,10 +364,6 @@ function emitDryRun(
   }
 }
 
-// Console deeplink for the just-registered mini-app — surfaced both in
-// the --json payload (`consoleUrl`) and as a trailing `🔗 console:` line
-// in human mode so users can jump straight to the review page without
-// hunting through the workspace tree.
 function consoleUrlFor(workspaceId: number, appId: string | number): string {
   return `https://apps-in-toss.toss.im/console/workspace/${workspaceId}/mini-app/${appId}`;
 }

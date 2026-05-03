@@ -468,7 +468,7 @@ describe('runRegister', () => {
     const out = stdout.join('');
     expect(out).toContain('Registered mini-app 123');
     expect(out).toContain(
-      '🔗 console: https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123\n',
+      '🔗 console: https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123',
     );
     expect(stderr.join('')).toBe('');
   });
