@@ -464,19 +464,26 @@ CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason
 
 ## sdk-example dog-food 앱 상태 (2026-05-03 시점)
 
-본 인벤토리 캡처에 사용한 5개 앱의 현재 상태. 모두 워크스페이스 `3095`(sdk-example dog-food). **`31146`이 최종 메인 앱**이고, 나머지 4개는 폐기 trail이다 — 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함). 상세는 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) "sdk-example dog-food 앱".
+본 인벤토리 캡처에 사용한 5개 앱 중 **추적 대상은 `31146` 한 개뿐**이다. 나머지 4개는 운영팀 처리 trail로 남기고 우리 쪽 SLA tracking에서 제외 — 운영팀 처리 결과와 무관하게 다시 건드리지 않는다. 모두 워크스페이스 `3095`(sdk-example dog-food). 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함). 상세는 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) "sdk-example dog-food 앱".
+
+### 추적 대상
 
 | miniAppId | appName | approvalType | current | draft | firstReleaseDate | 용도 |
 |---|---|---|---|---|---|---|
-| `31146` | `aitc-sdk-example` | REVIEW | 없음 | 있음 | `null` | **메인 (최종)**. AITC.DEV 브랜드. 등록 직후 검수 큐 진입 (2026-05-03). 추가 변경은 update mode로만. |
-| `29349` | `ait-sdk-example` | REVIEW | 있음 | 있음 (probe-temp 키워드) | `null` | 메인 (구). 폐기 trail. REVIEW 잠금 해제 대기. |
-| `29356` | `ait-sdk-example-probe-b` | REVIEW | 없음 | 있음 | `null` | 폐기. `폐기: SDK 레퍼런스 (b)` 라벨로 검수 큐 진입. |
-| `29397` | `ait-sdk-example-probe-c` | REVIEW | 없음 | 있음 (`...(probe)` title) | `null` | 폐기. REVIEW 잠금이라 라벨 미반영. |
-| `29405` | `ait-sdk-example-final` | REVIEW | 없음 | 있음 | `null` | 폐기. `폐기: SDK 레퍼런스 (final)` 라벨로 검수 큐 진입. |
+| `31146` | `aitc-sdk-example` | REVIEW | 없음 | 있음 | `null` | **메인 (최종)**. AITC.DEV 브랜드. 등록 직후 검수 큐 진입 (2026-05-03). 추가 변경은 update mode로만. REVIEW lock 해제만 추적. |
+
+### 운영팀 처리 trail (touch 금지, tracking 불필요)
+
+| miniAppId | appName | 메모 |
+|---|---|---|
+| `29349` | `ait-sdk-example` | 메인 (구). probe-temp 키워드 draft. |
+| `29356` | `ait-sdk-example-probe-b` | `폐기: SDK 레퍼런스 (b)` 라벨로 검수 큐 진입. |
+| `29397` | `ait-sdk-example-probe-c` | REVIEW 잠금이라 라벨 미반영. |
+| `29405` | `ait-sdk-example-final` | `폐기: SDK 레퍼런스 (final)` 라벨로 검수 큐 진입. |
+
+4개 모두 한 번 REJECTED → 다음 state 전환까지 도달했다 (`with-draft.rejectedMessage`는 `approvalType === REJECTED`일 때만 채워지므로 현재는 모두 `null`). 2026-05-02 채널톡으로 정리 요청 발송 — 운영팀 처리 대기 중이며, 우리 쪽 후속 액션 없음.
 
 **중요 메모**:
 - 현재 published된(`firstReleaseDate != null`) 앱은 **0개**. 검수 통과한 적 있는 건 29349/29356인데 출시(release) 토글을 안 누른 상태.
-- 4개(29349/29356/29397/29405) 모두 동시에 REVIEW 큐에 있어, 추가 update 시도는 `errorCode: 4046`. 운영팀 처리 후 재시도 (umbrella TODO `Re-rename 29349/29397 after ops review`).
-- **2026-05-02 재시도**: 4개 모두 여전히 4046. `aitcc app status`가 일부 앱에 `approved-with-edits` / `under-review` 등 다양한 derived state를 보여줘서 일부는 풀린 것처럼 보이지만, `with-draft.success.approvalType === 'REVIEW'`가 권위. payload 함정 3가지(impression strip, `category.id` only, state 라벨 비신뢰)는 위 "Update mode" 섹션에 반영 완료. 운영팀 검수 큐가 여전히 미처리.
-- 위 표는 운영팀 검수 진행에 따라 빠르게 stale해진다. 정확한 상태는 항상 `/with-draft`로 직접 조회.
+- `aitcc app status`가 보여주는 derived state(`approved-with-edits` / `under-review` 등)는 REVIEW lock 해제 여부의 권위가 아니다. `with-draft.success.approvalType === 'REVIEW'`가 권위. 31146 추적 시 이 필드만 본다.
 - **새 앱 등록 금지**. 31146 등록으로 dog-food 사이클 종료 — REVIEW lock(4046) 걸려도 새 앱 만들지 말고 운영팀 처리 대기.
