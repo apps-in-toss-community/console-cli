@@ -414,6 +414,9 @@ describe('runRegister', () => {
     expect(out).toContain('"workspaceId":3095');
     expect(out).toContain('"appId":123');
     expect(out).toContain('"reviewState":"PENDING"');
+    expect(out).toContain(
+      '"consoleUrl":"https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123"',
+    );
 
     // Upload ordering: logo (600²) → thumbnail (1932×828) → 3× vertical (636×1048).
     expect(uploads).toEqual([
@@ -462,7 +465,11 @@ describe('runRegister', () => {
       ),
     );
     expect(exit?.code).toBe(0);
-    expect(stdout.join('')).toContain('Registered mini-app 123');
+    const out = stdout.join('');
+    expect(out).toContain('Registered mini-app 123');
+    expect(out).toContain(
+      '🔗 console: https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123\n',
+    );
     expect(stderr.join('')).toBe('');
   });
 
