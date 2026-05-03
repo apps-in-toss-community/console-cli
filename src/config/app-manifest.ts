@@ -263,14 +263,14 @@ function codePointsExcludingSpaces(v: string): number {
 
 function isTitleCaseWord(word: string): boolean {
   // Only enforced on words that contain ASCII letters; pure-digit or
-  // punctuation-only tokens (e.g. `:`, `v2`) pass through. The server's
-  // exact tokenization is not documented — using "first letter uppercase,
-  // remaining letters lowercase" mirrors the rejections we observed for
-  // `AITC` and `SDK`.
-  const letters = [...word].filter((ch) => /[A-Za-z]/.test(ch));
-  if (letters.length === 0) return true;
-  const firstLetterIdx = [...word].findIndex((ch) => /[A-Za-z]/.test(ch));
+  // punctuation-only tokens (e.g. `:`, `V2`, `123`) pass through. The
+  // server's exact tokenization is not documented — using "first letter
+  // uppercase, remaining letters lowercase" mirrors the rejections we
+  // observed for `AITC` and `SDK`. A token like `v2` is rejected because
+  // the leading letter must be uppercase.
   const chars = [...word];
+  const firstLetterIdx = chars.findIndex((ch) => /[A-Za-z]/.test(ch));
+  if (firstLetterIdx === -1) return true;
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i];
     if (ch === undefined || !/[A-Za-z]/.test(ch)) continue;

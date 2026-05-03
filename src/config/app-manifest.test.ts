@@ -400,6 +400,18 @@ horizontalScreenshots:
     expect(manifest.titleEn).toBe('Aitc Sdk Example');
   });
 
+  it('accepts titleEn exactly at the 15 code-point boundary excluding spaces', async () => {
+    // 15 letters, title-case, no spaces.
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: "Aaaaaaaaaaaaaaa"\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.titleEn).toBe('Aaaaaaaaaaaaaaa');
+  });
+
   it('rejects titleEn longer than 15 code points excluding spaces', async () => {
     // 16 letters, no spaces.
     const dir = makeTempDir();
