@@ -241,9 +241,45 @@ function isValidEmail(v: string): boolean {
   return EMAIL_REGEX.test(v.toLowerCase());
 }
 
-// Dog-food #23 (2026-04-22) HTTP 400 errorCode=4000:
-// "앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요".
-const TITLE_EN_REGEX = /^[A-Za-z0-9 :]+$/;
+// titleKo/titleEn server-side rules (sdk-example#39, 2026-05-03 dog-food).
+// Server returns prefix-form errorCodes `miniApp.InvalidTitle` /
+// `miniApp.InvalidTitleEn` (distinct from the legacy numeric catalog like
+// `4046`). We preflight here so the user does not eat a register round-trip
+// just to discover a typo.
+//
+// titleKo: Korean / English / digits / space / `:·?` only; ≤ 10 code points
+// excluding spaces.
+// titleEn: `^[A-Za-z0-9 :·?]+$`; ≤ 15 code points excluding spaces; AND
+// each space-separated word must be title-case (first char uppercase, rest
+// lowercase). All-caps tokens like `AITC`/`SDK` are rejected by the server.
+const TITLE_KO_REGEX = /^[가-힣A-Za-z0-9 :·?]+$/;
+const TITLE_EN_REGEX = /^[A-Za-z0-9 :·?]+$/;
+const TITLE_KO_MAX_CODEPOINTS_NO_SPACE = 10;
+const TITLE_EN_MAX_CODEPOINTS_NO_SPACE = 15;
+
+function codePointsExcludingSpaces(v: string): number {
+  return [...v].filter((ch) => ch !== ' ').length;
+}
+
+function isTitleCaseWord(word: string): boolean {
+  // Only enforced on words that contain ASCII letters; pure-digit or
+  // punctuation-only tokens (e.g. `:`, `v2`) pass through. The server's
+  // exact tokenization is not documented — using "first letter uppercase,
+  // remaining letters lowercase" mirrors the rejections we observed for
+  // `AITC` and `SDK`.
+  const letters = [...word].filter((ch) => /[A-Za-z]/.test(ch));
+  if (letters.length === 0) return true;
+  const firstLetterIdx = [...word].findIndex((ch) => /[A-Za-z]/.test(ch));
+  const chars = [...word];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (ch === undefined || !/[A-Za-z]/.test(ch)) continue;
+    const expectUpper = i === firstLetterIdx;
+    if (expectUpper && ch !== ch.toUpperCase()) return false;
+    if (!expectUpper && ch !== ch.toLowerCase()) return false;
+  }
+  return true;
+}
 
 // Dog-food #23 (2026-04-22) HTTP 400 errorCode=4000:
 // "앱 상세설명은 최대 500자를 넘어갈 수 없어요". Counted by code points
@@ -263,13 +299,46 @@ function isValidHttpUrl(v: string): boolean {
 
 function validateManifest(raw: Record<string, unknown>, configDir: string): AppManifest {
   const titleKo = requireString(raw, 'titleKo');
+  if (!TITLE_KO_REGEX.test(titleKo)) {
+    throw new ManifestError(
+      'invalid-config',
+      `titleKo may only contain Korean/English letters, digits, spaces, and ":·?" (got "${titleKo}"; server-side rule, errorCode: miniApp.InvalidTitle)`,
+      'titleKo',
+    );
+  }
+  const titleKoLen = codePointsExcludingSpaces(titleKo);
+  if (titleKoLen > TITLE_KO_MAX_CODEPOINTS_NO_SPACE) {
+    throw new ManifestError(
+      'invalid-config',
+      `titleKo must be ${TITLE_KO_MAX_CODEPOINTS_NO_SPACE} characters or fewer excluding spaces (got ${titleKoLen}; server-side rule, errorCode: miniApp.InvalidTitle)`,
+      'titleKo',
+    );
+  }
   const titleEn = requireString(raw, 'titleEn');
   if (!TITLE_EN_REGEX.test(titleEn)) {
     throw new ManifestError(
       'invalid-config',
-      `titleEn may only contain English letters, digits, spaces, and colons (got "${titleEn}")`,
+      `titleEn may only contain English letters, digits, spaces, and ":·?" (got "${titleEn}"; server-side rule, errorCode: miniApp.InvalidTitleEn)`,
       'titleEn',
     );
+  }
+  const titleEnLen = codePointsExcludingSpaces(titleEn);
+  if (titleEnLen > TITLE_EN_MAX_CODEPOINTS_NO_SPACE) {
+    throw new ManifestError(
+      'invalid-config',
+      `titleEn must be ${TITLE_EN_MAX_CODEPOINTS_NO_SPACE} characters or fewer excluding spaces (got ${titleEnLen}; server-side rule, errorCode: miniApp.InvalidTitleEn)`,
+      'titleEn',
+    );
+  }
+  for (const word of titleEn.split(' ')) {
+    if (word.length === 0) continue;
+    if (!isTitleCaseWord(word)) {
+      throw new ManifestError(
+        'invalid-config',
+        `titleEn word "${word}" must be title-case (first letter uppercase, rest lowercase); server-side rule, errorCode: miniApp.InvalidTitleEn`,
+        'titleEn',
+      );
+    }
   }
   const appName = requireString(raw, 'appName');
   const csEmail = requireString(raw, 'csEmail');
