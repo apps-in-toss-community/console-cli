@@ -1228,7 +1228,7 @@ export async function fetchBundleTestLinks(
 //
 // `createMiniApp` and `uploadMiniAppResource` back the `app register`
 // command. The submit payload shape below is *inferred* from static
-// bundle analysis (`VALIDATION-RULES.md` in the umbrella `.playwright-
+// bundle analysis (`VALIDATION-RULES.md` in the local `.playwright-
 // mcp/`); the console UI never round-trips intermediate drafts, so the
 // only authoritative record will come from dog-food task #23. Field
 // names here intentionally mirror the `Xc` function from the bundle so

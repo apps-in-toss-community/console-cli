@@ -102,8 +102,8 @@ itself (Sentry release tag baked in). Not a runtime-log UI.
 
 ### 4. Existing `.playwright-mcp/` captures
 
-Checked the umbrella `apps-in-toss-community/.playwright-mcp/`
-directory (279 prior captures from earlier dog-food sessions). The
+Checked the local `.playwright-mcp/` capture directory (279 prior
+captures from earlier dog-food sessions). The
 `ENDPOINTS-CATALOG.md` already flagged the three `/log/*` endpoints
 under a section literally titled "Logs", but the query-key evidence
 above shows that section is mislabeled: they're **event catalog**

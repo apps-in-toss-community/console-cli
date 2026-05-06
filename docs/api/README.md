@@ -37,7 +37,7 @@
 1. Chrome을 Playwright MCP로 띄워 콘솔에 maintainer가 직접 로그인 (cookie 기반 세션, 프로그램 인증 없음).
 2. 각 콘솔 페이지(워크스페이스 → 앱 목록 → 등록 마법사 → 검토 제출 등)를 수동으로 driving하면서 `network_requests` + `evaluate(fetch(url, {credentials: 'include'}))`로 응답 본문까지 캡처.
 3. 모든 캡처는 redact ([`_redaction.md`](./_redaction.md) 정책)를 적용한 뒤 이 문서의 endpoint 항목 안에 인라인 JSON으로 박아넣음.
-4. **체크인 안 함**: raw 캡처 파일은 umbrella `.playwright-mcp/xhr-captures/`(gitignored)에만 보관. 외부 contributor에겐 이 디렉토리만 보인다.
+4. **체크인 안 함**: raw 캡처 파일은 로컬 `.playwright-mcp/xhr-captures/`(gitignored)에만 보관. 외부 contributor에겐 이 디렉토리만 보인다.
 5. 코드(`src/api/*.ts`)와 어긋나면 endpoint의 "Drift" 항목에 기록.
 
 ## 갱신 규칙

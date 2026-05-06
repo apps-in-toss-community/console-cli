@@ -4,9 +4,9 @@ import type { AppManifest } from '../config/app-manifest.js';
 // Pure transformation from a loaded AppManifest + the URLs produced by
 // the upload step into the `{miniApp, impression}` submit body. The
 // structure mirrors the `Xc` function from the console bundle (see
-// VALIDATION-RULES.md in the umbrella `.playwright-mcp/`). Dog-food
-// task #23 captures the first real network exchange and will either
-// confirm this shape or correct it here.
+// VALIDATION-RULES.md in the local `.playwright-mcp/`). Dog-food task
+// #23 captures the first real network exchange and will either confirm
+// this shape or correct it here.
 
 export interface UploadedImageUrls {
   readonly logo: string;

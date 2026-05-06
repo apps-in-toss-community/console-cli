@@ -343,7 +343,7 @@ status`가 없는가" rationale note in CLAUDE.md so future sweeps don't
 
   What is kept from 0.1.7: the two pre-flight manifest validators (`titleEn` may only contain English letters, digits, spaces, and colons; `description` ≤ 500 code points). Both mirror server rules surfaced during dog-food.
 
-  `/mini-app/review` is genuinely a one-shot register+submit-for-review endpoint when the payload is complete — no separate update or review-trigger endpoint exists. See `apps-in-toss-community/.playwright-mcp/FORM-SCHEMA-CAPTURED.md` ("FINAL" section) and the `xhr-captures/` directory in the umbrella for the full evidence trail.
+  `/mini-app/review` is genuinely a one-shot register+submit-for-review endpoint when the payload is complete — no separate update or review-trigger endpoint exists.
 
 ## 0.1.7
 

@@ -242,7 +242,7 @@ REVIEW 잠금 시:
 
 #### CLI 영향
 
-CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항상 create). update를 다루려면 별도 명령(`aitcc app update`?)이 필요하고, REVIEW 잠금 시 `errorCode: 4046`을 어떻게 사용자에게 surface할지 결정해야 한다 — 현재 `src/api/http.ts`는 `4010`만 `isAuthError`로 별도 처리, 나머지는 generic `TossApiError`. backlog (umbrella TODO).
+CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항상 create). update를 다루려면 별도 명령(`aitcc app update`?)이 필요하고, REVIEW 잠금 시 `errorCode: 4046`을 어떻게 사용자에게 surface할지 결정해야 한다 — 현재 `src/api/http.ts`는 `4010`만 `isAuthError`로 별도 처리, 나머지는 generic `TossApiError`. backlog.
 
 ## `GET /workspaces/<wid>/mini-app` — 앱 목록
 
@@ -464,7 +464,7 @@ CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason
 
 ## sdk-example dog-food 앱 상태 (2026-05-03 시점)
 
-본 인벤토리 캡처에 사용한 5개 앱 중 **추적 대상은 `31146` 한 개뿐**이다. 나머지 4개는 운영팀 처리 trail로 남기고 우리 쪽 SLA tracking에서 제외 — 운영팀 처리 결과와 무관하게 다시 건드리지 않는다. 모두 워크스페이스 `3095`(sdk-example dog-food). 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함). 상세는 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) "sdk-example dog-food 앱".
+본 인벤토리 캡처에 사용한 5개 앱 중 **추적 대상은 `31146` 한 개뿐**이다. 나머지 4개는 운영팀 처리 trail로 남기고 우리 쪽 SLA tracking에서 제외 — 운영팀 처리 결과와 무관하게 다시 건드리지 않는다. 모두 워크스페이스 `3095`(sdk-example dog-food). 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함).
 
 ### 추적 대상
 
