@@ -56,29 +56,22 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Install rcodesign (macOS only)
-        if: startsWith(matrix.target, 'darwin-')
-        shell: bash
-        run: |
-          # rcodesign 0.29.0 — used to ad-hoc sign Bun-compiled binaries.
-          # Apple's stock `codesign` rejects them ("invalid or unsupported
-          # format for signature") because Bun's Mach-O has a malformed
-          # LC_CODE_SIGNATURE stub. Bun 1.3.13+ fixes this upstream (now
-          # pinned via package.json `engines.bun`); rcodesign will be
-          # removed in a follow-up PR once the new signing path is
-          # verified end-to-end.
-          set -euo pipefail
-          version="0.29.0"
-          asset="apple-codesign-${version}-aarch64-apple-darwin.tar.gz"
-          curl -fsSL -o /tmp/rcodesign.tgz \
-            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${version}/${asset}"
-          tar -xzf /tmp/rcodesign.tgz -C /tmp
-          mv "/tmp/apple-codesign-${version}-aarch64-apple-darwin/rcodesign" /usr/local/bin/rcodesign
-          rcodesign --version
-
       - name: Build binary (${{ matrix.target }})
         shell: bash
         run: bun run scripts/build-bin.ts ${{ matrix.target }}
+
+      - name: Ad-hoc codesign (macOS only)
+        if: startsWith(matrix.target, 'darwin-')
+        shell: bash
+        run: |
+          # Bun --compile leaves a `linker-signed` ad-hoc stub that
+          # `codesign --verify` rejects. Strip it and re-sign with stock
+          # codesign + hardened runtime — same pattern teleprompter ships.
+          # No external rcodesign dependency, no entitlements (ad-hoc
+          # signatures cannot meaningfully grant entitlements anyway).
+          codesign --remove-signature "dist-bin/${{ matrix.out }}" || true
+          codesign --sign - --force --options runtime --timestamp=none "dist-bin/${{ matrix.out }}"
+          codesign --verify --verbose "dist-bin/${{ matrix.out }}"
 
       - name: Compute SHA-256
         shell: bash

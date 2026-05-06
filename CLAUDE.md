@@ -224,13 +224,15 @@ Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFor
 
 ### macOS 바이너리 서명
 
-Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple stock `codesign`이 `invalid or unsupported format for signature`로 거부하는 경우가 있다. `0.1.x`는 **ad-hoc 서명**으로 우회, CI는 [`rcodesign`](https://github.com/indygreg/apple-platform-rs) 사용:
+Bun `--compile`은 산출물에 `linker-signed` ad-hoc stub만 박는데 stock `codesign --verify`가 이걸 `invalid or unsupported format for signature`로 거부한다. CI에서 stub을 벗기고 stock codesign + hardened runtime으로 재-사인:
 
-- `scripts/build-bin.ts`가 `bun-darwin-*` 타겟에서 (1) `codesign --remove-signature`로 깨진 stub 제거 → (2) `rcodesign sign --entitlements-xml-path scripts/macos-entitlements.plist`로 ad-hoc 서명.
-- `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 다운로드.
-- `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback (이때는 이미 정상 Mach-O라 stock으로도 통과).
+- `.github/workflows/release-binaries.yml`의 macOS 잡: `codesign --remove-signature` → `codesign --sign - --force --options runtime --timestamp=none` → `codesign --verify`.
+- entitlements는 부여하지 않음. ad-hoc 서명은 어차피 hardened runtime 위에서 entitlement를 의미 있게 부여하지 못하고, JIT 등 Bun 런타임 권한은 ad-hoc 자체로 자동 허용된다 (teleprompter에서 production 검증된 동일 패턴).
+- `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 안전망으로 유지 (CI 서명이 transit 중 손실됐을 때 복구).
 
-정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 1.3.13에서 stub 생성이 업스트림 수정됐고 toolchain은 `package.json`의 `engines.bun`으로 1.3.13에 핀돼 있다 — rcodesign 의존성 제거는 후속 PR에서 새 서명 경로를 E2E 검증한 뒤 진행 (backlog).
+Gatekeeper(`spctl --assess`)는 ad-hoc인 한 quarantine bit가 붙은 시나리오에서 거부하는 게 정상이다. install.sh가 quarantine bit를 떼므로 그 경로로 설치한 사용자는 막히지 않는다. brew tap으로 받는 사용자도 마찬가지(brew는 quarantine bit를 안 붙임). 브라우저로 GitHub Release 페이지에서 직접 클릭해 받는 사용자는 quarantine 비트가 붙어 막히는데, 이건 권장 경로가 아니라 README는 install.sh / brew를 안내한다.
+
+정식 Apple notarization (Developer Program $99/년)은 1.0 item.
 
 ## 운영 메모
 

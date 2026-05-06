@@ -50,17 +50,6 @@ for (const { target, out } of selected) {
     --sourcemap=none \
     --define AITCC_VERSION=${JSON.stringify(version)} \
     --outfile=dist-bin/${out}`;
-
-  if (target.startsWith('bun-darwin-') && process.platform === 'darwin') {
-    console.log(`Ad-hoc signing ${out} with rcodesign...`);
-    // Strip Bun's malformed LC_CODE_SIGNATURE stub first so rcodesign
-    // can write a fresh signature. `codesign --remove-signature` exits 0
-    // even if there's nothing to remove.
-    await $`codesign --remove-signature dist-bin/${out}`.nothrow();
-    await $`rcodesign sign \
-      --entitlements-xml-path scripts/macos-entitlements.plist \
-      dist-bin/${out}`;
-  }
 }
 
 console.log('Done.');
