@@ -1,6 +1,6 @@
 {
   "name": "@ait-co/console-cli",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "CLI and MCP server for the Apps in Toss developer console — log in once in a browser, then drive builds, deploys, and releases headlessly",
   "type": "module",
   "engines": {
