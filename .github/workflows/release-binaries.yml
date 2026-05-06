@@ -63,8 +63,10 @@ jobs:
           # rcodesign 0.29.0 — used to ad-hoc sign Bun-compiled binaries.
           # Apple's stock `codesign` rejects them ("invalid or unsupported
           # format for signature") because Bun's Mach-O has a malformed
-          # LC_CODE_SIGNATURE stub. Bun 1.3.13+ fixes this upstream; revisit
-          # once we can pin to that stable.
+          # LC_CODE_SIGNATURE stub. Bun 1.3.13+ fixes this upstream (now
+          # pinned via package.json `engines.bun`); rcodesign will be
+          # removed in a follow-up PR once the new signing path is
+          # verified end-to-end.
           set -euo pipefail
           version="0.29.0"
           asset="apple-codesign-${version}-aarch64-apple-darwin.tar.gz"

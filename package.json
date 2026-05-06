@@ -4,7 +4,8 @@
   "description": "CLI and MCP server for the Apps in Toss developer console — log in once in a browser, then drive builds, deploys, and releases headlessly",
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "bun": "1.3.13"
   },
   "bin": {
     "aitcc": "./dist/cli.mjs"
@@ -27,7 +28,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.12",
     "@changesets/cli": "^2.31.0",
-    "@types/bun": "^1.2.0",
+    "@types/bun": "^1.3.13",
     "tsdown": "^0.21.7",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
