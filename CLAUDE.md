@@ -230,7 +230,7 @@ Bun-compiled 바이너리는 비표준 `LC_CODE_SIGNATURE` stub 때문에 Apple 
 - `.github/workflows/release-binaries.yml`의 macOS 잡이 빌드 전에 `rcodesign` 0.29.0 다운로드.
 - `install.sh`도 macOS 설치 후 `xattr -d com.apple.quarantine` + stock `codesign --sign -` 재-사인을 fallback (이때는 이미 정상 Mach-O라 stock으로도 통과).
 
-정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 업스트림이 stub 생성을 고치면 rcodesign 의존성 제거 가능 (backlog).
+정식 Apple notarization (Developer Program $99/년)은 1.0 item. Bun 1.3.13에서 stub 생성이 업스트림 수정됐고 toolchain은 `.bun-version`으로 1.3.13에 핀돼 있다 — rcodesign 의존성 제거는 후속 PR에서 새 서명 경로를 E2E 검증한 뒤 진행 (backlog).
 
 ## 운영 메모
 
