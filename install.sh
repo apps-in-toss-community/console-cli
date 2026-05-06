@@ -129,7 +129,7 @@ mv "$tmp/$binary" "$dest"
 if [ "$os" = "darwin" ]; then
   xattr -d com.apple.quarantine "$dest" 2>/dev/null || true
   if command -v codesign >/dev/null 2>&1; then
-    codesign --force --sign - "$dest" >/dev/null 2>&1 || true
+    codesign --force --sign - --options runtime --timestamp=none "$dest" >/dev/null 2>&1 || true
   fi
 fi
 
