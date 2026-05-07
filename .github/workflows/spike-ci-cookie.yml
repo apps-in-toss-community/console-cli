@@ -6,6 +6,14 @@ name: spike — CI cookie
 
 on:
   workflow_dispatch:
+  # Branch-scoped push trigger so the workflow runs on this throwaway
+  # branch without needing the file to land on main first (GHA's
+  # workflow_dispatch only sees workflows on the default branch).
+  push:
+    branches: [spike-ci-cookie]
+    paths:
+      - '.github/workflows/spike-ci-cookie.yml'
+      - 'scripts/ci-cookie-spike.ts'
 
 permissions:
   contents: read
