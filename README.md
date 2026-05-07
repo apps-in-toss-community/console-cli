@@ -83,6 +83,16 @@ The walk stops at the nearest `.git` directory and never crosses `$HOME`. Passin
 
 When `aitcc app register` succeeds, the returned `miniAppId` is written back into the resolved `aitcc.yaml`/`aitcc.json` (comments and key order in YAML are preserved). Subsequent commands can then run without `--app`. The write-back is skipped under `--dry-run` and silently no-ops when the file already pins the same id; if no project file exists in the tree, the CLI prints a one-line stderr hint instead of creating one.
 
+To bootstrap an `aitcc.yaml` from scratch, run `aitcc app init`. The command asks for the required manifest fields interactively (workspace is picked from the live API list), validates each value against the same constraints that `register` enforces, and lays the optional fields (`homePageUri`, `logoDarkMode`, `keywords`, `horizontalScreenshots`) as commented-out lines for later edits. Image paths (`./assets/logo.png`, `./assets/thumbnail.png`, `./assets/screenshot-{1,2,3}.png`) are written as placeholders — drop the actual files into `./assets/` before running `aitcc app register`. `init` requires an interactive TTY and refuses `--json` / non-TTY runs with `interactive-required` (exit 2).
+
+```sh
+mkdir my-app && cd my-app
+aitcc app init           # interactive prompt → ./aitcc.yaml
+# (drop logo/thumbnail/screenshots into ./assets/)
+aitcc app register       # creates the mini-app and writes miniAppId back
+aitcc app status         # works with no flags — context comes from aitcc.yaml
+```
+
 ### Login details
 
 `aitcc login` launches a Chrome-family browser via the Chrome DevTools Protocol, navigates it to the Apps in Toss developer console sign-in URL, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
