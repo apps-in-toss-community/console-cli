@@ -1,5 +1,20 @@
 # @ait-co/console-cli
 
+## 0.1.23
+
+### Patch Changes
+
+- 6eb27e7: Add `aitcc app init` to scaffold a well-formed `aitcc.yaml` interactively.
+  Required fields are validated against the same constraints `register`
+  enforces; optional fields are pre-laid as commented lines for later
+  edits. Workspace is selected from the live API list, and the resulting
+  file pins `workspaceId` so subsequent commands inherit the project
+  context without flags.
+- 684aee6: Add `src/auth/credentials.ts` library for persisting Toss Business email + password across the OS keychain (macOS `security`, Linux `secret-tool`, Windows PowerShell + CredWrite). `loadCredentials()` resolves from `AITCC_EMAIL`+`AITCC_PASSWORD` env first, then falls back to the keychain entry pointed to by `auth-state.json`. `saveCredentials()` is no-op (`status: 'unchanged'`) when the same email + password is already stored. Library only — no CLI surface yet; wiring into the form-fill login path lands in a follow-up PR.
+- d428d04: `aitcc login`이 저장된 자격 증명으로 headless 로그인을 시도하고, step-up 인증이 필요하거나 자격 증명이 없으면 기존 interactive 흐름으로 자동 fallback한다. `--interactive` 플래그로 강제 우회 가능. `--json` 출력에 `mode` (`headless` | `interactive`) 와 `stepUp` 필드 추가.
+- efb9940: Add `aitcc.yaml` project context resolver: ancestor-walk loader (`findProjectContext`) and priority-chain resolver (`resolveAppContext`) that combines `--workspace`/`<appId>` flags, `AITCC_WORKSPACE`/`AITCC_APP` env vars, yaml fields, and the persisted session. No commands are wired to it yet — wiring lands in a follow-up PR.
+- 1ded85b: `aitcc app register` now writes the returned `miniAppId` back into the resolved `aitcc.yaml`/`aitcc.json` after a successful submit, so follow-up commands like `app status` and `app deploy` resolve the same app without an explicit `--app`. YAML round-trips comments and key order; the write is a no-op when the file already pins the same id; `--dry-run` skips it; if no project file exists in the tree, a one-line stderr hint is printed instead of creating one.
+
 ## 0.1.22
 
 ### Patch Changes
