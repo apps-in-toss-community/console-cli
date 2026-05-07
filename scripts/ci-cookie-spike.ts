@@ -42,63 +42,87 @@ async function main(): Promise<void> {
   // Reset previous run so nothing stale leaks into the report.
   await writeFile(RESPONSES_PATH, '', { mode: 0o600 });
 
-  const cookies = await loadCookies();
+  const blobSource = process.env.AITCC_COOKIE_BLOB;
+  const ciMode = !!blobSource;
+
+  const cookies = ciMode ? decodeCookieBlob(blobSource) : await loadCookies();
   await writeCookieShape(cookies);
 
   const records: PhaseRecord[] = [];
 
-  // ---- Phase A: baseline using session.json directly via the http helper ----
-  records.push(await runPhase('A', 'baseline (session.json, default UA)', cookies, {}));
-
-  // ---- Phase B: cookies-only (drop session metadata, use raw fetch) ----
-  // Phase A already uses only `cookies` from session.json (the http helper
-  // never reads anything else), so B is functionally identical. We still
-  // run it through a different code path — direct fetch with a hand-built
-  // Cookie header — to confirm there's no hidden coupling to session shape.
-  records.push(
-    await runPhaseRawFetch('B', 'cookies-only (raw fetch, default UA)', cookies, {
-      // No User-Agent override → bun's default UA.
-    }),
-  );
-
-  // ---- Phase C: change User-Agent to a Linux/Chrome (CI-runner-like) string ----
-  records.push(
-    await runPhaseRawFetch('C', 'cookies-only (raw fetch, CI-like Linux UA)', cookies, {
-      'User-Agent': CI_LIKE_UA,
-    }),
-  );
-
-  // ---- Phase C2: also send Origin/Referer matching the console ----
-  // If the console requires Origin/Referer enforcement we want to know.
-  records.push(
-    await runPhaseRawFetch(
-      'C',
-      'cookies-only (raw fetch, CI-like UA, with Origin+Referer)',
-      cookies,
-      {
-        'User-Agent': CI_LIKE_UA,
-        Origin: 'https://apps-in-toss.toss.im',
-        Referer: 'https://apps-in-toss.toss.im/console/',
-      },
-    ),
-  );
-
-  // ---- Phase D: blob round-trip ----
-  // Two encodings, both decoded back into the same shape and replayed.
-  // If AITCC_COOKIE_BLOB is set (CI), use that — otherwise round-trip locally.
-  const blobSource = process.env.AITCC_COOKIE_BLOB;
-  if (blobSource) {
-    const decoded = decodeCookieBlob(blobSource);
+  if (ciMode) {
+    // CI: all phases share the env-blob cookies. The interesting axis is
+    // whether the request from a non-Korean GHA IP authenticates at all.
+    // Phases A/B/C kept for parity with the local report.
     records.push(
-      await runPhaseRawFetch('D', `env-blob (${decoded.length} cookies, default UA)`, decoded, {}),
+      await runPhase('A', `env-blob via http helper (${cookies.length} cookies)`, cookies, {}),
     );
     records.push(
-      await runPhaseRawFetch('D', `env-blob (${decoded.length} cookies, CI-like UA)`, decoded, {
+      await runPhaseRawFetch(
+        'B',
+        `env-blob via raw fetch, default UA (${cookies.length} cookies)`,
+        cookies,
+        {},
+      ),
+    );
+    records.push(
+      await runPhaseRawFetch(
+        'C',
+        `env-blob via raw fetch, CI-like Linux UA (${cookies.length} cookies)`,
+        cookies,
+        { 'User-Agent': CI_LIKE_UA },
+      ),
+    );
+    records.push(
+      await runPhaseRawFetch(
+        'C',
+        `env-blob via raw fetch, CI-like UA + Origin/Referer (${cookies.length} cookies)`,
+        cookies,
+        {
+          'User-Agent': CI_LIKE_UA,
+          Origin: 'https://apps-in-toss.toss.im',
+          Referer: 'https://apps-in-toss.toss.im/console/',
+        },
+      ),
+    );
+    // Bonus: TBIZAUTH-only path. We discovered locally that TBIZAUTH alone
+    // is sufficient; if it survives the IP move, that confirms the
+    // recommended export shape.
+    const tbizauth = cookies.filter((c) => c.name === 'TBIZAUTH');
+    records.push(
+      await runPhaseRawFetch(
+        'D',
+        `env-blob, TBIZAUTH only (${tbizauth.length} cookies)`,
+        tbizauth,
+        {},
+      ),
+    );
+  } else {
+    // Local: Phase A baseline, then progressively change one variable.
+    records.push(await runPhase('A', 'baseline (session.json, default UA)', cookies, {}));
+    records.push(
+      await runPhaseRawFetch('B', 'cookies-only (raw fetch, default UA)', cookies, {
+        // No User-Agent override → bun's default UA.
+      }),
+    );
+    records.push(
+      await runPhaseRawFetch('C', 'cookies-only (raw fetch, CI-like Linux UA)', cookies, {
         'User-Agent': CI_LIKE_UA,
       }),
     );
-  } else {
-    // Local round-trip: confirm both encodings preserve auth.
+    records.push(
+      await runPhaseRawFetch(
+        'C',
+        'cookies-only (raw fetch, CI-like UA, with Origin+Referer)',
+        cookies,
+        {
+          'User-Agent': CI_LIKE_UA,
+          Origin: 'https://apps-in-toss.toss.im',
+          Referer: 'https://apps-in-toss.toss.im/console/',
+        },
+      ),
+    );
+    // Local Phase D: blob encoding round-trip (both formats).
     const blob = encodeCookieBlobBase64(cookies);
     const reBlob = decodeCookieBlob(blob);
     records.push(
@@ -122,6 +146,11 @@ async function main(): Promise<void> {
   }
 
   await summarise(records);
+  // Exit non-zero if baseline failed so CI surfaces the real problem;
+  // otherwise exit 0 even if some phases reported auth errors — the
+  // verdict is signal, not a test failure.
+  const a = records.find((r) => r.phase === 'A');
+  if (!a || a.status !== 200) process.exit(3);
 }
 
 async function loadCookies(): Promise<readonly CdpCookie[]> {
