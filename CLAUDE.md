@@ -62,7 +62,7 @@ App-scoped 명령(`app status`, `app deploy`, `app certs ls` 등)이 매번 `--w
 
 Walk 중 `.git`을 만나면 그 디렉토리까지만 보고 멈춘다. `$HOME` 위로는 절대 가지 않음. 안전장치로 32 hop 한계.
 
-구현: loader는 `src/config/project-context.ts:findProjectContext`, 정책 + flag/env/session 결합은 `src/commands/_shared.ts:resolveAppContext`. 0.1.x에서 `aitcc.yaml`은 register manifest와 동일 파일을 공유하지만, project context 필드는 manifest 검증과 무관하게 별도로 파싱된다 (manifest에 없는 yaml에서도 컨텍스트만 읽힘).
+구현: loader는 `src/config/project-context.ts:findProjectContext`, 정책 + flag/env/session 결합은 `src/commands/_shared.ts:resolveAppContext`. 명령 wrapper(`resolveAppOrFail` / `resolveWorkspaceContext`)가 이 결과를 받아 `--json` 실패 분기·exit code를 일관되게 emit하고, 성공한 경우 `printContextHeader`가 한 줄짜리 헤더를 stderr로 출력한다 (`[workspace: 3095 (from session)]` 또는 `[workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]` 형식). `--json` 모드에선 헤더가 silently 생략된다 — agent-plugin이 stdout 한 줄만 파싱하므로 stderr 잡음과 무관. 0.1.x에서 `aitcc.yaml`은 register manifest와 동일 파일을 공유하지만, project context 필드는 manifest 검증과 무관하게 별도로 파싱된다 (manifest에 없는 yaml에서도 컨텍스트만 읽힘).
 
 ### API quirks (dog-food로 확정된 것)
 
