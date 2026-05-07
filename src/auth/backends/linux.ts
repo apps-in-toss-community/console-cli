@@ -31,15 +31,17 @@ export const LINUX_BACKEND: CredentialBackend = {
     }
     // `secret-tool lookup` exits 0 with no stdout when the entry is
     // missing on some distros, non-zero on others. Empty stdout = missing
-    // either way.
-    if (result.stdout.length === 0) return null;
+    // either way. We check exit code first so a failed lookup that wrote
+    // partial bytes to stdout never gets returned as the "password".
     if (result.exitCode !== 0) {
+      if (result.stdout.length === 0) return null;
       throw new CredentialBackendCommandError(
         'secret-tool lookup',
         result.exitCode,
         redactStderr(result.stderr),
       );
     }
+    if (result.stdout.length === 0) return null;
     const password = stripTrailingNewline(result.stdout);
     return password.length > 0 ? password : null;
   },

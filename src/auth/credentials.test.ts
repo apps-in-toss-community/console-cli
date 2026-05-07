@@ -64,6 +64,9 @@ describe('credentials — env source', () => {
       env: { AITCC_EMAIL: 'ci@example.com' }, // password missing
     });
     expect(got).toBeNull();
+    // Partial env match must not turn into a keychain probe — both env
+    // vars are required to take the env path.
+    expect(backend.getCalls).toBe(0);
   });
 });
 

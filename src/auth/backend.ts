@@ -26,10 +26,13 @@ export class CredentialBackendCommandError extends Error {
   constructor(
     readonly command: string,
     readonly exitCode: number | null,
-    // We deliberately accept stderr but redact it: a backend that echoes
-    // its argv on failure could put the password in this string. Callers
-    // see only "<redacted>" until we audit each backend's failure paths.
-    redactedStderr: string,
+    // Pass stderr through `redactStderr` before constructing — that helper
+    // bounds the length so a runaway stderr can't blow up logs, but does
+    // NOT scrub argv-echoed secrets. macOS `security` and Linux
+    // `secret-tool` don't echo argv on error in observed failure paths;
+    // Linux uses stdin so its argv is clean to begin with. If a backend
+    // ever starts echoing, tighten this here.
+    readonly redactedStderr: string,
   ) {
     super(
       `Credential backend command "${command}" failed (exit=${exitCode ?? 'null'}): ${redactedStderr}`,
