@@ -256,4 +256,24 @@ describe('resolveAppOrFail', () => {
     expect(exit?.code).toBe(2);
     expect(stdout.join('')).toContain('"reason":"no-workspace-selected"');
   });
+
+  it('reads AITCC_WORKSPACE and AITCC_APP env vars when no flag is provided', async () => {
+    process.env.AITCC_WORKSPACE = '777';
+    process.env.AITCC_APP = '888';
+    await writeSessionAt();
+    const ctx = await resolveAppOrFail({ json: false });
+    expect(ctx?.workspaceId).toBe(777);
+    expect(ctx?.workspaceSource).toBe('env');
+    expect(ctx?.miniAppId).toBe(888);
+    expect(ctx?.miniAppIdSource).toBe('env');
+  });
+
+  it('emits invalid-env + exit 2 when AITCC_WORKSPACE is malformed', async () => {
+    process.env.AITCC_WORKSPACE = '7x';
+    await writeSessionAt();
+    const exit = await captureExit(() => resolveAppOrFail({ json: true }));
+    expect(exit?.code).toBe(2);
+    expect(stdout.join('')).toContain('"reason":"invalid-env"');
+    expect(stdout.join('')).toContain('AITCC_WORKSPACE');
+  });
 });

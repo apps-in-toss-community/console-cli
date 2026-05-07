@@ -9,13 +9,31 @@ import { readSession, type Session, sessionPathForDiagnostics } from '../session
 // Kept in one place so all commands agree on the `--json` contract — one
 // line, trailing \n, stdout for structured output, stderr for diagnostics.
 //
-// Auth / network / API failure shapes are identical across every command:
-// { ok: true, authenticated: false } (exit 10), { ok: false,
-// reason: 'network-error', message } (exit 11), { ok: false,
-// reason: 'api-error', message } (exit 17). See any per-command
-// `--json contract` block (e.g. `commands/workspace.ts`) for the full
-// exit-code legend plus the success-shape specific to that command —
-// those per-command blocks are the source of truth for success payloads.
+// Cross-cutting failure shapes (emitted from every session/app/workspace-
+// scoped command — per-command `--json contract` blocks may add their own
+// reasons on top, but these are universal):
+//
+//   Auth/network/API:
+//     { ok: true, authenticated: false }                              exit 10
+//     { ok: false, reason: 'network-error', message }                 exit 11
+//     { ok: false, reason: 'api-error', status?, errorCode?, message } exit 17
+//
+//   Context resolution (any command that goes through
+//   `resolveWorkspaceContext` / `resolveAppOrFail`):
+//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//       (--workspace value, positional <appId>, or --app value malformed)
+//     { ok: false, reason: 'invalid-env', message }                   exit 2
+//       (AITCC_WORKSPACE or AITCC_APP env var contains a non-positive-int)
+//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
+//       (no flag/env/yaml/session source supplied a workspace id)
+//
+//   App-scoped commands additionally:
+//     { ok: false, reason: 'missing-app-id', message }                exit 2
+//       (workspace resolved but no source supplied a miniApp id)
+//
+// See any per-command `--json contract` block (e.g. `commands/workspace.ts`)
+// for the success-shape specific to that command and any command-specific
+// reasons stacked on top of these.
 
 export interface NotAuthenticatedPayload {
   readonly ok: true;

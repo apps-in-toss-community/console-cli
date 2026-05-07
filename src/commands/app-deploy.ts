@@ -13,6 +13,7 @@ import { exitAfterFlush } from '../flush.js';
 import {
   emitFailureFromError,
   emitJson,
+  parsePositiveInt,
   printContextHeader,
   requireMiniAppId,
   resolveAppOrFail,
@@ -86,11 +87,25 @@ export interface DeployDeps {
 }
 
 export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promise<void> {
-  // 1. Validate flag shape before loading the session so bad invocations
-  //    fail fast without the Chrome-spawn detour in case the user is not
-  //    logged in. Matches `app bundles upload`'s early-exit pattern.
-  //    `--app` is parsed by `resolveAppOrFail`; missing-app-id is emitted
-  //    by `requireMiniAppId` once we know whether yaml/env supplied a fallback.
+  // 1. Validate flag shape before reading the bundle / loading the session
+  //    so bad invocations fail fast without disk I/O or the Chrome-spawn
+  //    detour. `--app`'s presence is now optional (yaml/env can supply it),
+  //    but a malformed *value* should still short-circuit before we read
+  //    the bundle file — same fast-fail invariant the pre-PR-1b code had.
+  //    `resolveAppOrFail` re-parses below; this guard is only here to
+  //    reject `--app abc` before the bundle is opened.
+  if (typeof args.app === 'string' && args.app !== '' && parsePositiveInt(args.app) === null) {
+    if (args.json) {
+      emitJson({
+        ok: false,
+        reason: 'invalid-id',
+        message: `--app must be a positive integer (got ${JSON.stringify(args.app)})`,
+      });
+    } else {
+      process.stderr.write(`app deploy: invalid --app ${JSON.stringify(args.app)}\n`);
+    }
+    return exitAfterFlush(ExitCode.Usage);
+  }
 
   if (typeof args.path !== 'string' || args.path === '') {
     if (args.json) {

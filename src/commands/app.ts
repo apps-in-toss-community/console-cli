@@ -1108,10 +1108,16 @@ const bundlesUploadCommand = defineCommand({
     description: 'Upload an .ait bundle (initialize → PUT → complete [+ memo]).',
   },
   args: {
+    // Two positionals (`id` then `path`) — citty assigns positionals in
+    // declaration order, so `id` must stay required: leaving it optional
+    // would let citty hand `./bundle.ait` to `id` and then complain that
+    // `path` is missing. Yaml miniAppId fallback is reserved for commands
+    // with a single positional or with the app id behind a flag (see
+    // `app deploy`'s `--app`).
     id: {
       type: 'positional',
-      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
-      required: false,
+      description: 'Mini-app ID.',
+      required: true,
     },
     path: { type: 'positional', description: 'Path to the .ait bundle file.', required: true },
     'deployment-id': {
