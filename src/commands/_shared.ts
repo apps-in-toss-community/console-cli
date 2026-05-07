@@ -1,4 +1,5 @@
 import { NetworkError, TossApiError } from '../api/http.js';
+import { findProjectContext, type ProjectContext } from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, type Session, sessionPathForDiagnostics } from '../session.js';
@@ -181,4 +182,121 @@ export async function requireSession(json: boolean): Promise<Session | null> {
     return null;
   }
   return session;
+}
+
+export type ContextSource = 'flag' | 'env' | 'yaml' | 'session';
+
+export interface AppContext {
+  readonly workspaceId: number;
+  readonly miniAppId?: number;
+  readonly workspaceSource: ContextSource;
+  readonly miniAppIdSource?: ContextSource;
+  /** Path of the yaml that contributed to the resolution, if any. */
+  readonly projectFile?: string;
+}
+
+export interface ResolveAppContextInput {
+  /** Value from `--workspace <id>` (already parsed by the command). */
+  readonly flagWorkspaceId?: number;
+  /** Value from a positional `<appId>` (or equivalent flag). */
+  readonly flagMiniAppId?: number;
+  /** Persisted `currentWorkspaceId`, if a session is loaded. */
+  readonly sessionWorkspaceId?: number;
+  /** Override for tests; defaults to `process.cwd()`. */
+  readonly cwd?: string;
+}
+
+export class AppContextError extends Error {
+  readonly reason: 'invalid-env' | 'no-workspace-selected';
+  constructor(reason: 'invalid-env' | 'no-workspace-selected', message: string) {
+    super(message);
+    this.name = 'AppContextError';
+    this.reason = reason;
+  }
+}
+
+function readEnvPositiveInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const parsed = parsePositiveInt(raw);
+  if (parsed === null) {
+    throw new AppContextError('invalid-env', `${name} must be a positive integer (got ${raw})`);
+  }
+  return parsed;
+}
+
+/**
+ * Resolve the app/workspace context for a command invocation by combining
+ * flags, env vars, an optional `aitcc.yaml`, and the persisted session.
+ *
+ * Priority chains (highest first):
+ *   workspace: flag > env(AITCC_WORKSPACE) > yaml(workspaceId) > session.currentWorkspaceId
+ *   miniApp:   flag > env(AITCC_APP)       > yaml(miniAppId)
+ *
+ * When the workspace comes from `flag`, any `miniAppId` sourced from
+ * `yaml` is dropped — the flag explicitly redirects the workspace, so a
+ * yaml `miniAppId` may belong to a different workspace and is unsafe to
+ * carry forward. We never fetch the API to verify; that is the caller's
+ * job if it matters.
+ *
+ * Throws `AppContextError('no-workspace-selected', ...)` when no source
+ * provides a `workspaceId`. The caller decides how to surface it (most
+ * commands map it to `{ ok: false, reason: 'no-workspace-selected' }`
+ * with exit code 2 — see `resolveWorkspaceContext`).
+ */
+export async function resolveAppContext(input: ResolveAppContextInput): Promise<AppContext> {
+  const cwd = input.cwd ?? process.cwd();
+
+  let project: ProjectContext | null = null;
+  try {
+    project = await findProjectContext(cwd);
+  } catch {
+    // A broken yaml shouldn't take down commands that don't actually need
+    // it (the user may have flag-provided everything). Treat as "no
+    // project context"; the dedicated manifest loader surfaces a precise
+    // error from the commands that do need to read it.
+    project = null;
+  }
+
+  const envWorkspace = readEnvPositiveInt('AITCC_WORKSPACE');
+  const envMiniApp = readEnvPositiveInt('AITCC_APP');
+
+  let workspaceId: number | undefined;
+  let workspaceSource: ContextSource | undefined;
+  if (input.flagWorkspaceId !== undefined) {
+    workspaceId = input.flagWorkspaceId;
+    workspaceSource = 'flag';
+  } else if (envWorkspace !== undefined) {
+    workspaceId = envWorkspace;
+    workspaceSource = 'env';
+  } else if (project?.workspaceId !== undefined) {
+    workspaceId = project.workspaceId;
+    workspaceSource = 'yaml';
+  } else if (input.sessionWorkspaceId !== undefined) {
+    workspaceId = input.sessionWorkspaceId;
+    workspaceSource = 'session';
+  }
+
+  if (workspaceId === undefined || workspaceSource === undefined) {
+    throw new AppContextError(
+      'no-workspace-selected',
+      'No workspace selected. Pass `--workspace <id>`, set AITCC_WORKSPACE, add `workspaceId` to aitcc.yaml, or run `aitcc workspace use <id>`.',
+    );
+  }
+
+  let miniApp: { miniAppId: number; miniAppIdSource: ContextSource } | undefined;
+  if (input.flagMiniAppId !== undefined) {
+    miniApp = { miniAppId: input.flagMiniAppId, miniAppIdSource: 'flag' };
+  } else if (envMiniApp !== undefined) {
+    miniApp = { miniAppId: envMiniApp, miniAppIdSource: 'env' };
+  } else if (project?.miniAppId !== undefined && workspaceSource !== 'flag') {
+    miniApp = { miniAppId: project.miniAppId, miniAppIdSource: 'yaml' };
+  }
+
+  return {
+    workspaceId,
+    workspaceSource,
+    ...(miniApp !== undefined ? miniApp : {}),
+    ...(project !== null ? { projectFile: project.source } : {}),
+  };
 }
