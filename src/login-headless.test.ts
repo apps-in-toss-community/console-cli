@@ -59,6 +59,21 @@ describe('urlIndicatesStepUp', () => {
       false,
     );
   });
+  // Regression guard: the real OAuth sign-in URL has
+  // `redirect_uri=https%3A%2F%2Fapps-in-toss.toss.im%2F…` in its query, and
+  // the `%2F%2Fa` substring would match `/2fa/i` if we tested the full URL.
+  // Pathname-only matching is what keeps headless login from tripping
+  // step-up on every first poll.
+  it('does NOT match the full OAuth sign-in URL with redirect_uri', () => {
+    expect(
+      urlIndicatesStepUp(
+        'https://business.toss.im/account/sign-in?client_id=4uktpjgqd0cp9txybqzuxc2y6w0cuupb&redirect_uri=https%3A%2F%2Fapps-in-toss.toss.im%2Fsign-up&state=%2Fworkspace',
+      ),
+    ).toBe(false);
+  });
+  it('returns false for malformed URLs instead of throwing', () => {
+    expect(urlIndicatesStepUp('not a url')).toBe(false);
+  });
 });
 
 describe('bodyIndicatesStepUp', () => {

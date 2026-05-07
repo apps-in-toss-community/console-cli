@@ -27,7 +27,9 @@ import { isLoginLanding } from './commands/login.js';
 // Stock Chrome 130 UA on macOS — the auth spike confirmed servers stop
 // flagging the request once the "HeadlessChrome" token is gone. We don't
 // vary by platform: toss.im doesn't OS-fingerprint here, the only goal
-// is to drop the headless token.
+// is to drop the headless token. Last verified against business.toss.im
+// 2026-05-08; bump the version string when the next reviewer touches
+// this file and Chrome stable has moved.
 export const SPOOFED_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
   'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -41,8 +43,19 @@ export const STEP_UP_URL_PATTERN = /verify|step.?up|2fa|otp/i;
 // uses across other surfaces ("토스 앱에서 확인", "간편인증", "전자서명").
 export const STEP_UP_BODY_PATTERN = /토스 ?앱|간편인증|전자서명|앱.{0,3}확인/;
 
+// Match against pathname only, not the full URL. The OAuth sign-in URL
+// embeds `redirect_uri=https%3A%2F%2Fapps-in-toss…` in its query string;
+// the `%2F%2Fa` decodes-as-bytes to literally contain `2Fa`, which the
+// `2fa` alternation otherwise matches and trips a false step-up on the
+// very first poll.
 export function urlIndicatesStepUp(url: string): boolean {
-  return STEP_UP_URL_PATTERN.test(url);
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  return STEP_UP_URL_PATTERN.test(pathname);
 }
 
 export function bodyIndicatesStepUp(bodyText: string): boolean {
@@ -59,8 +72,7 @@ export interface HeadlessLoginCredentials {
 export type HeadlessLoginOutcome =
   | { readonly kind: 'ok'; readonly stepUp: boolean }
   | { readonly kind: 'fallback'; readonly reason: string }
-  | { readonly kind: 'timeout'; readonly stage: 'submit' | 'step-up' }
-  | { readonly kind: 'aborted' };
+  | { readonly kind: 'timeout'; readonly stage: 'submit' | 'step-up' };
 
 export interface RunHeadlessLoginOptions {
   readonly client: CdpClient;
@@ -235,10 +247,9 @@ export async function runHeadlessLogin(
     onStepUp,
   } = options;
 
-  // Set the UA before we let the page do any more network — Page.enable
-  // doesn't replay events, so calling this immediately after attach is
-  // soon enough.
-  await client.send('Page.enable', {}, sessionId);
+  // Set the UA before we let the page do any more network. Network/Runtime
+  // need explicit enable; Page is enabled lazily by `watchMainFrameNavigations`
+  // before we start polling.
   await client.send('Network.enable', {}, sessionId);
   await client.send('Runtime.enable', {}, sessionId);
   await setUserAgentOverride(client, sessionId, SPOOFED_USER_AGENT);
@@ -304,8 +315,12 @@ export async function runHeadlessLogin(
     onStepUp?.();
     const phase2 = await pollForLanding(client, sessionId, stepUpTimeoutMs, () => liveLandingUrl);
     if (phase2 === 'landed') return { kind: 'ok', stepUp: true };
-    if (phase2 === 'timeout') return { kind: 'timeout', stage: 'step-up' };
-    return { kind: 'aborted' };
+    // `pollForLanding` is typed `'landed' | 'timeout'`; the assignment below
+    // is a compile-time exhaustiveness check that catches a future return
+    // value being added without the matching case here.
+    const _: 'timeout' = phase2;
+    void _;
+    return { kind: 'timeout', stage: 'step-up' };
   } finally {
     offNav();
   }
@@ -324,7 +339,7 @@ async function waitForFormReady(
   sessionId: string,
 ): Promise<FormReadyOk | FormReadyFail> {
   const deadline = Date.now() + FORM_READY_TIMEOUT_MS;
-  let lastError: string | null = null;
+  let lastReason = 'timeout';
   while (Date.now() < deadline) {
     const probe = await evaluateInPage<FormReadyProbe>(
       client,
@@ -333,15 +348,18 @@ async function waitForFormReady(
     );
     if (probe.ok) {
       if (probe.value.ready) return { ok: true };
-      lastError = `inputs-not-ready (${probe.value.count} input(s) on page)`;
+      lastReason = `inputs-not-ready (${probe.value.count} input(s) on page)`;
     } else {
       // The page may still be loading and Runtime.evaluate may transiently
-      // fail (`Execution context was destroyed`); just keep trying.
-      lastError = probe.error;
+      // fail (`Execution context was destroyed`); keep retrying. Don't fold
+      // `probe.error` into the reason — same redaction discipline as the
+      // form-fill eval path: today's CDP error text is benign, but a future
+      // Chrome could echo the original expression in the message.
+      lastReason = 'eval-failed';
     }
     await sleep(FORM_READY_POLL_MS);
   }
-  return { ok: false, reason: `form-not-ready: ${lastError ?? 'timeout'}` };
+  return { ok: false, reason: `form-not-ready: ${lastReason}` };
 }
 
 type Phase1Result =

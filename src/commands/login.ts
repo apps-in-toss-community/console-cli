@@ -254,7 +254,10 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
     });
     if (second.status === 'exit') return exitAfterFlush(second.code);
     // A fallback returning fallback again is a programmer error — we
-    // never request fallback while already interactive.
+    // never request fallback while already interactive. Narrow on the
+    // discriminant so a future variant can't silently land here.
+    const _: 'fallback-to-interactive' = second.status;
+    void _;
     return exitAfterFlush(ExitCode.Generic);
   }
 
@@ -386,14 +389,6 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
         status: 'fallback-to-interactive',
         message: `headless login failed: ${outcome.reason}, falling back to interactive`,
       };
-    }
-    if (outcome.kind === 'aborted') {
-      emitError(
-        { reason: 'login-aborted' },
-        'Login was aborted (browser closed before reaching the console).',
-      );
-      await disposeAll();
-      return { status: 'exit', code: ExitCode.LoginBrowserFailed };
     }
     if (outcome.kind === 'timeout') {
       emitError(
