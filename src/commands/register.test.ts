@@ -470,7 +470,8 @@ describe('runRegister', () => {
     expect(out).toContain(
       '🔗 console: https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123',
     );
-    expect(stderr.join('')).toBe('');
+    // stderr only carries the context header (PR 1b); no diagnostic output.
+    expect(stderr.join('')).toBe('[workspace: 3095 (from session)]\n');
   });
 
   it('writes error diagnostics to stderr (not stdout) in human mode', async () => {

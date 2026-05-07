@@ -20,7 +20,12 @@ import {
 } from '../config/image-validator.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
+import {
+  emitFailureFromError,
+  emitJson,
+  printContextHeader,
+  resolveWorkspaceContext,
+} from './_shared.js';
 import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.js';
 
 // `runRegister` is the testable seam for `aitcc app register`. The public
@@ -96,6 +101,7 @@ export async function runRegister(args: RegisterArgs, deps: RegisterDeps = {}): 
   });
   if (!ctx) return;
   const { session, workspaceId } = ctx;
+  printContextHeader(ctx, { json: args.json });
 
   const manifest = await loadAndValidateManifest(args, deps);
   if (!manifest) return;
