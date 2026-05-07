@@ -89,9 +89,15 @@ describe('runAppInit', () => {
     const exited = await captureExit(() => runAppInit({ cwd, force: false, json: true }));
     spy.restore();
     expect(exited?.code).toBe(2);
-    const line = spy.stdout.join('');
-    expect(line).toContain('"reason":"interactive-required"');
-    expect(line).toContain('"ok":false');
+    const line = spy.stdout.join('').trimEnd();
+    // Pin the full contract: ok / reason / message all present. agent-plugin
+    // parses this line with JSON.parse, so a missing/renamed key would be a
+    // breaking change for downstream consumers.
+    const payload = JSON.parse(line) as Record<string, unknown>;
+    expect(payload.ok).toBe(false);
+    expect(payload.reason).toBe('interactive-required');
+    expect(typeof payload.message).toBe('string');
+    expect((payload.message as string).length).toBeGreaterThan(0);
   });
 
   it('refuses non-TTY with a stderr message', async () => {

@@ -372,10 +372,10 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
   }
   const subtitle = requireString(raw, 'subtitle');
   // subtitle ≤ 20 chars (F(20) in VALIDATION-RULES).
-  if (subtitle.length > 20) {
+  if (subtitle.length > MANIFEST_LIMITS.subtitleMaxChars) {
     throw new ManifestError(
       'invalid-config',
-      `subtitle must be 20 characters or fewer (got ${subtitle.length})`,
+      `subtitle must be ${MANIFEST_LIMITS.subtitleMaxChars} characters or fewer (got ${subtitle.length})`,
       'subtitle',
     );
   }

@@ -49,18 +49,16 @@ verticalScreenshots:
 `;
 }
 
-// Wrap a value in double quotes, escaping internal `"` and `\`. Used for
-// titleKo/titleEn/subtitle so the template stays unambiguous when those
-// values contain colons, leading whitespace, or yaml-significant chars.
+// Forces a quoted scalar so colons, leading whitespace, or yaml-significant
+// chars in user input can't accidentally break the document shape.
 function yamlDoubleQuoted(value: string): string {
   const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return `"${escaped}"`;
 }
 
-// Indent every line of `value` by `prefix`. Used for the `|-` description
-// block — yaml block scalars require all content lines to share the same
-// indent. Empty trailing lines collapse to the bare prefix so the round-
-// trip parses back to the original string.
+// `|-` block scalars require every content line to share the same indent;
+// without this helper a multi-line description would silently corrupt the
+// surrounding document.
 function indentBlock(value: string, prefix: string): string {
   return value
     .split('\n')

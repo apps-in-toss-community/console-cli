@@ -145,9 +145,19 @@ export async function runAppInit(args: AppInitArgs): Promise<void> {
     return exitAfterFlush(ExitCode.Generic);
   }
 
-  await writeFile(yamlPath, rendered, 'utf8');
-  const assetsDir = resolvePath(cwd, 'assets');
-  await mkdir(assetsDir, { recursive: true });
+  // Create the assets dir before writing the manifest so a permission /
+  // disk error can't leave a `aitcc.yaml` pointing at a directory we
+  // failed to provision. Both calls are wrapped so an FS failure surfaces
+  // as a clean error + exit code rather than an unhandled rejection.
+  try {
+    const assetsDir = resolvePath(cwd, 'assets');
+    await mkdir(assetsDir, { recursive: true });
+    await writeFile(yamlPath, rendered, 'utf8');
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`failed to write project files: ${detail}\n`);
+    return exitAfterFlush(ExitCode.Generic);
+  }
 
   emitNextSteps(yamlPath);
   return exitAfterFlush(ExitCode.Ok);
@@ -194,9 +204,11 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 // Inquirer raises `ExitPromptError` (Ctrl+C / SIGINT) so the caller can
-// distinguish a deliberate abort from a programming error. The class is
-// not exported in a single canonical name across versions, so we sniff
-// the constructor name instead of an `instanceof` check.
+// distinguish a deliberate abort from a programming error. We sniff
+// `err.name` rather than `instanceof` because the class lives in
+// `@inquirer/core`, which we don't depend on directly — this avoids
+// pulling in a transitive package as a top-level dep just for an
+// `instanceof` check the inquirer docs already recommend by name.
 function isPromptCancelled(err: unknown): boolean {
   return err instanceof Error && err.name === 'ExitPromptError';
 }
@@ -209,7 +221,6 @@ async function pickWorkspace(cookies: readonly CdpCookie[]): Promise<number> {
       'Your account has no workspaces. Create one in the Apps in Toss console first.\n',
     );
     await exitAfterFlush(ExitCode.Usage);
-    throw new Error('unreachable');
   }
   if (workspaces.length === 1) {
     const only = workspaces[0];
