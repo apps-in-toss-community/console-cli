@@ -137,9 +137,11 @@ describe('resolveAppContext', () => {
   it('flag miniApp wins over env and yaml miniApp', async () => {
     process.env.AITCC_APP = '2';
     const cwd = emptyRepo();
+    // Distinct numeric values so a future refactor that swaps miniAppId for
+    // workspaceId can't pass the assertion by accident.
     writeFileSync(join(cwd, 'aitcc.yaml'), 'workspaceId: 1\nminiAppId: 3\n');
-    const ctx = await resolveAppContext({ flagMiniAppId: 1, cwd });
-    expect(ctx.miniAppId).toBe(1);
+    const ctx = await resolveAppContext({ flagMiniAppId: 99, cwd });
+    expect(ctx.miniAppId).toBe(99);
     expect(ctx.miniAppIdSource).toBe('flag');
   });
 

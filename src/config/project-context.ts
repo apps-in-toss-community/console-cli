@@ -16,7 +16,7 @@ export interface ProjectContext {
   readonly workspaceId?: number;
   readonly miniAppId?: number;
   /** Absolute path of the file the context was read from (for diagnostics). */
-  readonly source?: string;
+  readonly source: string;
 }
 
 export class ProjectContextError extends Error {
@@ -81,9 +81,8 @@ export async function findProjectContext(cwd: string): Promise<ProjectContext | 
   try {
     parsed = path.toLowerCase().endsWith('.json') ? JSON.parse(raw) : parseYaml(raw);
   } catch (err) {
-    throw new ProjectContextError(
-      `failed to parse project context at ${path}: ${(err as Error).message}`,
-    );
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ProjectContextError(`failed to parse project context at ${path}: ${detail}`);
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ProjectContextError(`project context at ${path} is not a mapping`);

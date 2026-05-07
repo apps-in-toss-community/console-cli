@@ -284,24 +284,19 @@ export async function resolveAppContext(input: ResolveAppContextInput): Promise<
     );
   }
 
-  let miniAppId: number | undefined;
-  let miniAppIdSource: ContextSource | undefined;
+  let miniApp: { miniAppId: number; miniAppIdSource: ContextSource } | undefined;
   if (input.flagMiniAppId !== undefined) {
-    miniAppId = input.flagMiniAppId;
-    miniAppIdSource = 'flag';
+    miniApp = { miniAppId: input.flagMiniAppId, miniAppIdSource: 'flag' };
   } else if (envMiniApp !== undefined) {
-    miniAppId = envMiniApp;
-    miniAppIdSource = 'env';
+    miniApp = { miniAppId: envMiniApp, miniAppIdSource: 'env' };
   } else if (project?.miniAppId !== undefined && workspaceSource !== 'flag') {
-    miniAppId = project.miniAppId;
-    miniAppIdSource = 'yaml';
+    miniApp = { miniAppId: project.miniAppId, miniAppIdSource: 'yaml' };
   }
 
   return {
     workspaceId,
     workspaceSource,
-    ...(miniAppId !== undefined ? { miniAppId } : {}),
-    ...(miniAppIdSource !== undefined ? { miniAppIdSource } : {}),
-    ...(project?.source !== undefined ? { projectFile: project.source } : {}),
+    ...(miniApp !== undefined ? miniApp : {}),
+    ...(project !== null ? { projectFile: project.source } : {}),
   };
 }
