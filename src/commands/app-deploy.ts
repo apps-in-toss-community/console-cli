@@ -10,7 +10,14 @@ import {
 import { AitBundleError, type AitBundleInfo, readAitBundle } from '../config/ait-bundle.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
+import {
+  emitFailureFromError,
+  emitJson,
+  parsePositiveInt,
+  printContextHeader,
+  requireMiniAppId,
+  resolveAppOrFail,
+} from './_shared.js';
 
 // `runDeploy` is the testable seam for `aitcc app deploy`. The citty
 // wrapper in `app.ts` is a thin shim; tests pass a fake `fetchImpl` and
@@ -79,31 +86,15 @@ export interface DeployDeps {
   readonly readBundleImpl?: (path: string) => Promise<AitBundleInfo>;
 }
 
-function parseAppIdStrict(raw: string): number | null {
-  if (raw === '') return null;
-  if (!/^[1-9]\d*$/.test(raw)) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(n) ? n : null;
-}
-
 export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promise<void> {
-  // 1. Validate flag shape before loading the session so bad invocations
-  //    fail fast without the Chrome-spawn detour in case the user is not
-  //    logged in. Matches `app bundles upload`'s early-exit pattern.
-  if (typeof args.app !== 'string' || args.app === '') {
-    if (args.json) {
-      emitJson({
-        ok: false,
-        reason: 'missing-app-id',
-        message: '--app <id> is required',
-      });
-    } else {
-      process.stderr.write('app deploy: --app <id> is required.\n');
-    }
-    return exitAfterFlush(ExitCode.Usage);
-  }
-  const appId = parseAppIdStrict(args.app);
-  if (appId === null) {
+  // 1. Validate flag shape before reading the bundle / loading the session
+  //    so bad invocations fail fast without disk I/O or the Chrome-spawn
+  //    detour. `--app`'s presence is now optional (yaml/env can supply it),
+  //    but a malformed *value* should still short-circuit before we read
+  //    the bundle file — same fast-fail invariant the pre-PR-1b code had.
+  //    `resolveAppOrFail` re-parses below; this guard is only here to
+  //    reject `--app abc` before the bundle is opened.
+  if (typeof args.app === 'string' && args.app !== '' && parsePositiveInt(args.app) === null) {
     if (args.json) {
       emitJson({
         ok: false,
@@ -213,11 +204,21 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
     return exitAfterFlush(ExitCode.Usage);
   }
 
-  // 4. Resolve workspace (loads session + checks auth). In dry-run we
-  //    still do this because the `--json` plan includes `workspaceId`
-  //    and the agent-plugin parses that field unconditionally.
-  const ctx = await resolveWorkspaceContext(args);
+  // 4. Resolve workspace + miniApp (loads session + checks auth). In
+  //    dry-run we still do this because the `--json` plan includes
+  //    `workspaceId`/`appId` and the agent-plugin parses those fields
+  //    unconditionally. `--app` is now optional when `aitcc.yaml` (or
+  //    `AITCC_APP`) supplies a `miniAppId`.
+  const ctx = await resolveAppOrFail({
+    json: args.json,
+    appIdRaw: args.app,
+    appIdField: 'app',
+    ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+  });
   if (!ctx) return;
+  const appId = await requireMiniAppId(ctx, args.json);
+  if (appId === null) return;
+  printContextHeader(ctx, { json: args.json });
   const { session, workspaceId } = ctx;
 
   const memo = typeof args.memo === 'string' && args.memo.length > 0 ? args.memo : undefined;

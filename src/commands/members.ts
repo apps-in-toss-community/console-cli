@@ -2,7 +2,12 @@ import { defineCommand } from 'citty';
 import { fetchWorkspaceMembers } from '../api/members.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { emitFailureFromError, emitJson, resolveWorkspaceContext } from './_shared.js';
+import {
+  emitFailureFromError,
+  emitJson,
+  printContextHeader,
+  resolveWorkspaceContext,
+} from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -29,6 +34,7 @@ const lsCommand = defineCommand({
     const ctx = await resolveWorkspaceContext(args);
     if (!ctx) return;
     const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
 
     try {
       const members = await fetchWorkspaceMembers(workspaceId, session.cookies);

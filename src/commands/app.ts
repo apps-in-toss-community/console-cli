@@ -41,6 +41,9 @@ import {
   emitFailureFromError,
   emitJson,
   emitNotAuthenticated,
+  printContextHeader,
+  requireMiniAppId,
+  resolveAppOrFail,
   resolveWorkspaceContext,
 } from './_shared.js';
 import { runDeploy } from './app-deploy.js';
@@ -99,6 +102,7 @@ const lsCommand = defineCommand({
     const ctx = await resolveWorkspaceContext(args);
     if (!ctx) return;
     const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
 
     try {
       // List + review-status are independent read endpoints. Fire in parallel
@@ -198,13 +202,6 @@ export function pickMiniAppView(
   return draft ?? current;
 }
 
-function parseAppId(raw: string | undefined): number | null {
-  if (raw === undefined || raw === '') return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
-  return n;
-}
-
 const showCommand = defineCommand({
   meta: {
     name: 'show',
@@ -214,8 +211,9 @@ const showCommand = defineCommand({
   args: {
     id: {
       type: 'positional',
-      description: 'Mini-app ID (the numeric `appId` from `app ls` or `app register`).',
-      required: true,
+      description:
+        'Mini-app ID (the numeric `appId` from `app ls` or `app register`). Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
     },
     workspace: {
       type: 'string',
@@ -229,19 +227,6 @@ const showCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app show: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const view = args.view;
     if (view !== 'draft' && view !== 'current' && view !== 'merged') {
       if (args.json) {
@@ -257,8 +242,15 @@ const showCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -422,8 +414,8 @@ const statusCommand = defineCommand({
   args: {
     id: {
       type: 'positional',
-      description: 'Mini-app ID.',
-      required: true,
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
     },
     workspace: {
       type: 'string',
@@ -444,19 +436,6 @@ const statusCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app status: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const intervalRaw = Number(args.interval);
     if (!Number.isFinite(intervalRaw) || intervalRaw <= 0) {
       if (args.json) {
@@ -476,8 +455,15 @@ const statusCommand = defineCommand({
       Math.min(POLL_MAX_INTERVAL_SEC, Math.floor(intervalRaw)),
     );
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     // `serviceStatus` is a server-side string (PREPARE / RUNNING / …) that
@@ -609,7 +595,11 @@ const ratingsCommand = defineCommand({
     description: 'List user ratings and reviews left for a mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -629,19 +619,6 @@ const ratingsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app ratings: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const pageResult = parseNonNegativeInt(args.page, 'page');
     if ('error' in pageResult) {
       if (args.json) {
@@ -704,8 +681,15 @@ const ratingsCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -797,7 +781,11 @@ const reportsCommand = defineCommand({
     description: 'List user-submitted reports (신고 내역) for a mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -810,19 +798,6 @@ const reportsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app reports: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const pageSizeResult = parseNonNegativeInt(args['page-size'], 'page-size');
     if ('error' in pageSizeResult) {
       if (args.json) {
@@ -851,8 +826,15 @@ const reportsCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -934,7 +916,11 @@ const bundlesLsCommand = defineCommand({
     description: 'List upload bundles for a mini-app (page-based pagination).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -951,19 +937,6 @@ const bundlesLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const pageResult = parseNonNegativeInt(args.page, 'page');
     if ('error' in pageResult) {
       if (args.json) {
@@ -992,8 +965,15 @@ const bundlesLsCommand = defineCommand({
       }
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1053,7 +1033,11 @@ const bundlesDeployedCommand = defineCommand({
     description: 'Show the currently deployed bundle for a mini-app (or null if none).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -1061,22 +1045,15 @@ const bundlesDeployedCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles deployed: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1131,7 +1108,17 @@ const bundlesUploadCommand = defineCommand({
     description: 'Upload an .ait bundle (initialize → PUT → complete [+ memo]).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    // Two positionals (`id` then `path`) — citty assigns positionals in
+    // declaration order, so `id` must stay required: leaving it optional
+    // would let citty hand `./bundle.ait` to `id` and then complain that
+    // `path` is missing. Yaml miniAppId fallback is reserved for commands
+    // with a single positional or with the app id behind a flag (see
+    // `app deploy`'s `--app`).
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID.',
+      required: true,
+    },
     path: { type: 'positional', description: 'Path to the .ait bundle file.', required: true },
     'deployment-id': {
       type: 'string',
@@ -1150,19 +1137,6 @@ const bundlesUploadCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles upload: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
     if (deploymentId === '') {
       if (args.json) {
@@ -1196,8 +1170,15 @@ const bundlesUploadCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
     const memo = typeof args.memo === 'string' && args.memo.length > 0 ? args.memo : undefined;
 
@@ -1308,7 +1289,11 @@ const bundlesReviewCommand = defineCommand({
     description: 'Submit (or withdraw) an uploaded bundle for review.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     'deployment-id': {
       type: 'string',
       description: 'deploymentId of the uploaded bundle.',
@@ -1329,19 +1314,6 @@ const bundlesReviewCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles review: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
     if (deploymentId === '') {
       if (args.json) {
@@ -1365,8 +1337,15 @@ const bundlesReviewCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1444,7 +1423,11 @@ const bundlesReleaseCommand = defineCommand({
     description: 'Release (publish) an APPROVED bundle to end users.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     'deployment-id': {
       type: 'string',
       description: 'deploymentId of the APPROVED bundle to publish.',
@@ -1461,19 +1444,6 @@ const bundlesReleaseCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles release: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
     if (deploymentId === '') {
       if (args.json) {
@@ -1499,8 +1469,15 @@ const bundlesReleaseCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1536,7 +1513,11 @@ const bundlesTestPushCommand = defineCommand({
     description: 'Send a test push so the uploader can open this bundle on their device.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     'deployment-id': {
       type: 'string',
       description: 'deploymentId of the bundle to test.',
@@ -1548,19 +1529,6 @@ const bundlesTestPushCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles test-push: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
     const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
     if (deploymentId === '') {
       if (args.json) {
@@ -1570,8 +1538,15 @@ const bundlesTestPushCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Usage);
     }
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
     try {
       const result = await postBundleTestPush(workspaceId, appId, deploymentId, session.cookies);
@@ -1593,7 +1568,11 @@ const bundlesTestLinksCommand = defineCommand({
     description: 'Show per-device test URLs for the mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -1601,21 +1580,15 @@ const bundlesTestLinksCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app bundles test-links: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
     try {
       const links = await fetchBundleTestLinks(workspaceId, appId, session.cookies);
@@ -1673,7 +1646,11 @@ const certsLsCommand = defineCommand({
     description: 'List mTLS certificates issued for a mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -1681,22 +1658,15 @@ const certsLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app certs ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1786,7 +1756,11 @@ const certsIssueCommand = defineCommand({
     description: 'Issue a new mTLS certificate for a mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -1807,20 +1781,6 @@ const certsIssueCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app certs issue: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
     const nameResult = parseCertName(args.name);
     if ('error' in nameResult) {
       if (args.json) {
@@ -1832,8 +1792,15 @@ const certsIssueCommand = defineCommand({
     }
     const name = nameResult.value;
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -1934,22 +1901,21 @@ const certsRevokeCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const appId = parseAppId(args.app);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `--app must be a positive integer (got ${JSON.stringify(args.app)})`,
-        });
-      } else {
-        process.stderr.write(`app certs revoke: invalid --app ${JSON.stringify(args.app)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
-    const ctx = await resolveWorkspaceContext(args);
+    // certs revoke is the one Group A command whose mini-app id is a
+    // dedicated `--app` flag (not a positional, because the positional is
+    // <certId>). Hand the flag value to `resolveAppOrFail` as the
+    // appIdRaw — `appIdField: 'app'` makes the error message say `--app
+    // must be a positive integer` rather than `app id must be …`.
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.app,
+      appIdField: 'app',
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2029,7 +1995,11 @@ const metricsCommand = defineCommand({
     description: 'Show conversion metrics for a mini-app over a date range.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2055,20 +2025,6 @@ const metricsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app metrics: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
     const timeUnit = String(args['time-unit']).toUpperCase();
     if (!VALID_TIME_UNITS.includes(timeUnit as MetricsTimeUnit)) {
       const message = `--time-unit must be one of ${VALID_TIME_UNITS.join('|')} (got ${JSON.stringify(args['time-unit'])})`;
@@ -2100,8 +2056,15 @@ const metricsCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2201,7 +2164,11 @@ const shareRewardsLsCommand = defineCommand({
     description: 'List share-reward promotions configured for a mini-app.',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2213,22 +2180,15 @@ const shareRewardsLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app share-rewards ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2284,7 +2244,11 @@ const messagesLsCommand = defineCommand({
     description: 'List smart-message campaigns (formerly "push" — the 스마트 발송 menu).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2295,20 +2259,6 @@ const messagesLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app messages ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
     const pageResult = parseNonNegativeInt(String(args.page), 'page');
     if ('error' in pageResult) {
       if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
@@ -2322,8 +2272,15 @@ const messagesLsCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2389,7 +2346,11 @@ const eventsLsCommand = defineCommand({
     description: 'List custom event catalogs recorded for a mini-app (the 이벤트 menu).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2405,20 +2366,6 @@ const eventsLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app events ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
     const pageResult = parseNonNegativeInt(String(args.page), 'page');
     if ('error' in pageResult) {
       if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
@@ -2432,8 +2379,15 @@ const eventsLsCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2502,7 +2456,11 @@ const templatesLsCommand = defineCommand({
       'List the smart-message composer templates available for a mini-app (the 템플릿 picker in 스마트 발송).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2521,20 +2479,6 @@ const templatesLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app templates ls: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
     const pageResult = parseNonNegativeInt(String(args.page), 'page');
     if ('error' in pageResult) {
       if (args.json) emitJson({ ok: false, reason: 'invalid-page', message: pageResult.error });
@@ -2581,8 +2525,15 @@ const templatesLsCommand = defineCommand({
       }
     }
 
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2714,7 +2665,11 @@ const serviceStatusCommand = defineCommand({
       'Show the server-authoritative runtime status of a mini-app (serviceStatus, shutdown schedule).',
   },
   args: {
-    id: { type: 'positional', description: 'Mini-app ID.', required: true },
+    id: {
+      type: 'positional',
+      description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
+      required: false,
+    },
     workspace: {
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
@@ -2722,22 +2677,15 @@ const serviceStatusCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const appId = parseAppId(args.id);
-    if (appId === null) {
-      if (args.json) {
-        emitJson({
-          ok: false,
-          reason: 'invalid-id',
-          message: `app id must be a positive integer (got ${JSON.stringify(args.id)})`,
-        });
-      } else {
-        process.stderr.write(`app service-status: invalid id ${JSON.stringify(args.id)}\n`);
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
-
-    const ctx = await resolveWorkspaceContext(args);
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.id,
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
     if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
     try {
@@ -2823,7 +2771,8 @@ const deployCommand = defineCommand({
     path: { type: 'positional', description: 'Path to the .ait bundle file.', required: true },
     app: {
       type: 'string',
-      description: 'Mini-app ID. Required — no top-level "selected app" concept yet.',
+      description:
+        'Mini-app ID. Optional when AITCC_APP env or `miniAppId` in aitcc.yaml supplies one.',
     },
     'deployment-id': {
       type: 'string',

@@ -17,6 +17,8 @@ import {
   emitJson,
   emitNotAuthenticated,
   parsePositiveInt,
+  printContextHeader,
+  resolveWorkspaceContext,
 } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
@@ -196,40 +198,10 @@ const showCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const session = await readSession();
-    if (!session) {
-      emitNotAuthenticated(args.json);
-      return exitAfterFlush(ExitCode.NotAuthenticated);
-    }
-
-    let workspaceId: number | undefined;
-    if (args.workspace) {
-      const raw = String(args.workspace);
-      const parsed = parsePositiveInt(raw);
-      if (parsed === null) {
-        const message = `--workspace must be a positive integer (got ${raw})`;
-        if (args.json) {
-          emitJson({ ok: false, reason: 'invalid-id', message });
-        } else {
-          process.stderr.write(`${message}\n`);
-        }
-        return exitAfterFlush(ExitCode.Usage);
-      }
-      workspaceId = parsed;
-    } else {
-      workspaceId = session.currentWorkspaceId;
-    }
-
-    if (workspaceId === undefined) {
-      if (args.json) {
-        emitJson({ ok: false, reason: 'no-workspace-selected' });
-      } else {
-        process.stderr.write(
-          'No workspace selected. Pass `--workspace <id>` or run `aitcc workspace use <id>`.\n',
-        );
-      }
-      return exitAfterFlush(ExitCode.Usage);
-    }
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
 
     try {
       const detail = await fetchWorkspaceDetail(workspaceId, session.cookies);
@@ -255,41 +227,6 @@ const showCommand = defineCommand({
   },
 });
 
-// Shared helper for any workspace subcommand that takes an optional
-// --workspace flag and falls back to the selected workspace. Returns
-// either a numeric workspace id or emits the appropriate JSON/stderr
-// failure and returns null — callers should exit(Usage) on null.
-async function resolveWorkspaceArg(
-  args: { workspace?: unknown; json: boolean },
-  selected: number | undefined,
-): Promise<number | null> {
-  if (args.workspace) {
-    const raw = String(args.workspace);
-    const parsed = parsePositiveInt(raw);
-    if (parsed === null) {
-      const message = `--workspace must be a positive integer (got ${raw})`;
-      if (args.json) {
-        emitJson({ ok: false, reason: 'invalid-id', message });
-      } else {
-        process.stderr.write(`${message}\n`);
-      }
-      return null;
-    }
-    return parsed;
-  }
-  if (selected === undefined) {
-    if (args.json) {
-      emitJson({ ok: false, reason: 'no-workspace-selected' });
-    } else {
-      process.stderr.write(
-        'No workspace selected. Pass `--workspace <id>` or run `aitcc workspace use <id>`.\n',
-      );
-    }
-    return null;
-  }
-  return selected;
-}
-
 const partnerCommand = defineCommand({
   meta: {
     name: 'partner',
@@ -303,13 +240,10 @@ const partnerCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const session = await readSession();
-    if (!session) {
-      emitNotAuthenticated(args.json);
-      return exitAfterFlush(ExitCode.NotAuthenticated);
-    }
-    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
-    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
 
     try {
       const state = await fetchWorkspacePartner(workspaceId, session.cookies);
@@ -371,13 +305,9 @@ const termsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const session = await readSession();
-    if (!session) {
-      emitNotAuthenticated(args.json);
-      return exitAfterFlush(ExitCode.NotAuthenticated);
-    }
-    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
-    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
 
     const typesToQuery: readonly WorkspaceTermType[] = (() => {
       if (!args.type) return WORKSPACE_TERM_TYPES;
@@ -396,6 +326,7 @@ const termsCommand = defineCommand({
       }
       return exitAfterFlush(ExitCode.Usage);
     }
+    printContextHeader(ctx, { json: args.json });
 
     try {
       // Single-type path keeps the JSON payload flat; --all (or the
@@ -464,13 +395,9 @@ const segmentsLsCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
-    const session = await readSession();
-    if (!session) {
-      emitNotAuthenticated(args.json);
-      return exitAfterFlush(ExitCode.NotAuthenticated);
-    }
-    const workspaceId = await resolveWorkspaceArg(args, session.currentWorkspaceId);
-    if (workspaceId === null) return exitAfterFlush(ExitCode.Usage);
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
 
     const pageRaw = String(args.page);
     const pageNum = Number(pageRaw);
@@ -480,6 +407,7 @@ const segmentsLsCommand = defineCommand({
       else process.stderr.write(`${message}\n`);
       return exitAfterFlush(ExitCode.Usage);
     }
+    printContextHeader(ctx, { json: args.json });
 
     try {
       const page = await fetchWorkspaceSegments(

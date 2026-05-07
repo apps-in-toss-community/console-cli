@@ -58,6 +58,29 @@ aitcc upgrade --force    # reinstall the latest release even if versions match
 
 Planned commands — `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
 
+### Project context (`aitcc.yaml`)
+
+App- and workspace-scoped commands (`app status`, `app deploy`, `app certs ls`, `keys ls`, …) accept an explicit `--workspace <id>` and positional `<appId>`, but you can also drop an `aitcc.yaml` (or `aitcc.json`) at the root of your project and let the CLI find it by walking up from the current directory:
+
+```yaml
+# aitcc.yaml
+workspaceId: 3095
+miniAppId: 31146
+```
+
+Resolution priority (highest first):
+
+- **workspace**: `--workspace` flag → `AITCC_WORKSPACE` env → yaml `workspaceId` → session selection (`aitcc workspace use`)
+- **mini-app**: positional/flag `<appId>` → `AITCC_APP` env → yaml `miniAppId`
+
+Each command prints a one-line context header to stderr so you always see what was resolved (suppressed under `--json` so machine-readable output is unaffected):
+
+```
+[workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]
+```
+
+The walk stops at the nearest `.git` directory and never crosses `$HOME`. Passing `--workspace` overrides any yaml `miniAppId` (it may belong to a different workspace), but `AITCC_WORKSPACE` keeps it.
+
 ### Login details
 
 `aitcc login` launches a Chrome-family browser via the Chrome DevTools Protocol, navigates it to the Apps in Toss developer console sign-in URL, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.

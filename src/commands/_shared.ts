@@ -9,13 +9,31 @@ import { readSession, type Session, sessionPathForDiagnostics } from '../session
 // Kept in one place so all commands agree on the `--json` contract — one
 // line, trailing \n, stdout for structured output, stderr for diagnostics.
 //
-// Auth / network / API failure shapes are identical across every command:
-// { ok: true, authenticated: false } (exit 10), { ok: false,
-// reason: 'network-error', message } (exit 11), { ok: false,
-// reason: 'api-error', message } (exit 17). See any per-command
-// `--json contract` block (e.g. `commands/workspace.ts`) for the full
-// exit-code legend plus the success-shape specific to that command —
-// those per-command blocks are the source of truth for success payloads.
+// Cross-cutting failure shapes (emitted from every session/app/workspace-
+// scoped command — per-command `--json contract` blocks may add their own
+// reasons on top, but these are universal):
+//
+//   Auth/network/API:
+//     { ok: true, authenticated: false }                              exit 10
+//     { ok: false, reason: 'network-error', message }                 exit 11
+//     { ok: false, reason: 'api-error', status?, errorCode?, message } exit 17
+//
+//   Context resolution (any command that goes through
+//   `resolveWorkspaceContext` / `resolveAppOrFail`):
+//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//       (--workspace value, positional <appId>, or --app value malformed)
+//     { ok: false, reason: 'invalid-env', message }                   exit 2
+//       (AITCC_WORKSPACE or AITCC_APP env var contains a non-positive-int)
+//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
+//       (no flag/env/yaml/session source supplied a workspace id)
+//
+//   App-scoped commands additionally:
+//     { ok: false, reason: 'missing-app-id', message }                exit 2
+//       (workspace resolved but no source supplied a miniApp id)
+//
+// See any per-command `--json contract` block (e.g. `commands/workspace.ts`)
+// for the success-shape specific to that command and any command-specific
+// reasons stacked on top of these.
 
 export interface NotAuthenticatedPayload {
   readonly ok: true;
@@ -117,9 +135,11 @@ export function parsePositiveInt(raw: string): number | null {
 /**
  * Boilerplate wrapper for any workspace-scoped command (`app ls`,
  * `members ls`, `keys ls`, ...). Loads the session, resolves the workspace
- * id from `--workspace <id>` or the persisted selection, and handles the
- * three common failure branches (`no session`, `invalid id`, `no workspace
- * selected`). On success, the caller gets the session + resolved id back.
+ * id through the full priority chain (`--workspace` flag → `AITCC_WORKSPACE`
+ * env → `aitcc.yaml` → persisted selection), and handles the common failure
+ * branches (`no session`, `invalid id`, `invalid env`, `no workspace
+ * selected`). On success, the caller gets the session + resolved id +
+ * source bookkeeping back so it can `printContextHeader` consistently.
  *
  * The return type is `Promise<... | null>` but the `null` branch is never
  * observed at runtime: every failure path `await`s `exitAfterFlush` which
@@ -130,7 +150,12 @@ export function parsePositiveInt(raw: string): number | null {
 export async function resolveWorkspaceContext(args: {
   workspace?: string | undefined;
   json: boolean;
-}): Promise<{ session: Session; workspaceId: number } | null> {
+}): Promise<
+  | (AppContext & {
+      session: Session;
+    })
+  | null
+> {
   const session = await readSession();
   if (!session) {
     emitNotAuthenticated(args.json);
@@ -138,7 +163,7 @@ export async function resolveWorkspaceContext(args: {
     return null;
   }
 
-  let workspaceId: number | undefined;
+  let flagWorkspaceId: number | undefined;
   if (args.workspace) {
     const raw = String(args.workspace);
     const parsed = parsePositiveInt(raw);
@@ -149,23 +174,23 @@ export async function resolveWorkspaceContext(args: {
       await exitAfterFlush(ExitCode.Usage);
       return null;
     }
-    workspaceId = parsed;
-  } else {
-    workspaceId = session.currentWorkspaceId;
+    flagWorkspaceId = parsed;
   }
 
-  if (workspaceId === undefined) {
-    if (args.json) emitJson({ ok: false, reason: 'no-workspace-selected' });
-    else {
-      process.stderr.write(
-        'No workspace selected. Pass `--workspace <id>` or run `aitcc workspace use <id>`.\n',
-      );
-    }
-    await exitAfterFlush(ExitCode.Usage);
+  let app: AppContext;
+  try {
+    app = await resolveAppContext({
+      ...(flagWorkspaceId !== undefined ? { flagWorkspaceId } : {}),
+      ...(session.currentWorkspaceId !== undefined
+        ? { sessionWorkspaceId: session.currentWorkspaceId }
+        : {}),
+    });
+  } catch (err) {
+    await emitAppContextErrorAndExit(args.json, err);
     return null;
   }
 
-  return { session, workspaceId };
+  return { session, ...app };
 }
 
 /**
@@ -299,4 +324,174 @@ export async function resolveAppContext(input: ResolveAppContextInput): Promise<
     ...(miniApp !== undefined ? miniApp : {}),
     ...(project !== null ? { projectFile: project.source } : {}),
   };
+}
+
+/**
+ * Common failure-emitter for `AppContextError` produced by the priority
+ * chain. Workspace-scoped (`resolveWorkspaceContext`) and app-scoped
+ * (`resolveAppOrFail`) callers both feed any thrown `AppContextError`
+ * through here so the `--json` shape and exit code stay aligned across
+ * the two entry points.
+ */
+async function emitAppContextErrorAndExit(json: boolean, err: unknown): Promise<void> {
+  if (err instanceof AppContextError && err.reason === 'invalid-env') {
+    if (json) emitJson({ ok: false, reason: 'invalid-env', message: err.message });
+    else process.stderr.write(`${err.message}\n`);
+    await exitAfterFlush(ExitCode.Usage);
+    return;
+  }
+  if (err instanceof AppContextError && err.reason === 'no-workspace-selected') {
+    if (json) emitJson({ ok: false, reason: 'no-workspace-selected' });
+    else process.stderr.write(`${err.message}\n`);
+    await exitAfterFlush(ExitCode.Usage);
+    return;
+  }
+  throw err;
+}
+
+/**
+ * Boilerplate wrapper for app-scoped commands (`app show`, `app status`,
+ * `app bundles ls`, ...). Builds on `resolveWorkspaceContext` — every
+ * app-scoped command also loads the session and resolves the workspace
+ * — and additionally accepts a positional `<appId>` value (or per-command
+ * `--app` flag value) that feeds into the miniApp priority chain.
+ *
+ * `args.id` is the raw positional value as citty surfaces it. We accept
+ * `unknown` because citty hands back `string | undefined`, but tests
+ * sometimes pass `number` literals; guarding with `String(...)` matches
+ * the parsing the per-command early-validation used to do.
+ *
+ * On a malformed positional we emit the same `invalid-id` shape that the
+ * pre-PR-1b commands used so agent-plugin's parsing is unchanged.
+ *
+ * Returns `null` after exiting on every failure branch, mirroring
+ * `resolveWorkspaceContext`. Callers must `if (!ctx) return;`.
+ */
+export async function resolveAppOrFail(args: {
+  workspace?: string | undefined;
+  /** Raw positional/flag value for the mini-app id. */
+  appIdRaw?: unknown;
+  /** Field name to surface in error messages (`id` or `app`). */
+  appIdField?: 'id' | 'app';
+  json: boolean;
+}): Promise<
+  | (AppContext & {
+      session: Session;
+    })
+  | null
+> {
+  // Parse the explicit positional/flag first so a typo is rejected before
+  // we let yaml/env quietly take over — `aitcc app status 42x` should not
+  // silently fall through to the yaml miniAppId.
+  let flagMiniAppId: number | undefined;
+  const raw = args.appIdRaw;
+  if (raw !== undefined && raw !== null && raw !== '') {
+    const str = typeof raw === 'string' ? raw : String(raw);
+    const parsed = parsePositiveInt(str);
+    if (parsed === null) {
+      const field = args.appIdField === 'app' ? '--app' : 'app id';
+      const message = `${field} must be a positive integer (got ${JSON.stringify(str)})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-id', message });
+      else process.stderr.write(`${message}\n`);
+      await exitAfterFlush(ExitCode.Usage);
+      return null;
+    }
+    flagMiniAppId = parsed;
+  }
+
+  const session = await readSession();
+  if (!session) {
+    emitNotAuthenticated(args.json);
+    await exitAfterFlush(ExitCode.NotAuthenticated);
+    return null;
+  }
+
+  let flagWorkspaceId: number | undefined;
+  if (args.workspace) {
+    const wsRaw = String(args.workspace);
+    const parsed = parsePositiveInt(wsRaw);
+    if (parsed === null) {
+      const message = `--workspace must be a positive integer (got ${wsRaw})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-id', message });
+      else process.stderr.write(`${message}\n`);
+      await exitAfterFlush(ExitCode.Usage);
+      return null;
+    }
+    flagWorkspaceId = parsed;
+  }
+
+  let app: AppContext;
+  try {
+    app = await resolveAppContext({
+      ...(flagWorkspaceId !== undefined ? { flagWorkspaceId } : {}),
+      ...(flagMiniAppId !== undefined ? { flagMiniAppId } : {}),
+      ...(session.currentWorkspaceId !== undefined
+        ? { sessionWorkspaceId: session.currentWorkspaceId }
+        : {}),
+    });
+  } catch (err) {
+    await emitAppContextErrorAndExit(args.json, err);
+    return null;
+  }
+
+  return { session, ...app };
+}
+
+/**
+ * Emit the standard "miniApp id required" failure for app-scoped commands
+ * whose context resolved a workspace but no miniApp. Returns `null` after
+ * exiting so the caller can `if (!miniAppId) return;` without an extra
+ * branch. Lifted into `_shared.ts` so every Group A command emits the
+ * same JSON shape.
+ */
+export async function requireMiniAppId(ctx: AppContext, json: boolean): Promise<number | null> {
+  if (ctx.miniAppId !== undefined) return ctx.miniAppId;
+  const message =
+    'app id required (provide as argument, --app flag, AITCC_APP env, or `miniAppId` in aitcc.yaml)';
+  if (json) emitJson({ ok: false, reason: 'missing-app-id', message });
+  else process.stderr.write(`${message}\n`);
+  await exitAfterFlush(ExitCode.Usage);
+  return null;
+}
+
+function describeSource(
+  source: ContextSource,
+  kind: 'workspace' | 'app',
+  projectFile: string | undefined,
+): string {
+  if (source === 'flag') return kind === 'workspace' ? '(from --workspace)' : '(from --app)';
+  if (source === 'env')
+    return kind === 'workspace' ? '(from $AITCC_WORKSPACE)' : '(from $AITCC_APP)';
+  if (source === 'yaml') {
+    // Use the simple file label (`aitcc.yaml` / `aitcc.json`) rather than
+    // the absolute path so the header stays short on deep checkouts. The
+    // exact path is in `ctx.projectFile` for callers that want it.
+    if (projectFile !== undefined) {
+      const slash = Math.max(projectFile.lastIndexOf('/'), projectFile.lastIndexOf('\\'));
+      const base = slash >= 0 ? projectFile.slice(slash + 1) : projectFile;
+      return `(from ${base})`;
+    }
+    return '(from aitcc.yaml)';
+  }
+  return '(from session)';
+}
+
+/**
+ * Print the one-line `[workspace: … · app: …]` context header to stderr
+ * before a command emits its real output. Suppressed under `--json` so
+ * machine-readable callers see only the structured stdout. Stays on
+ * stderr (not stdout) so it never lands in pipes that grep stdout, and
+ * stays out of TTY-only branches so CI logs still record what context
+ * was used.
+ */
+export function printContextHeader(ctx: AppContext, opts: { json: boolean }): void {
+  if (opts.json) return;
+  const wsTag = describeSource(ctx.workspaceSource, 'workspace', ctx.projectFile);
+  let line = `[workspace: ${ctx.workspaceId} ${wsTag}`;
+  if (ctx.miniAppId !== undefined && ctx.miniAppIdSource !== undefined) {
+    const appTag = describeSource(ctx.miniAppIdSource, 'app', ctx.projectFile);
+    line += ` · app: ${ctx.miniAppId} ${appTag}`;
+  }
+  line += ']\n';
+  process.stderr.write(line);
 }

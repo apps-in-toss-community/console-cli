@@ -107,7 +107,8 @@ describe('runDeploy', () => {
     await writeSession(currentWorkspaceId === undefined ? base : { ...base, currentWorkspaceId });
   }
 
-  it('emits missing-app-id + exit 2 when --app is not passed', async () => {
+  it('emits missing-app-id + exit 2 when --app is not passed and no yaml/env supplies one', async () => {
+    await writeSessionAt(3095);
     const path = writeBundleFile(root, 'dep-123');
     const exit = await captureExit(() =>
       runDeploy({ path, app: undefined, json: true }, { fetchImpl: loudFetch }),
@@ -118,6 +119,7 @@ describe('runDeploy', () => {
   });
 
   it('emits invalid-id + exit 2 when --app is not a positive integer', async () => {
+    await writeSessionAt(3095);
     const path = writeBundleFile(root, 'dep-123');
     const exit = await captureExit(() =>
       runDeploy({ path, app: 'abc', json: true }, { fetchImpl: loudFetch }),
