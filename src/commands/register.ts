@@ -18,11 +18,7 @@ import {
   ImageDimensionError,
   validateImageDimensions,
 } from '../config/image-validator.js';
-import {
-  findProjectContext,
-  ProjectContextError,
-  writeProjectMiniAppId,
-} from '../config/project-context.js';
+import { findProjectContext, writeProjectMiniAppId } from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import {
@@ -457,12 +453,7 @@ async function persistMiniAppIdToProject(
     }
   } catch (err) {
     if (!json) {
-      const detail =
-        err instanceof ProjectContextError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const detail = err instanceof Error ? err.message : String(err);
       process.stderr.write(`warning: could not persist miniAppId to ${ctx.source}: ${detail}\n`);
     }
   }

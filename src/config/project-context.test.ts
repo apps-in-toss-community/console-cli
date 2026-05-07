@@ -188,6 +188,34 @@ describe('writeProjectMiniAppId', () => {
     expect(readFileSync(path, 'utf8')).toBe(original);
   });
 
+  it('preserves tab indentation when updating aitcc.json', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.json');
+    // Tabs, not spaces. Common in repos that pin .editorconfig to tabs;
+    // we must not silently convert to a 2-space file on first write.
+    const original = `{\n\t"workspaceId": 3095,\n\t"appName": "example"\n}\n`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome.status).toBe('written');
+    const updated = readFileSync(path, 'utf8');
+    expect(updated).toContain('\t"workspaceId": 3095');
+    expect(updated).toContain('\t"miniAppId": 31146');
+    expect(updated).not.toMatch(/^ {2}"/m);
+  });
+
+  it('keeps single-line aitcc.json compact instead of expanding to multi-line', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.json');
+    // A compact one-line JSON file (e.g. emitted by `jq -c`). Adding
+    // a key should not turn it into a multi-line space-indented file.
+    const original = `{"workspaceId":3095}`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome.status).toBe('written');
+    const updated = readFileSync(path, 'utf8');
+    expect(updated).toBe('{"workspaceId":3095,"miniAppId":31146}');
+  });
+
   it('throws ProjectContextError on a malformed yaml file', async () => {
     const root = makeTempDir();
     const path = join(root, 'aitcc.yaml');

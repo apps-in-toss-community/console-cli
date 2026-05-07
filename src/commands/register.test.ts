@@ -619,6 +619,36 @@ describe('runRegister', () => {
     expect(await readFileUtf8(projectPath)).toBe('workspaceId: 3095\n');
   });
 
+  it('keeps exit 0 and emits a stderr warning when the project file is read-only', async () => {
+    await writeSessionAt(3095);
+    const projectPath = await writeProjectFile('aitcc.yaml', 'workspaceId: 3095\n');
+    const { chmodSync } = await import('node:fs');
+    // chmod 0444 only blocks the open-for-write step on POSIX. Skip on
+    // Windows where the test runner ignores chmod and the assertion
+    // would not exercise the failure branch.
+    if (process.platform === 'win32') return;
+    chmodSync(projectPath, 0o444);
+    try {
+      const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+      const exit = await captureExit(() =>
+        runRegister(
+          { json: false, acceptTerms: true, config: manifestPath },
+          depsWith({
+            uploadImpl: async () => 'https://cdn.example/x.png',
+            submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+          }),
+        ),
+      );
+      // Submit succeeded → exit stays 0 even though write-back failed.
+      expect(exit?.code).toBe(0);
+      expect(stderr.join('')).toContain(`warning: could not persist miniAppId to ${projectPath}`);
+      // Success line still printed to stdout.
+      expect(stdout.join('')).toContain('Registered mini-app 31146');
+    } finally {
+      chmodSync(projectPath, 0o644);
+    }
+  });
+
   it('is a no-op when aitcc.yaml already pins the same miniAppId', async () => {
     await writeSessionAt(3095);
     const original = '# header\nworkspaceId: 3095\nminiAppId: 31146\n';

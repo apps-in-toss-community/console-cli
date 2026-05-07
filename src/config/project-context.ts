@@ -174,8 +174,16 @@ function rewriteJson(path: string, raw: string, miniAppId: number): string | nul
   return JSON.stringify(obj, null, indent) + trailing;
 }
 
-function detectJsonIndent(raw: string): number {
-  const match = raw.match(/\n( +)\S/);
-  if (!match?.[1]) return 2;
-  return match[1].length;
+// Returns the original file's indentation token so JSON.stringify can
+// reproduce it (number = spaces, string = literal token, e.g. '\t').
+// `0` keeps a single-line / compact file compact instead of expanding
+// it to multi-line on a one-key edit. Default is two spaces, matching
+// the format examples in README and existing repo style.
+function detectJsonIndent(raw: string): number | string {
+  if (!raw.includes('\n')) return 0;
+  const match = raw.match(/\n([ \t]+)\S/);
+  const token = match?.[1];
+  if (!token) return 2;
+  if (token.includes('\t')) return '\t';
+  return token.length;
 }
