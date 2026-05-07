@@ -64,6 +64,8 @@ Walk 중 `.git`을 만나면 그 디렉토리까지만 보고 멈춘다. `$HOME`
 
 구현: loader는 `src/config/project-context.ts:findProjectContext`, 정책 + flag/env/session 결합은 `src/commands/_shared.ts:resolveAppContext`. 명령 wrapper(`resolveAppOrFail` / `resolveWorkspaceContext`)가 이 결과를 받아 `--json` 실패 분기·exit code를 일관되게 emit하고, 성공한 경우 `printContextHeader`가 한 줄짜리 헤더를 stderr로 출력한다 (`[workspace: 3095 (from session)]` 또는 `[workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]` 형식). `--json` 모드에선 헤더가 silently 생략된다 — agent-plugin이 stdout 한 줄만 파싱하므로 stderr 잡음과 무관. 0.1.x에서 `aitcc.yaml`은 register manifest와 동일 파일을 공유하지만, project context 필드는 manifest 검증과 무관하게 별도로 파싱된다 (manifest에 없는 yaml에서도 컨텍스트만 읽힘).
 
+**Write-back on register**: `aitcc app register`이 성공하면 응답으로 받은 `miniAppId`를 resolve된 project context 파일(`aitcc.yaml` 또는 `aitcc.json`)에 쓴다. 후속 명령(`app status`/`app deploy` 등)이 `--app` 없이도 같은 앱을 가리키게 하기 위함. 구현은 `src/config/project-context.ts:writeProjectMiniAppId`. YAML은 `parseDocument`로 round-trip해 사용자 주석·키 순서를 보존하고, JSON은 기존 indent + trailing newline을 유지한다. 같은 id가 이미 박혀 있으면 무변경 (`status: 'unchanged'`)이고 stderr 진단도 생략한다. `--dry-run`은 write-back을 건너뛰고, project 파일 자체가 없으면 stderr에 한 줄 hint만 띄우고 파일을 새로 만들지 않는다 (자동 생성은 사용자가 예상치 못한 magic이라 의도적으로 피함). 실패는 best-effort: write가 실패해도 register 자체는 이미 성공했으므로 exit code를 바꾸지 않고 stderr warning만 emit한다.
+
 ### API quirks (dog-food로 확정된 것)
 
 > **Source of truth**: 콘솔 API endpoint 스펙·캡처된 본문·redaction 규칙은 [`docs/api/`](./docs/api/)에 도메인별로 분할 체크인. 이 섹션은 **새 명령을 짜기 전에 봐야 할 hot-list 요약**일 뿐, 본문은 `docs/api/`가 권위.

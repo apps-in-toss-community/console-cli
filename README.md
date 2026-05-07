@@ -81,6 +81,8 @@ Each command prints a one-line context header to stderr so you always see what w
 
 The walk stops at the nearest `.git` directory and never crosses `$HOME`. Passing `--workspace` overrides any yaml `miniAppId` (it may belong to a different workspace), but `AITCC_WORKSPACE` keeps it.
 
+When `aitcc app register` succeeds, the returned `miniAppId` is written back into the resolved `aitcc.yaml`/`aitcc.json` (comments and key order in YAML are preserved). Subsequent commands can then run without `--app`. The write-back is skipped under `--dry-run` and silently no-ops when the file already pins the same id; if no project file exists in the tree, the CLI prints a one-line stderr hint instead of creating one.
+
 ### Login details
 
 `aitcc login` launches a Chrome-family browser via the Chrome DevTools Protocol, navigates it to the Apps in Toss developer console sign-in URL, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
