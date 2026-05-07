@@ -22,6 +22,15 @@ export function sessionFilePath(): string {
   return join(configDir(), 'session.json');
 }
 
+// Pointer file for credential state. Stores the email of the credential
+// currently active in the OS keychain (so the next `aitcc login` can look
+// it up without prompting). NEVER contains the password — that lives in
+// the keychain, keyed by this email. Distinct from session.json on
+// purpose: a session has volatile cookies, credentials are durable.
+export function authStateFilePath(): string {
+  return join(configDir(), 'auth-state.json');
+}
+
 // Cache directory — for non-secret, regenerable state. Distinct from
 // `configDir()` so a `rm -rf ~/.cache/aitcc` cannot take the session with
 // it, and so packagers can mount the two on different volumes.
