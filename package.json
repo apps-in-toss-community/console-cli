@@ -55,6 +55,7 @@
     "url": "https://github.com/apps-in-toss-community/console-cli/issues"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.4.2",
     "citty": "^0.2.2",
     "fflate": "^0.8.2",
     "image-size": "^2.0.2",

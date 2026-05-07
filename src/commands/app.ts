@@ -47,6 +47,7 @@ import {
   resolveWorkspaceContext,
 } from './_shared.js';
 import { runDeploy } from './app-deploy.js';
+import { runAppInit } from './app-init.js';
 import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
@@ -2705,6 +2706,39 @@ const serviceStatusCommand = defineCommand({
   },
 });
 
+const initCommand = defineCommand({
+  meta: {
+    name: 'init',
+    description:
+      'Scaffold a well-formed `aitcc.yaml` interactively. Asks for the required ' +
+      'manifest fields, picks the workspace from the live API list, and lays the ' +
+      'optional fields as commented lines for later edits.',
+  },
+  args: {
+    cwd: {
+      type: 'string',
+      description: 'Directory to write `aitcc.yaml` into (default: current directory).',
+    },
+    force: {
+      type: 'boolean',
+      description: 'Overwrite an existing project file instead of erroring.',
+      default: false,
+    },
+    json: {
+      type: 'boolean',
+      description: 'Emit machine-readable JSON to stdout.',
+      default: false,
+    },
+  },
+  async run({ args }) {
+    await runAppInit({
+      ...(args.cwd !== undefined ? { cwd: args.cwd as string } : {}),
+      force: args.force,
+      json: args.json,
+    });
+  },
+});
+
 const registerCommand = defineCommand({
   meta: {
     name: 'register',
@@ -2839,6 +2873,7 @@ export const appCommand = defineCommand({
     description: 'Inspect mini-apps in a workspace.',
   },
   subCommands: {
+    init: initCommand,
     ls: lsCommand,
     show: showCommand,
     status: statusCommand,

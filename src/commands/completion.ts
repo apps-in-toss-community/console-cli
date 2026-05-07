@@ -46,6 +46,7 @@ const SUB_COMMANDS: Record<string, readonly string[]> = {
     'categories',
     'certs',
     'events',
+    'init',
     'ls',
     'messages',
     'metrics',
