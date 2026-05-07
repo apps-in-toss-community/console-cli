@@ -1,0 +1,52 @@
+name: spike — CI cookie
+
+# THROWAWAY workflow for the ci-cookie spike. Manually dispatched only;
+# delete this file (and the AITCC_COOKIE_BLOB secret) once the spike is
+# concluded.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Show runner IP (sanity)
+        # Useful for the report so we can confirm the request really did
+        # leave from a non-Korean IP. No secrets touched.
+        run: |
+          curl -sS https://api.ipify.org || echo "(ipify failed)"
+          echo
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run spike
+        env:
+          AITCC_COOKIE_BLOB: ${{ secrets.AITCC_COOKIE_BLOB }}
+        run: bun run scripts/ci-cookie-spike.ts
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-output
+          path: spike-output/
+          if-no-files-found: error
+          retention-days: 1

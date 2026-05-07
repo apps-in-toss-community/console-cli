@@ -9,3 +9,7 @@ coverage
 
 .DS_Store
 *.log
+
+# spike artefacts (throwaway)
+spike-output/
+CI-COOKIE-SPIKE-RESULT.md
