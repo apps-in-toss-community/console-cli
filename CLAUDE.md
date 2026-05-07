@@ -100,6 +100,19 @@ Walk 중 `.git`을 만나면 그 디렉토리까지만 보고 멈춘다. `$HOME`
 
 OS keychain은 native dependency라 `bun build --compile`이 플랫폼별로 깔끔하게 번들하지 못한다. XDG `0600` 파일은 첫 릴리즈의 pragmatic floor — `gh`/`gcloud`/`firebase` 모두 거쳐 온 형태. 나중에 마이그레이션 쉬움 (`cookies`/`origins`만 keychain으로). Backlog 아이템.
 
+### Credential storage (`src/auth/credentials.ts`)
+
+세션 쿠키와는 **분리된 layer**. 쿠키는 휘발성 (재로그인 한 번이면 새로 받음), email + password는 durable이므로 다음 `aitcc login`이 form을 headlessly 채울 수 있도록 유지된다. PR α에서 라이브러리만 들어옴 — CLI 사용자 surface(`auth set/clear`) 와 form-fill 결합은 후속 PR.
+
+- **Email**: `auth-state.json` (`$XDG_CONFIG_HOME/aitcc/auth-state.json`, `0600`, schema v1, just `{ schemaVersion, activeEmail }`). 비밀이 아니라 keychain entry를 찾기 위한 포인터일 뿐이다. 분리 이유: keychain 백엔드 (`security` / `secret-tool` / CredRead)는 lookup에 account 이름이 필요한데 그게 곧 email이다. cookie 세션 파일과 별도로 둠 — 쿠키 wipe 후에도 credential은 살아남아야 한다.
+- **Password**: OS keychain. service = `aitcc.credentials`, account = `<email>`. **stock CLI 도구만 호출**해서 native peer 의존이 없고, `bun build --compile`이 깔끔하게 번들된다 (검증: `scripts/credentials-smoke.ts`로 darwin-arm64 round-trip).
+  - macOS: `security add-generic-password -A` / `find-generic-password -w` / `delete-generic-password`. `-A` flag로 ACL을 열어 후속 read에 prompt 없음 (단일 사용자 머신 가정 — argv-visible password와 동일 trade-off). `-T ''`는 정반대 의미라 함께 못 씀.
+  - Linux: `secret-tool store/lookup/clear` (libsecret). password를 stdin으로 흘려 argv 노출 회피.
+  - Windows: PowerShell + `Add-Type` P/Invoke로 `CredWrite` / `CredRead` / `CredDelete`. password는 hex로 인코딩해서 script body에 박음 (Task Manager 보호).
+- **Source priority** (`loadCredentials`): `AITCC_EMAIL` + `AITCC_PASSWORD` env (CI single-shot) → keychain via auth-state pointer → `null`. 반환은 `kind`-discriminated union (`'env' | 'keychain'`)이라 호출자가 진단에 사용 가능. `'file'` source (`~/.config/aitcc/credentials.json`)는 follow-up.
+- **Idempotent save**: `saveCredentials(email, pw)`이 같은 값으로 호출되면 `status: 'unchanged'` + 키체인 write 안 함 → 사용자가 같은 입력으로 재시도해도 OS prompt가 추가로 안 뜬다. 다른 email로 switch 시 이전 keychain entry는 best-effort `clear`.
+- **TouchID는 안 씀**. `LocalAuthentication.framework` + `SecItemAdd` 직접 호출이 필요한데 dlopen + Linux/Windows 동등 path 추가가 폭발해서 `bun --compile` 부담. 1.0 follow-up.
+
 ### Login 선택 근거 (CDP capture vs OAuth callback server)
 
 **결정: CDP로 시스템 Chrome을 spawn해 사용자 로그인 완료 감지 후 쿠키 덤프.** 초기 스캐폴드는 localhost OAuth callback server였는데 다음 이유로 폐기됨:
