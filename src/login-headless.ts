@@ -45,9 +45,9 @@ export const STEP_UP_BODY_PATTERN = /토스 ?앱|간편인증|전자서명|앱.{
 
 // Match against pathname only, not the full URL. The OAuth sign-in URL
 // embeds `redirect_uri=https%3A%2F%2Fapps-in-toss…` in its query string;
-// the `%2F%2Fa` decodes-as-bytes to literally contain `2Fa`, which the
-// `2fa` alternation otherwise matches and trips a false step-up on the
-// very first poll.
+// the raw characters `%2F%2Fa` contain the literal substring `2fa`
+// (case-insensitive), which the `2fa` alternation matches and trips a
+// false step-up on the very first poll.
 export function urlIndicatesStepUp(url: string): boolean {
   let pathname: string;
   try {
