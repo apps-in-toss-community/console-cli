@@ -234,10 +234,13 @@ function optionalPathArray(
 // bundle + VALIDATION-RULES.md). Keeping local validators lets agent-
 // plugin surface `missing-required-field`/`invalid-config` instead of a
 // pass-through `api-error` when the user supplies garbage.
-const EMAIL_REGEX =
+//
+// These constants/helpers are exported so `aitcc app init`'s prompt-level
+// validators can reuse them without duplicating the rules (drift risk).
+export const EMAIL_REGEX =
   /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
 
-function isValidEmail(v: string): boolean {
+export function isValidEmail(v: string): boolean {
   return EMAIL_REGEX.test(v.toLowerCase());
 }
 
@@ -252,16 +255,34 @@ function isValidEmail(v: string): boolean {
 // titleEn: `^[A-Za-z0-9 :·?]+$`; ≤ 15 code points excluding spaces; AND
 // each space-separated word must be title-case (first char uppercase, rest
 // lowercase). All-caps tokens like `AITC`/`SDK` are rejected by the server.
-const TITLE_KO_REGEX = /^[가-힣A-Za-z0-9 :·?]+$/;
-const TITLE_EN_REGEX = /^[A-Za-z0-9 :·?]+$/;
-const TITLE_KO_MAX_CODEPOINTS_NO_SPACE = 10;
-const TITLE_EN_MAX_CODEPOINTS_NO_SPACE = 15;
+export const TITLE_KO_REGEX = /^[가-힣A-Za-z0-9 :·?]+$/;
+export const TITLE_EN_REGEX = /^[A-Za-z0-9 :·?]+$/;
+// appName slug: kebab-case starting with a lowercase letter. Mirrors the
+// console's slug rule observed during dog-food (server rejects uppercase
+// or leading digits). Exported for prompt validators in `app init`.
+export const APP_NAME_REGEX = /^[a-z][a-z0-9-]*$/;
 
-function codePointsExcludingSpaces(v: string): number {
+export const MANIFEST_LIMITS = {
+  titleKoMaxCodepoints: 10,
+  titleEnMaxCodepoints: 15,
+  subtitleMaxChars: 20,
+  descriptionMaxCodepoints: 500,
+  keywordsMax: 10,
+  verticalScreenshotsMin: 3,
+} as const;
+
+const TITLE_KO_MAX_CODEPOINTS_NO_SPACE = MANIFEST_LIMITS.titleKoMaxCodepoints;
+const TITLE_EN_MAX_CODEPOINTS_NO_SPACE = MANIFEST_LIMITS.titleEnMaxCodepoints;
+
+export function countCodepointsExcludingSpaces(v: string): number {
   return [...v].filter((ch) => ch !== ' ').length;
 }
 
-function isTitleCaseWord(word: string): boolean {
+// Backwards-compatible alias retained as a private name for the existing
+// validator callsites — public consumers go through `countCodepointsExcludingSpaces`.
+const codePointsExcludingSpaces = countCodepointsExcludingSpaces;
+
+export function isTitleCaseWord(word: string): boolean {
   // Only enforced on words that contain ASCII letters; pure-digit or
   // punctuation-only tokens (e.g. `:`, `V2`, `123`) pass through. The
   // server's exact tokenization is not documented — using "first letter
@@ -286,7 +307,7 @@ function isTitleCaseWord(word: string): boolean {
 // (`[...str].length`) to err on the strict side — the server's internal
 // counting rule is not documented, so we use the count that treats
 // astral characters as single units.
-const DETAIL_DESCRIPTION_MAX_CODEPOINTS = 500;
+const DETAIL_DESCRIPTION_MAX_CODEPOINTS = MANIFEST_LIMITS.descriptionMaxCodepoints;
 
 function isValidHttpUrl(v: string): boolean {
   try {
@@ -351,10 +372,10 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
   }
   const subtitle = requireString(raw, 'subtitle');
   // subtitle ≤ 20 chars (F(20) in VALIDATION-RULES).
-  if (subtitle.length > 20) {
+  if (subtitle.length > MANIFEST_LIMITS.subtitleMaxChars) {
     throw new ManifestError(
       'invalid-config',
-      `subtitle must be 20 characters or fewer (got ${subtitle.length})`,
+      `subtitle must be ${MANIFEST_LIMITS.subtitleMaxChars} characters or fewer (got ${subtitle.length})`,
       'subtitle',
     );
   }
