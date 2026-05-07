@@ -3,6 +3,7 @@ import type { FetchLike } from '../api/http.js';
 import { TossApiError } from '../api/http.js';
 import {
   AUTH_SETTLE_DELAY_MS,
+  chooseLoginMode,
   isAllowedAuthorizeHost,
   isLoginLanding,
   resolveUserWithRetry,
@@ -156,5 +157,22 @@ describe('resolveUserWithRetry', () => {
     };
     await expect(resolveUserWithRetry(cookies, { fetchImpl })).rejects.toBeInstanceOf(TossApiError);
     expect(calls).toBe(1);
+  });
+});
+
+describe('chooseLoginMode', () => {
+  // Pure decision function — sums up the policy in one place so the
+  // CLI command body stays focused on I/O.
+  it('picks headless only when credentials exist and --interactive is off', () => {
+    expect(chooseLoginMode({ interactiveFlag: false, hasCredentials: true })).toBe('headless');
+  });
+  it('falls back to interactive when no credentials are configured', () => {
+    expect(chooseLoginMode({ interactiveFlag: false, hasCredentials: false })).toBe('interactive');
+  });
+  it('--interactive forces interactive even with credentials available', () => {
+    expect(chooseLoginMode({ interactiveFlag: true, hasCredentials: true })).toBe('interactive');
+  });
+  it('--interactive without credentials still produces interactive', () => {
+    expect(chooseLoginMode({ interactiveFlag: true, hasCredentials: false })).toBe('interactive');
   });
 });

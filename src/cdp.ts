@@ -302,6 +302,89 @@ export async function getAllCookies(
   return result.cookies.map((raw, index) => validateCookie(raw, index));
 }
 
+/**
+ * Override the User-Agent on the attached page. The default headless
+ * Chrome UA contains a "HeadlessChrome" token that some servers use as a
+ * bot signal (toss.im included, per the auth spike). We spoof a current
+ * stable Chrome UA before the first navigation kicks off.
+ */
+export async function setUserAgentOverride(
+  client: CdpClient,
+  sessionId: string,
+  userAgent: string,
+): Promise<void> {
+  await client.send('Network.setUserAgentOverride', { userAgent }, sessionId);
+}
+
+/**
+ * Run a JS expression in the main frame and return the resolved value.
+ * Wraps the awkward `Runtime.evaluate` shape so callers can `.ok`-check
+ * once. `awaitPromise` is on so async expressions like `(async () => …)()`
+ * resolve before we read the result.
+ */
+export interface RuntimeEvalSuccess<T> {
+  readonly ok: true;
+  readonly value: T;
+}
+export interface RuntimeEvalFailure {
+  readonly ok: false;
+  readonly error: string;
+}
+export type RuntimeEvalResult<T> = RuntimeEvalSuccess<T> | RuntimeEvalFailure;
+
+export async function evaluateInPage<T>(
+  client: CdpClient,
+  sessionId: string,
+  expression: string,
+): Promise<RuntimeEvalResult<T>> {
+  let raw: {
+    result?: { value?: unknown };
+    exceptionDetails?: { text?: string; exception?: { description?: string } };
+  };
+  try {
+    raw = await client.send<{
+      result?: { value?: unknown };
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    }>(
+      'Runtime.evaluate',
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+        userGesture: true,
+      },
+      sessionId,
+    );
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+  if (raw.exceptionDetails) {
+    return {
+      ok: false,
+      error:
+        raw.exceptionDetails.exception?.description ??
+        raw.exceptionDetails.text ??
+        'unknown evaluate exception',
+    };
+  }
+  return { ok: true, value: raw.result?.value as T };
+}
+
+/**
+ * Read the current main-frame URL from the frame tree. Cheaper than
+ * waiting for a `Page.frameNavigated` event and works even if the page
+ * already finished navigating before we attached.
+ */
+export async function getMainFrameUrl(
+  client: CdpClient,
+  sessionId: string,
+): Promise<string | null> {
+  const tree = await client
+    .send<{ frameTree: { frame: { url?: string } } }>('Page.getFrameTree', {}, sessionId)
+    .catch(() => null);
+  return tree?.frameTree.frame?.url ?? null;
+}
+
 function validateCookie(raw: unknown, index: number): CdpCookie {
   if (!raw || typeof raw !== 'object') {
     throw new Error(`Cookie #${index} is not an object`);

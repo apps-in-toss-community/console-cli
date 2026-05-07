@@ -170,6 +170,10 @@ export interface LaunchChromeOptions {
   readonly initialUrl: string;
   readonly executable?: string;
   readonly endpointTimeoutMs?: number;
+  // Run Chrome in `--headless=new` mode for the form-fill login path. The
+  // CDP UA spoof handles the "HeadlessChrome" token in the default UA, so
+  // this flag is just about hiding the GUI.
+  readonly headless?: boolean;
   // Hook for tests: if set, skip actually spawning Chrome and feed these
   // bytes to the stderr parser instead. Keeps the parser in the hot path
   // under test without requiring a real Chrome install on CI.
@@ -203,8 +207,15 @@ export async function launchChrome(options: LaunchChromeOptions): Promise<Launch
     '--disable-features=Translate,OptimizationHints',
     '--password-store=basic',
     '--use-mock-keychain',
-    options.initialUrl,
   ];
+  if (options.headless) {
+    // `--headless=new` is the modern, GPU-friendly headless mode (the old
+    // `--headless` is a separate codebase Google deprecated). `--disable-gpu`
+    // keeps it well-behaved on machines with broken GL drivers, and the
+    // window-size shapes the layout used by the form-fill JS.
+    args.push('--headless=new', '--disable-gpu', '--window-size=1280,900');
+  }
+  args.push(options.initialUrl);
 
   const spawnFn = options.spawnOverride ?? ((a: readonly string[]) => spawn(executable, [...a]));
   let child: ChildProcess;

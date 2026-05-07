@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty';
 import { type FetchLike, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
+import { type CredentialsSource, loadCredentials } from '../auth/credentials.js';
 import {
   attachToFirstPage,
   CdpClient,
@@ -16,6 +17,7 @@ import {
 } from '../chrome.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
+import { type HeadlessLoginOutcome, runHeadlessLogin } from '../login-headless.js';
 import { type Session, writeSession } from '../session.js';
 
 // Login flow (replaces the prior OAuth-callback-server scaffold):
@@ -80,6 +82,40 @@ export function isLoginLanding(url: string): boolean {
   }
 }
 
+/**
+ * Decide which login mode to enter on first attempt. Pure so the
+ * branching policy is testable without standing up Chrome.
+ *
+ * Rules: `--interactive` always wins. Otherwise headless if and only if
+ * we have credentials. The caller is responsible for falling back to
+ * interactive on a mid-flight headless failure.
+ */
+export function chooseLoginMode(input: {
+  readonly interactiveFlag: boolean;
+  readonly hasCredentials: boolean;
+}): LoginMode {
+  if (input.interactiveFlag) return 'interactive';
+  return input.hasCredentials ? 'headless' : 'interactive';
+}
+
+// Two top-level paths into the login flow:
+//   - `interactive`: launch a visible Chrome and let the user type
+//     credentials themselves. This is the historical path and the
+//     fallback whenever headless can't proceed.
+//   - `headless`: launch Chrome with --headless=new, fill the form via
+//     CDP using credentials from the OS keychain (or env vars), and
+//     wait for the same workspace landing URL.
+// Cookie capture / session write / output is shared after the browser
+// has reached the workspace page — both paths converge there.
+export type LoginMode = 'interactive' | 'headless';
+
+export interface LoginDeps {
+  // DI seam for tests and for keeping the CLI entrypoint as the only
+  // module that imports `loadCredentials` directly. `null` means "no
+  // credentials configured, take the interactive path".
+  readonly getCredentials?: () => Promise<CredentialsSource | null>;
+}
+
 export const loginCommand = defineCommand({
   meta: {
     name: 'login',
@@ -96,218 +132,374 @@ export const loginCommand = defineCommand({
       description: 'Abort if login does not complete within N seconds (default 300).',
       default: '300',
     },
+    interactive: {
+      type: 'boolean',
+      description: 'Force the visible-browser flow even if credentials are configured.',
+      default: false,
+    },
   },
   async run({ args }) {
-    const emitError = (payload: Record<string, unknown>, human: string) => {
-      if (args.json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, ...payload })}\n`);
-      }
-      process.stderr.write(`${human}\n`);
-    };
+    return runLoginCommand(
+      {
+        json: args.json,
+        timeout: args.timeout,
+        interactive: args.interactive,
+      },
+      { getCredentials: loadCredentials },
+    );
+  },
+});
 
-    const timeoutSec = Number(args.timeout);
-    if (!Number.isFinite(timeoutSec) || timeoutSec < 1) {
+export interface LoginCommandArgs {
+  readonly json: boolean;
+  readonly timeout: string;
+  readonly interactive: boolean;
+}
+
+export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): Promise<never> {
+  const emitError = (payload: Record<string, unknown>, human: string) => {
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify({ ok: false, ...payload })}\n`);
+    }
+    process.stderr.write(`${human}\n`);
+  };
+
+  const timeoutSec = Number(args.timeout);
+  if (!Number.isFinite(timeoutSec) || timeoutSec < 1) {
+    emitError(
+      { reason: 'invalid-timeout', given: args.timeout },
+      `Invalid --timeout value: ${args.timeout}`,
+    );
+    return exitAfterFlush(ExitCode.Usage);
+  }
+  const timeoutMs = timeoutSec * 1000;
+
+  const rawAuthorizeUrl = process.env.AITCC_OAUTH_URL;
+  const authorizeUrl = rawAuthorizeUrl ?? DEFAULT_AUTHORIZE_URL;
+  if (rawAuthorizeUrl) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(rawAuthorizeUrl);
+    } catch {
+      // fall through
+    }
+    if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
       emitError(
-        { reason: 'invalid-timeout', given: args.timeout },
-        `Invalid --timeout value: ${args.timeout}`,
+        { reason: 'invalid-authorize-url' },
+        `AITCC_OAUTH_URL is not a valid http(s) URL: ${rawAuthorizeUrl}`,
       );
       return exitAfterFlush(ExitCode.Usage);
     }
-    const timeoutMs = timeoutSec * 1000;
-
-    const rawAuthorizeUrl = process.env.AITCC_OAUTH_URL;
-    const authorizeUrl = rawAuthorizeUrl ?? DEFAULT_AUTHORIZE_URL;
-    if (rawAuthorizeUrl) {
-      let parsed: URL | null = null;
-      try {
-        parsed = new URL(rawAuthorizeUrl);
-      } catch {
-        // fall through
-      }
-      if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
-        emitError(
-          { reason: 'invalid-authorize-url' },
-          `AITCC_OAUTH_URL is not a valid http(s) URL: ${rawAuthorizeUrl}`,
-        );
-        return exitAfterFlush(ExitCode.Usage);
-      }
-      if (!isAllowedAuthorizeHost(parsed.hostname)) {
-        emitError(
-          { reason: 'authorize-host-not-allowed', host: parsed.hostname },
-          `Refusing to open ${parsed.hostname}: only *.toss.im hosts are allowed for sign-in.`,
-        );
-        return exitAfterFlush(ExitCode.Usage);
-      }
-      process.stderr.write(`Using custom authorize URL from AITCC_OAUTH_URL: ${authorizeUrl}\n`);
+    if (!isAllowedAuthorizeHost(parsed.hostname)) {
+      emitError(
+        { reason: 'authorize-host-not-allowed', host: parsed.hostname },
+        `Refusing to open ${parsed.hostname}: only *.toss.im hosts are allowed for sign-in.`,
+      );
+      return exitAfterFlush(ExitCode.Usage);
     }
+    process.stderr.write(`Using custom authorize URL from AITCC_OAUTH_URL: ${authorizeUrl}\n`);
+  }
 
-    // Cap Chrome's own startup window at half the overall --timeout, with
-    // a 30-second floor and 60-second ceiling. Corporate anti-virus can
-    // easily push a cold Chrome launch past the default 15s; short
-    // `--timeout` values shouldn't starve the launch itself.
-    const endpointTimeoutMs = Math.min(60_000, Math.max(30_000, Math.floor(timeoutMs / 2)));
+  // Decide which mode to run in. `--interactive` always forces the
+  // visible-browser path. Otherwise we ask `loadCredentials()` and use
+  // them if present.
+  let credentials: CredentialsSource | null = null;
+  if (!args.interactive) {
+    const getCredentials = deps.getCredentials;
+    if (getCredentials) {
+      credentials = await getCredentials().catch((err: Error) => {
+        // A credential backend hiccup shouldn't kill `aitcc login` —
+        // log a one-line diagnostic and fall back to interactive.
+        process.stderr.write(
+          `Credential lookup failed (${err.message}); using interactive login.\n`,
+        );
+        return null;
+      });
+    }
+  }
 
-    // Launch Chrome.
-    const launched = await launchChrome({
-      initialUrl: authorizeUrl,
+  const initialMode: LoginMode = chooseLoginMode({
+    interactiveFlag: args.interactive,
+    hasCredentials: credentials !== null,
+  });
+
+  // Cap Chrome's own startup window at half the overall --timeout, with
+  // a 30-second floor and 60-second ceiling. Corporate anti-virus can
+  // easily push a cold Chrome launch past the default 15s; short
+  // `--timeout` values shouldn't starve the launch itself.
+  const endpointTimeoutMs = Math.min(60_000, Math.max(30_000, Math.floor(timeoutMs / 2)));
+
+  // First attempt: in the chosen mode. If headless declines, we recurse
+  // once into interactive — never the other way around.
+  const result = await attemptLogin({
+    args,
+    timeoutMs,
+    endpointTimeoutMs,
+    authorizeUrl,
+    mode: initialMode,
+    credentials,
+    emitError,
+  });
+
+  if (result.status === 'fallback-to-interactive') {
+    process.stderr.write(`${result.message}\n`);
+    const second = await attemptLogin({
+      args,
+      timeoutMs,
       endpointTimeoutMs,
-    }).catch((err: Error) => err);
-    if (launched instanceof ChromeNotFoundError) {
-      emitError({ reason: 'chrome-not-found', candidates: launched.candidates }, launched.message);
-      return exitAfterFlush(ExitCode.LoginBrowserNotFound);
-    }
-    if (launched instanceof ChromeLaunchError || launched instanceof ChromeEndpointTimeoutError) {
-      emitError(
-        { reason: 'chrome-launch-failed', message: launched.message },
-        `Failed to launch browser: ${launched.message}`,
-      );
-      return exitAfterFlush(ExitCode.LoginBrowserFailed);
-    }
-    if (launched instanceof Error) {
-      // An unexpected Error type — keep enough context to diagnose later.
-      emitError(
-        {
-          reason: 'chrome-launch-failed',
-          errorName: launched.name,
-          message: launched.message,
-        },
-        `Failed to launch browser (${launched.name}): ${launched.message}`,
-      );
-      return exitAfterFlush(ExitCode.LoginBrowserFailed);
-    }
+      authorizeUrl,
+      mode: 'interactive',
+      credentials: null,
+      emitError,
+    });
+    if (second.status === 'exit') return exitAfterFlush(second.code);
+    // A fallback returning fallback again is a programmer error — we
+    // never request fallback while already interactive.
+    return exitAfterFlush(ExitCode.Generic);
+  }
 
+  return exitAfterFlush(result.code);
+}
+
+interface AttemptOptions {
+  readonly args: LoginCommandArgs;
+  readonly timeoutMs: number;
+  readonly endpointTimeoutMs: number;
+  readonly authorizeUrl: string;
+  readonly mode: LoginMode;
+  readonly credentials: CredentialsSource | null;
+  readonly emitError: (payload: Record<string, unknown>, human: string) => void;
+}
+
+type AttemptResult =
+  | { readonly status: 'exit'; readonly code: number }
+  | { readonly status: 'fallback-to-interactive'; readonly message: string };
+
+async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
+  const { args, timeoutMs, endpointTimeoutMs, authorizeUrl, mode, credentials, emitError } = opts;
+  const headless = mode === 'headless';
+
+  const launched = await launchChrome({
+    initialUrl: authorizeUrl,
+    endpointTimeoutMs,
+    headless,
+  }).catch((err: Error) => err);
+  if (launched instanceof ChromeNotFoundError) {
+    emitError({ reason: 'chrome-not-found', candidates: launched.candidates }, launched.message);
+    return { status: 'exit', code: ExitCode.LoginBrowserNotFound };
+  }
+  if (launched instanceof ChromeLaunchError || launched instanceof ChromeEndpointTimeoutError) {
+    emitError(
+      { reason: 'chrome-launch-failed', message: launched.message },
+      `Failed to launch browser: ${launched.message}`,
+    );
+    return { status: 'exit', code: ExitCode.LoginBrowserFailed };
+  }
+  if (launched instanceof Error) {
+    emitError(
+      { reason: 'chrome-launch-failed', errorName: launched.name, message: launched.message },
+      `Failed to launch browser (${launched.name}): ${launched.message}`,
+    );
+    return { status: 'exit', code: ExitCode.LoginBrowserFailed };
+  }
+
+  if (mode === 'interactive') {
     process.stderr.write(
       'Opened a browser window — complete the sign-in there. The CLI will capture the session automatically.\n',
     );
+  } else {
+    const source = credentials?.kind === 'env' ? 'env' : 'keychain';
+    process.stderr.write(`Signing in headlessly with credentials from ${source}…\n`);
+  }
 
-    // Resource disposal must happen BEFORE `exitAfterFlush` is called:
-    // `exitAfterFlush` terminates the process, and Chrome children on POSIX
-    // are not killed automatically when the parent exits. A `try/finally`
-    // wrapper is *not* safe here — the enclosing async function's finally
-    // races `process.exit` and may skip the SIGTERM + rm -rf.
-    let client: CdpClient | null = null;
-    const disposeAll = async (): Promise<void> => {
-      if (client) {
-        await client.close().catch(() => {});
-        client = null;
-      }
-      await launched.dispose().catch(() => {});
-    };
-    const exitWith = async (code: number): Promise<never> => {
+  // Resource disposal must happen BEFORE `exitAfterFlush` is called:
+  // exitAfterFlush terminates the process, and Chrome children on POSIX
+  // are not killed automatically when the parent exits.
+  let client: CdpClient | null = null;
+  const disposeAll = async (): Promise<void> => {
+    if (client) {
+      await client.close().catch(() => {});
+      client = null;
+    }
+    await launched.dispose().catch(() => {});
+  };
+
+  try {
+    client = await CdpClient.connect({ url: launched.webSocketDebuggerUrl });
+  } catch (err) {
+    emitError(
+      { reason: 'cdp-connect-failed', message: (err as Error).message },
+      `Could not connect to the browser over CDP: ${(err as Error).message}`,
+    );
+    await disposeAll();
+    return { status: 'exit', code: ExitCode.LoginBrowserFailed };
+  }
+
+  let attached: Awaited<ReturnType<typeof attachToFirstPage>>;
+  try {
+    attached = await attachToFirstPage(client);
+  } catch (err) {
+    emitError(
+      { reason: 'cdp-attach-failed', message: (err as Error).message },
+      `Could not attach to the browser tab: ${(err as Error).message}`,
+    );
+    await disposeAll();
+    return { status: 'exit', code: ExitCode.LoginBrowserFailed };
+  }
+
+  let stepUp = false;
+  if (mode === 'headless') {
+    if (!credentials) {
+      // Defensive — caller should never put us here without credentials.
       await disposeAll();
-      return exitAfterFlush(code);
-    };
-
+      return {
+        status: 'fallback-to-interactive',
+        message: 'No credentials available; switching to interactive login.',
+      };
+    }
+    let outcome: HeadlessLoginOutcome;
     try {
-      client = await CdpClient.connect({ url: launched.webSocketDebuggerUrl });
+      outcome = await runHeadlessLogin({
+        client,
+        sessionId: attached.sessionId,
+        credentials: { email: credentials.email, password: credentials.password },
+        stepUpTimeoutMs: timeoutMs,
+        onStepUp: () =>
+          process.stderr.write(
+            'Step-up auth requested — complete the prompt in the Toss app to continue…\n',
+          ),
+      });
     } catch (err) {
+      // Real I/O failure inside the headless flow. Don't fall back —
+      // surface it so the user can see what went wrong.
       emitError(
-        { reason: 'cdp-connect-failed', message: (err as Error).message },
-        `Could not connect to the browser over CDP: ${(err as Error).message}`,
+        { reason: 'headless-login-failed', message: (err as Error).message },
+        `Headless login failed: ${(err as Error).message}`,
       );
-      return exitWith(ExitCode.LoginBrowserFailed);
+      await disposeAll();
+      return { status: 'exit', code: ExitCode.LoginBrowserFailed };
     }
 
-    let attached: Awaited<ReturnType<typeof attachToFirstPage>>;
-    try {
-      attached = await attachToFirstPage(client);
-    } catch (err) {
-      emitError(
-        { reason: 'cdp-attach-failed', message: (err as Error).message },
-        `Could not attach to the browser tab: ${(err as Error).message}`,
-      );
-      return exitWith(ExitCode.LoginBrowserFailed);
+    if (outcome.kind === 'fallback') {
+      await disposeAll();
+      return {
+        status: 'fallback-to-interactive',
+        message: `headless login failed: ${outcome.reason}, falling back to interactive`,
+      };
     }
-
+    if (outcome.kind === 'aborted') {
+      emitError(
+        { reason: 'login-aborted' },
+        'Login was aborted (browser closed before reaching the console).',
+      );
+      await disposeAll();
+      return { status: 'exit', code: ExitCode.LoginBrowserFailed };
+    }
+    if (outcome.kind === 'timeout') {
+      emitError(
+        { reason: 'login-timeout', timeoutSec: Math.floor(timeoutMs / 1000), stage: outcome.stage },
+        `Login timed out after ${Math.floor(timeoutMs / 1000)}s (${outcome.stage}).`,
+      );
+      await disposeAll();
+      return { status: 'exit', code: ExitCode.LoginTimeout };
+    }
+    stepUp = outcome.stepUp;
+  } else {
     const landing = await waitForLanding(client, attached.sessionId, timeoutMs);
     if (landing === 'timeout') {
-      emitError({ reason: 'login-timeout', timeoutSec }, `Login timed out after ${timeoutSec}s.`);
-      return exitWith(ExitCode.LoginTimeout);
+      emitError(
+        { reason: 'login-timeout', timeoutSec: Math.floor(timeoutMs / 1000) },
+        `Login timed out after ${Math.floor(timeoutMs / 1000)}s.`,
+      );
+      await disposeAll();
+      return { status: 'exit', code: ExitCode.LoginTimeout };
     }
     if (landing === 'aborted') {
       emitError(
         { reason: 'login-aborted' },
         'Login was aborted (browser closed before reaching the console).',
       );
-      return exitWith(ExitCode.LoginBrowserFailed);
+      await disposeAll();
+      return { status: 'exit', code: ExitCode.LoginBrowserFailed };
     }
+  }
 
-    // Pull all cookies across all origins the browser has collected.
-    // `Network.getAllCookies` requires a target session (it isn't exposed
-    // on the browser-level endpoint), so we route through the attached
-    // page. The returned set still spans every origin the browser has
-    // stored cookies for (business.toss.im, business-accounts.toss.im,
-    // apps-in-toss.toss.im), not just the current page.
-    const cookies = await getAllCookies(client, attached.sessionId).catch((err: Error) => err);
-    if (cookies instanceof Error) {
-      emitError(
-        { reason: 'cookie-capture-failed', message: cookies.message },
-        `Failed to capture cookies: ${cookies.message}`,
-      );
-      return exitWith(ExitCode.LoginCookieCaptureFailed);
-    }
+  // Both paths converge here: pull cookies, resolve identity, write
+  // session, emit human/JSON output.
+  const cookies = await getAllCookies(client, attached.sessionId).catch((err: Error) => err);
+  if (cookies instanceof Error) {
+    emitError(
+      { reason: 'cookie-capture-failed', message: cookies.message },
+      `Failed to capture cookies: ${cookies.message}`,
+    );
+    await disposeAll();
+    return { status: 'exit', code: ExitCode.LoginCookieCaptureFailed };
+  }
 
-    // Resolve identity via the console member info endpoint. This also
-    // doubles as a liveness check — a session that can't call /me means
-    // we captured cookies too early (before the auth-code exchange
-    // completed). If so, we wait briefly and retry once.
-    const user = await resolveUserWithRetry(cookies, {
-      onRetry: (ms) =>
-        process.stderr.write(
-          `Cookies not yet accepted by the console API — retrying in ${ms}ms...\n`,
-        ),
-    }).catch((err: Error) => err);
-    if (user instanceof Error) {
-      const authFailed = user instanceof TossApiError && user.isAuthError;
-      emitError(
-        {
-          reason: authFailed ? 'login-auth-not-active' : 'member-info-failed',
-          message: user.message,
-        },
-        authFailed
-          ? 'Browser session did not produce valid console cookies. Try again and wait for the workspace page to load.'
-          : `Failed to read member info: ${user.message}`,
-      );
-      return exitWith(authFailed ? ExitCode.LoginCookieCaptureFailed : ExitCode.ApiError);
-    }
-
-    const session: Session = {
-      schemaVersion: 2,
-      user: {
-        id: String(user.id),
-        email: user.email,
-        displayName: user.name,
+  const user = await resolveUserWithRetry(cookies, {
+    onRetry: (ms) =>
+      process.stderr.write(
+        `Cookies not yet accepted by the console API — retrying in ${ms}ms...\n`,
+      ),
+  }).catch((err: Error) => err);
+  if (user instanceof Error) {
+    const authFailed = user instanceof TossApiError && user.isAuthError;
+    emitError(
+      {
+        reason: authFailed ? 'login-auth-not-active' : 'member-info-failed',
+        message: user.message,
       },
-      cookies,
-      origins: [],
-      capturedAt: new Date().toISOString(),
+      authFailed
+        ? 'Browser session did not produce valid console cookies. Try again and wait for the workspace page to load.'
+        : `Failed to read member info: ${user.message}`,
+    );
+    await disposeAll();
+    return {
+      status: 'exit',
+      code: authFailed ? ExitCode.LoginCookieCaptureFailed : ExitCode.ApiError,
     };
-    try {
-      await writeSession(session);
-    } catch (err) {
-      emitError(
-        { reason: 'session-write-failed', message: (err as Error).message },
-        `Failed to write session file: ${(err as Error).message}`,
-      );
-      return exitWith(ExitCode.Generic);
-    }
+  }
 
-    if (args.json) {
-      process.stdout.write(
-        `${JSON.stringify({
-          ok: true,
-          status: 'logged-in',
-          user: session.user,
-          capturedAt: session.capturedAt,
-          cookieCount: cookies.length,
-        })}\n`,
-      );
-    } else {
-      process.stdout.write(`Logged in as ${user.name} <${user.email}>\n`);
-    }
-    return exitWith(ExitCode.Ok);
-  },
-});
+  const session: Session = {
+    schemaVersion: 2,
+    user: {
+      id: String(user.id),
+      email: user.email,
+      displayName: user.name,
+    },
+    cookies,
+    origins: [],
+    capturedAt: new Date().toISOString(),
+  };
+  try {
+    await writeSession(session);
+  } catch (err) {
+    emitError(
+      { reason: 'session-write-failed', message: (err as Error).message },
+      `Failed to write session file: ${(err as Error).message}`,
+    );
+    await disposeAll();
+    return { status: 'exit', code: ExitCode.Generic };
+  }
+
+  if (args.json) {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        status: 'logged-in',
+        user: session.user,
+        capturedAt: session.capturedAt,
+        cookieCount: cookies.length,
+        mode,
+        stepUp,
+      })}\n`,
+    );
+  } else {
+    process.stdout.write(`Logged in as ${user.name} <${user.email}>\n`);
+  }
+  await disposeAll();
+  return { status: 'exit', code: ExitCode.Ok };
+}
 
 export async function waitForLanding(
   client: CdpClient,
