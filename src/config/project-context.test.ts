@@ -1,8 +1,12 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findProjectContext, ProjectContextError } from './project-context.js';
+import {
+  findProjectContext,
+  ProjectContextError,
+  writeProjectMiniAppId,
+} from './project-context.js';
 
 // `findProjectContext` is the loader half of the project-context resolver
 // (`resolveAppContext` is the policy half). Tests here pin the ancestor-
@@ -114,5 +118,96 @@ describe('findProjectContext', () => {
     );
     const ctx = await findProjectContext(root);
     expect(ctx).toEqual({ source: join(root, 'aitcc.yaml') });
+  });
+});
+
+describe('writeProjectMiniAppId', () => {
+  it('appends miniAppId while preserving comments and key order in yaml', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    const original = `# project context\nworkspaceId: 3095 # community workspace\nappName: example\n`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome).toEqual({ status: 'written', path });
+    const updated = readFileSync(path, 'utf8');
+    expect(updated).toContain('# project context');
+    expect(updated).toContain('# community workspace');
+    expect(updated).toContain('workspaceId: 3095');
+    expect(updated).toContain('appName: example');
+    expect(updated).toMatch(/miniAppId:\s+31146/);
+  });
+
+  it('replaces an existing miniAppId in yaml without rewriting unrelated keys', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    writeFileSync(path, `# header\nworkspaceId: 3095\nminiAppId: 100\nappName: example\n`);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome.status).toBe('written');
+    const updated = readFileSync(path, 'utf8');
+    expect(updated).toContain('# header');
+    expect(updated).toContain('miniAppId: 31146');
+    expect(updated).not.toContain('miniAppId: 100');
+  });
+
+  it('reports unchanged when the yaml file already pins the same id', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    const original = `# header\nworkspaceId: 3095\nminiAppId: 31146\n`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome).toEqual({ status: 'unchanged', path });
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  it('updates aitcc.json while preserving the existing indent and trailing newline', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.json');
+    const original = `{\n    "workspaceId": 3095,\n    "appName": "example"\n}\n`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome.status).toBe('written');
+    const updated = readFileSync(path, 'utf8');
+    expect(updated.endsWith('\n')).toBe(true);
+    // 4-space indent should survive.
+    expect(updated).toContain('    "workspaceId": 3095');
+    expect(updated).toContain('    "miniAppId": 31146');
+    expect(JSON.parse(updated)).toEqual({
+      workspaceId: 3095,
+      appName: 'example',
+      miniAppId: 31146,
+    });
+  });
+
+  it('reports unchanged when aitcc.json already pins the same id', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.json');
+    const original = `{"workspaceId":3095,"miniAppId":31146}`;
+    writeFileSync(path, original);
+    const outcome = await writeProjectMiniAppId(path, 31146);
+    expect(outcome.status).toBe('unchanged');
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  it('throws ProjectContextError on a malformed yaml file', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    writeFileSync(path, 'workspaceId: [unterminated\n');
+    await expect(writeProjectMiniAppId(path, 31146)).rejects.toThrow(ProjectContextError);
+  });
+
+  it('throws when the file is a sequence rather than a mapping', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    writeFileSync(path, '- a\n- b\n');
+    await expect(writeProjectMiniAppId(path, 31146)).rejects.toThrow(ProjectContextError);
+  });
+
+  it('refuses to write a non-positive-integer id', async () => {
+    const root = makeTempDir();
+    const path = join(root, 'aitcc.yaml');
+    writeFileSync(path, 'workspaceId: 3095\n');
+    await expect(writeProjectMiniAppId(path, 0)).rejects.toThrow(ProjectContextError);
+    await expect(writeProjectMiniAppId(path, -5)).rejects.toThrow(ProjectContextError);
+    await expect(writeProjectMiniAppId(path, 1.5)).rejects.toThrow(ProjectContextError);
   });
 });

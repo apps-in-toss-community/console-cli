@@ -18,6 +18,11 @@ import {
   ImageDimensionError,
   validateImageDimensions,
 } from '../config/image-validator.js';
+import {
+  findProjectContext,
+  ProjectContextError,
+  writeProjectMiniAppId,
+} from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import {
@@ -142,6 +147,7 @@ export async function runRegister(args: RegisterArgs, deps: RegisterDeps = {}): 
     const submitImpl = deps.submitImpl ?? ((wid, p, c) => createMiniApp(wid, p, c));
     const result = await submitImpl(workspaceId, payload, session.cookies);
     emitSuccess(args.json, workspaceId, result);
+    await persistMiniAppIdToProject(args.json, result.miniAppId, deps.cwd ?? process.cwd());
     return exitAfterFlush(ExitCode.Ok);
   } catch (err) {
     return emitFailureAndExit(args.json, err);
@@ -402,4 +408,62 @@ function emitSuccess(json: boolean, workspaceId: number, result: CreateMiniAppRe
 // shape agrees.
 async function emitFailureAndExit(json: boolean, err: unknown): Promise<void> {
   return emitFailureFromError(json, err);
+}
+
+// After a successful submit, persist the returned miniAppId back into
+// the resolved project-context file (`aitcc.yaml`/`aitcc.json`) so
+// follow-up commands like `app status` / `app deploy` resolve the same
+// app without an explicit `--app`. Skipped silently in --dry-run (we
+// never reach this code path) and when the response omitted the id.
+//
+// The write is best-effort: a failure here MUST NOT change the exit
+// code, since the submit itself already succeeded — the user can
+// recover by adding `miniAppId: <id>` manually. Errors are surfaced
+// only on stderr (suppressed under --json so the stdout contract
+// stays single-line). The "no project file at all" case prints a one-
+// line stderr hint pointing at the discoverability win.
+async function persistMiniAppIdToProject(
+  json: boolean,
+  miniAppId: string | number | undefined,
+  cwd: string,
+): Promise<void> {
+  if (typeof miniAppId !== 'number' || !Number.isInteger(miniAppId) || miniAppId <= 0) {
+    return;
+  }
+  let ctx: Awaited<ReturnType<typeof findProjectContext>>;
+  try {
+    ctx = await findProjectContext(cwd);
+  } catch (err) {
+    if (!json) {
+      const detail = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `warning: could not read project context to persist miniAppId: ${detail}\n`,
+      );
+    }
+    return;
+  }
+  if (ctx === null) {
+    if (!json) {
+      process.stderr.write(
+        `tip: drop an aitcc.yaml with \`miniAppId: ${miniAppId}\` in your project root to skip --app on later commands.\n`,
+      );
+    }
+    return;
+  }
+  try {
+    const outcome = await writeProjectMiniAppId(ctx.source, miniAppId);
+    if (!json && outcome.status === 'written') {
+      process.stderr.write(`Updated ${ctx.source} with miniAppId: ${miniAppId}.\n`);
+    }
+  } catch (err) {
+    if (!json) {
+      const detail =
+        err instanceof ProjectContextError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      process.stderr.write(`warning: could not persist miniAppId to ${ctx.source}: ${detail}\n`);
+    }
+  }
 }

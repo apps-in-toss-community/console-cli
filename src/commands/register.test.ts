@@ -470,8 +470,12 @@ describe('runRegister', () => {
     expect(out).toContain(
       '🔗 console: https://apps-in-toss.toss.im/console/workspace/3095/mini-app/123',
     );
-    // stderr only carries the context header (PR 1b); no diagnostic output.
-    expect(stderr.join('')).toBe('[workspace: 3095 (from session)]\n');
+    // stderr carries the context header (PR 1b) and the write-back
+    // confirmation (PR 2). Order is fixed: header before submit, write-
+    // back after.
+    expect(stderr.join('')).toBe(
+      `[workspace: 3095 (from session)]\nUpdated ${manifest} with miniAppId: 123.\n`,
+    );
   });
 
   it('writes error diagnostics to stderr (not stdout) in human mode', async () => {
@@ -485,5 +489,153 @@ describe('runRegister', () => {
     expect(exit?.code).toBe(2);
     expect(stdout.join('')).toBe('');
     expect(stderr.join('')).toContain('512x512');
+  });
+
+  // PR 2: yaml write-back on register. The submit handler returns a
+  // miniAppId; runRegister persists it back into the discovered project
+  // context file so follow-up commands can resolve the same app without
+  // an explicit `--app`. Tests pin the four cases the user can hit:
+  // file present (gets updated), no file in the tree (stderr hint),
+  // --json mode (writes file but suppresses stderr), --dry-run (skipped).
+
+  async function writeProjectFile(name: string, body: string): Promise<string> {
+    const { writeFileSync } = await import('node:fs');
+    const path = join(dir, name);
+    writeFileSync(path, body);
+    return path;
+  }
+
+  async function readFileUtf8(path: string): Promise<string> {
+    const { readFileSync } = await import('node:fs');
+    return readFileSync(path, 'utf8');
+  }
+
+  it('writes miniAppId back to aitcc.yaml when register succeeds (preserves comments)', async () => {
+    await writeSessionAt(3095);
+    const projectPath = await writeProjectFile(
+      'aitcc.yaml',
+      '# project context\nworkspaceId: 3095 # community\n',
+    );
+    // Use a separate manifest path so the project-context file and the
+    // manifest file are visibly distinct — write-back must target the
+    // project-context file even when --config points elsewhere.
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: false, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    const updated = await readFileUtf8(projectPath);
+    expect(updated).toContain('# project context');
+    expect(updated).toContain('# community');
+    expect(updated).toMatch(/miniAppId:\s+31146/);
+    expect(stderr.join('')).toContain(`Updated ${projectPath} with miniAppId: 31146.`);
+  });
+
+  it('persists miniAppId silently under --json (no stderr write-back line)', async () => {
+    await writeSessionAt(3095);
+    const projectPath = await writeProjectFile('aitcc.yaml', 'workspaceId: 3095\n');
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: true, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    // File is updated…
+    expect(await readFileUtf8(projectPath)).toMatch(/miniAppId:\s+31146/);
+    // …but stderr stays free of write-back diagnostics. agent-plugin
+    // shells out with --json and ignores stderr, but we still keep it
+    // clean to avoid log noise.
+    expect(stderr.join('')).not.toContain('miniAppId:');
+    expect(stderr.join('')).not.toContain('Updated');
+  });
+
+  it('emits a stderr hint when no aitcc.yaml exists in the project tree', async () => {
+    await writeSessionAt(3095);
+    // Create a `.git` marker so findProjectContext halts inside the
+    // tmpdir instead of walking up to the umbrella repo's real .git
+    // (which might shadow the test with an unrelated aitcc.yaml).
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, '.git'), '');
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: false, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    expect(stderr.join('')).toContain('tip: drop an aitcc.yaml');
+    expect(stderr.join('')).toContain('miniAppId: 31146');
+  });
+
+  it('does not emit the no-yaml hint under --json', async () => {
+    await writeSessionAt(3095);
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, '.git'), '');
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: true, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    expect(stderr.join('')).not.toContain('tip:');
+  });
+
+  it('does not write back during --dry-run', async () => {
+    await writeSessionAt(3095);
+    const projectPath = await writeProjectFile('aitcc.yaml', 'workspaceId: 3095\n');
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: true, dryRun: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    // dry-run returns before the submit/write-back stage; the project
+    // file must be untouched.
+    expect(await readFileUtf8(projectPath)).toBe('workspaceId: 3095\n');
+  });
+
+  it('is a no-op when aitcc.yaml already pins the same miniAppId', async () => {
+    await writeSessionAt(3095);
+    const original = '# header\nworkspaceId: 3095\nminiAppId: 31146\n';
+    const projectPath = await writeProjectFile('aitcc.yaml', original);
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: false, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          submitImpl: async () => ({ miniAppId: 31146, reviewState: 'PENDING', extra: {} }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    // File untouched, no write-back diagnostic on stderr.
+    expect(await readFileUtf8(projectPath)).toBe(original);
+    expect(stderr.join('')).not.toContain('Updated');
   });
 });
