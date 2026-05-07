@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authStateFilePath } from '../paths.js';
 import {
-  __test,
   type CredentialBackend,
   CredentialBackendCommandError,
   CredentialBackendUnsupportedError,
+  redactStderr,
+} from './backend.js';
+import {
   deleteCredentials,
   loadCredentials,
   resolveBackend,
@@ -193,17 +195,17 @@ describe('credentials — backend resolution', () => {
 
 describe('credentials — error redaction', () => {
   it('redactStderr returns a placeholder for empty stderr', () => {
-    expect(__test.redactStderr('')).toBe('<no stderr>');
-    expect(__test.redactStderr('   \n')).toBe('<no stderr>');
+    expect(redactStderr('')).toBe('<no stderr>');
+    expect(redactStderr('   \n')).toBe('<no stderr>');
   });
 
   it('redactStderr passes short stderr through unchanged', () => {
-    expect(__test.redactStderr('boom')).toBe('boom');
+    expect(redactStderr('boom')).toBe('boom');
   });
 
   it('redactStderr truncates long stderr to keep accidental secret leaks bounded', () => {
     const long = 'x'.repeat(500);
-    const got = __test.redactStderr(long);
+    const got = redactStderr(long);
     expect(got.length).toBeLessThan(long.length);
     expect(got).toMatch(/<truncated>$/);
   });
