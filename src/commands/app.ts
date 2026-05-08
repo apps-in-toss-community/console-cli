@@ -383,7 +383,11 @@ function formatDiffValue(v: unknown): string {
   if (v === null) return 'null';
   if (v === undefined) return '-';
   if (typeof v === 'string') {
-    if (v.length > 60) return `${[...v].length} chars`;
+    // Codepoint count (not UTF-16 length) on both the threshold and the
+    // label — otherwise a string with surrogate-pair emoji could trip the
+    // threshold but report a count that looks too small.
+    const cp = [...v].length;
+    if (cp > 60) return `${cp} chars`;
     return JSON.stringify(v);
   }
   if (Array.isArray(v)) {
@@ -454,7 +458,9 @@ const showCommand = defineCommand({
     // `--diff` is a different mode of `app show`, not a view selector. If
     // the user passes both we don't hard-fail (it's harmless and keeps
     // shell aliases like `aitcc app show $@ --diff` working) — just warn
-    // on stderr and let --diff win.
+    // on stderr and let --diff win. Suppressed under `--json` so machine
+    // consumers don't see warning chatter; `diffMode: true` in the JSON
+    // payload tells them which mode actually ran.
     if (args.diff && args.view !== 'draft' && !args.json) {
       process.stderr.write(
         `app show: --diff overrides --view ${JSON.stringify(args.view)} (ignored)\n`,
@@ -516,6 +522,10 @@ const showCommand = defineCommand({
         }
         process.stdout.write('\n');
 
+        // Both null is unreachable in practice — `app show` would have
+        // 4xx-failed before reaching this branch — but we keep the guard
+        // so the message ladder reads top-to-bottom rather than relying
+        // on the next two branches to cover the both-null shape.
         if (!diff.hasDraft && !diff.hasCurrent) {
           process.stdout.write('App has neither a draft nor a current view yet.\n');
           return exitAfterFlush(ExitCode.Ok);

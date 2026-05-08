@@ -468,4 +468,20 @@ describe('compareMiniAppViews', () => {
     const result = compareMiniAppViews(draft, current);
     expect(result.changed).toEqual([{ field: 'title', draft: 'A', current: 'B' }]);
   });
+
+  // The skip-rule for "field absent on both sides" is `d === undefined &&
+  // c === undefined`. A field that is explicit `null` on one side and
+  // `undefined` (absent) on the other shows up as a real change, not a
+  // pad. Pin the behavior so a future "treat null and undefined as the
+  // same" simplification doesn't silently flip it — the API does
+  // distinguish the two (e.g. `darkModeIconUri` is `null` for "user
+  // cleared it" and `undefined` for "field never set"), and a diff that
+  // hides the transition would mislead the operator.
+  it('treats explicit null vs absent as a real change (not collapsed)', () => {
+    const draft = { darkModeIconUri: null };
+    const current = {};
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([{ field: 'darkModeIconUri', draft: null, current: undefined }]);
+    expect(result.unchangedCount).toBe(0);
+  });
 });
