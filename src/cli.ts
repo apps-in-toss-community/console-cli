@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from 'citty';
 import { appCommand } from './commands/app.js';
+import { authCommand } from './commands/auth.js';
 import { completionCommand } from './commands/completion.js';
 import { keysCommand } from './commands/keys.js';
 import { loginCommand } from './commands/login.js';
@@ -24,6 +25,7 @@ const main = defineCommand({
     whoami: whoamiCommand,
     login: loginCommand,
     logout: logoutCommand,
+    auth: authCommand,
     upgrade: upgradeCommand,
     workspace: workspaceCommand,
     app: appCommand,

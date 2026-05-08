@@ -289,7 +289,7 @@ describe('deriveLsStatus', () => {
     hasCurrent: true,
     hasDraft: false,
     locked: false,
-    lockReason: null as null,
+    lockReason: null as import('./app.js').LockReason | null,
   };
 
   it('returns unknown + unlocked when no with-draft is available', () => {
@@ -339,8 +339,8 @@ describe('deriveLsStatus', () => {
         rejectedMessage: null,
         hasCurrent: true,
         hasDraft: true,
-        locked: false,
-        lockReason: null,
+        locked: true,
+        lockReason: 'review-pending' as import('./app.js').LockReason | null,
       },
       'RUNNING',
     );

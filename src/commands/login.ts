@@ -1,7 +1,13 @@
+import { confirm, password as passwordPrompt } from '@inquirer/prompts';
 import { defineCommand } from 'citty';
 import { type FetchLike, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
-import { type CredentialsSource, loadCredentials } from '../auth/credentials.js';
+import {
+  type CredentialsSource,
+  loadCredentials,
+  type SaveCredentialsStatus,
+  saveCredentials,
+} from '../auth/credentials.js';
 import {
   attachToFirstPage,
   CdpClient,
@@ -133,6 +139,12 @@ export interface LoginDeps {
   // module that imports `loadCredentials` directly. `null` means "no
   // credentials configured, take the interactive path".
   readonly getCredentials?: () => Promise<CredentialsSource | null>;
+  // DI seam for the onboarding prompt's keychain write. Tests can
+  // substitute an in-memory backend; production wires `saveCredentials`.
+  readonly saveCredentials?: (
+    email: string,
+    password: string,
+  ) => Promise<{ status: SaveCredentialsStatus }>;
 }
 
 export const loginCommand = defineCommand({
@@ -156,6 +168,11 @@ export const loginCommand = defineCommand({
       description: 'Force the visible-browser flow even if credentials are configured.',
       default: false,
     },
+    'skip-onboarding': {
+      type: 'boolean',
+      description: 'Skip the post-login prompt to save credentials to the OS keychain.',
+      default: false,
+    },
   },
   async run({ args }) {
     return runLoginCommand(
@@ -163,8 +180,9 @@ export const loginCommand = defineCommand({
         json: args.json,
         timeout: args.timeout,
         interactive: args.interactive,
+        skipOnboarding: args['skip-onboarding'],
       },
-      { getCredentials: loadCredentials },
+      { getCredentials: loadCredentials, saveCredentials },
     );
   },
 });
@@ -173,6 +191,7 @@ export interface LoginCommandArgs {
   readonly json: boolean;
   readonly timeout: string;
   readonly interactive: boolean;
+  readonly skipOnboarding: boolean;
 }
 
 export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): Promise<never> {
@@ -259,6 +278,7 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
     mode: initialMode,
     credentials,
     emitError,
+    deps,
   });
 
   if (result.status === 'fallback-to-interactive') {
@@ -277,6 +297,7 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
       mode: 'interactive',
       credentials: null,
       emitError,
+      deps,
     });
     if (second.status === 'exit') return exitAfterFlush(second.code);
     // A fallback returning fallback again is a programmer error — we
@@ -298,6 +319,7 @@ interface AttemptOptions {
   readonly mode: LoginMode;
   readonly credentials: CredentialsSource | null;
   readonly emitError: (payload: Record<string, unknown>, human: string) => void;
+  readonly deps: LoginDeps;
 }
 
 type AttemptResult =
@@ -305,7 +327,8 @@ type AttemptResult =
   | { readonly status: 'fallback-to-interactive'; readonly message: string };
 
 async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
-  const { args, timeoutMs, endpointTimeoutMs, authorizeUrl, mode, credentials, emitError } = opts;
+  const { args, timeoutMs, endpointTimeoutMs, authorizeUrl, mode, credentials, emitError, deps } =
+    opts;
   const headless = mode === 'headless';
 
   const launched = await launchChrome({
@@ -518,8 +541,90 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
   } else {
     process.stdout.write(`Logged in as ${user.name} <${user.email}>\n`);
   }
+
+  // Dispose Chrome BEFORE running the onboarding prompt — the user is
+  // about to type a password into the terminal and shouldn't be
+  // distracted by a Chrome window still hanging around.
   await disposeAll();
+
+  // Onboarding only runs after a successful interactive login on the
+  // first attempt where no credentials are configured. Headless logins
+  // already have credentials by definition; --json / non-TTY callers
+  // are scripted; --skip-onboarding is the explicit opt-out.
+  if (
+    mode === 'interactive' &&
+    credentials === null &&
+    !args.json &&
+    !args.skipOnboarding &&
+    process.stdout.isTTY &&
+    process.stdin.isTTY &&
+    deps.saveCredentials
+  ) {
+    await runOnboardingPrompt(user.email, deps.saveCredentials);
+  }
+
   return { status: 'exit', code: ExitCode.Ok };
+}
+
+/**
+ * Post-login prompt that offers to persist the user's email + password
+ * to the OS keychain so subsequent `aitcc login` runs can take the
+ * headless form-fill path. Failures are non-fatal: we already wrote a
+ * valid session, so a keychain hiccup just means the next login will
+ * fall back to interactive — exactly the same UX as before.
+ */
+export async function runOnboardingPrompt(
+  email: string,
+  save: (email: string, password: string) => Promise<{ status: SaveCredentialsStatus }>,
+): Promise<void> {
+  process.stdout.write('\n');
+  process.stdout.write(
+    'Would you like to save your password to the OS keychain so the next ' +
+      '`aitcc login` runs headlessly?\n',
+  );
+  let agreed: boolean;
+  try {
+    agreed = await confirm({
+      message: 'Save credentials?',
+      default: true,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'ExitPromptError') {
+      // User Ctrl-C'd the prompt — silent skip, the session is still good.
+      return;
+    }
+    process.stderr.write(`Onboarding prompt failed: ${(err as Error).message}\n`);
+    return;
+  }
+  if (!agreed) return;
+
+  let password: string;
+  try {
+    password = await passwordPrompt({
+      message: 'Password:',
+      mask: true,
+      validate: (raw) => (raw.length > 0 ? true : 'password is required'),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'ExitPromptError') {
+      return;
+    }
+    process.stderr.write(`Could not read password: ${(err as Error).message}\n`);
+    return;
+  }
+
+  try {
+    await save(email, password);
+    process.stdout.write('Saved. Next `aitcc login` will run headlessly.\n');
+  } catch (err) {
+    // Don't surface the password or stack — just the message. The
+    // session was already written, so login itself succeeded; this is a
+    // best-effort enhancement and the user can retry via `aitcc auth set`.
+    process.stderr.write(
+      `Could not save credentials: ${(err as Error).message}. ` +
+        'You can retry later with `aitcc auth set`.\n',
+    );
+  }
 }
 
 export async function waitForLanding(

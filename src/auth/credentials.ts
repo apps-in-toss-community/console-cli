@@ -208,6 +208,29 @@ export async function saveCredentials(
 }
 
 /**
+ * Read just the active-email pointer without touching the OS keychain.
+ * Useful for surfaces like `auth status --json` that want to report
+ * whether credentials are configured without triggering a Touch ID /
+ * libsecret prompt for the password.
+ *
+ * Returns the email and where it was found (`'env'` when
+ * `AITCC_EMAIL` + `AITCC_PASSWORD` are present, `'keychain'` when the
+ * `auth-state.json` pointer exists), or `null` when nothing is
+ * configured.
+ */
+export async function getActiveCredentialEmail(
+  opts: { readonly env?: NodeJS.ProcessEnv } = {},
+): Promise<{ kind: 'env' | 'keychain'; email: string } | null> {
+  const env = opts.env ?? process.env;
+  if (env.AITCC_EMAIL && env.AITCC_PASSWORD) {
+    return { kind: 'env', email: env.AITCC_EMAIL };
+  }
+  const state = await readAuthState();
+  if (!state) return null;
+  return { kind: 'keychain', email: state.activeEmail };
+}
+
+/**
  * Remove the keychain entry and the auth-state pointer. Returns
  * `existed: true` if either side previously held data.
  */
