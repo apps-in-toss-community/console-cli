@@ -95,6 +95,7 @@ Walk 중 `.git`을 만나면 그 디렉토리까지만 보고 멈춘다. `$HOME`
 - **위치**: XDG Base Directory. `$XDG_CONFIG_HOME/aitcc/session.json` → fallback `~/.config/aitcc/session.json` (Linux/macOS), `%APPDATA%\aitcc\session.json` (Windows).
 - **권한**: 디렉토리 `0700`, 파일 `0600`. Windows에선 mode 호출이 best-effort no-op, 유저 프로필 ACL에 의존.
 - **Shape**: `{ schemaVersion: 2, user: { id, email, displayName }, cookies: CdpCookie[], origins: [], capturedAt, currentWorkspaceId? }`. `cookies`는 CDP `Network.getAllCookies` 응답 그대로 저장 → http 레이어가 `Cookie:` 헤더로 직렬화. v1 파일은 `readSession`이 자동으로 v2로 마이그레이트.
+- **Portability**: 세션 쿠키는 country-bound (KR allowlist) — 같은 blob이라도 한국 외 IP에선 401/`errorCode: 4010`. CI export/import 식 흐름은 GHA-hosted runner에서 작동 안 함. 실측 + 결정 근거는 [`docs/api/auth-session.md`](./docs/api/auth-session.md) "Cookie portability (실측)".
 
 **왜 plain `0600` 파일 (vs OS keychain)?**
 
