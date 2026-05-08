@@ -54,6 +54,25 @@ const LOGIN_LANDING_PATH_PREFIX = '/workspace';
 // match is the tightest allowlist that still permits internal hosts.
 const ALLOWED_AUTHORIZE_HOST_SUFFIXES = ['.toss.im'] as const;
 
+// Minimum time we hand to the interactive-fallback path even if the
+// headless attempt already consumed most of `--timeout`. Without a floor
+// the user could see "Login timed out after 0s" right after the visible
+// Chrome appears — comfortably long enough to actually type the form.
+export const INTERACTIVE_FALLBACK_FLOOR_MS = 30_000;
+
+/**
+ * Compute the timeout budget for the interactive fallback attempt after a
+ * headless attempt has already burned `elapsedMs`. Caps the result at the
+ * user's overall `--timeout` and floors it at `INTERACTIVE_FALLBACK_FLOOR_MS`
+ * so a near-exhausted budget still gives the user enough time to type.
+ *
+ * Pure decision function — extracted so the policy can be exercised
+ * without standing up the Chrome/CDP machinery.
+ */
+export function computeFallbackTimeoutMs(totalTimeoutMs: number, elapsedMs: number): number {
+  return Math.max(INTERACTIVE_FALLBACK_FLOOR_MS, totalTimeoutMs - elapsedMs);
+}
+
 export function isAllowedAuthorizeHost(host: string): boolean {
   const lower = host.toLowerCase();
   return ALLOWED_AUTHORIZE_HOST_SUFFIXES.some(
@@ -231,6 +250,7 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
 
   // First attempt: in the chosen mode. If headless declines, we recurse
   // once into interactive — never the other way around.
+  const firstAttemptStart = Date.now();
   const result = await attemptLogin({
     args,
     timeoutMs,
@@ -243,9 +263,15 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
 
   if (result.status === 'fallback-to-interactive') {
     process.stderr.write(`${result.message}\n`);
+    // Subtract the time the headless attempt already burned so the user's
+    // overall `--timeout` budget is honoured. A small floor protects the
+    // human-typing window — if headless ate most of the budget we still
+    // give the user a usable interactive session, with the cost showing
+    // up as the command running slightly past the requested timeout.
+    const fallbackTimeoutMs = computeFallbackTimeoutMs(timeoutMs, Date.now() - firstAttemptStart);
     const second = await attemptLogin({
       args,
-      timeoutMs,
+      timeoutMs: fallbackTimeoutMs,
       endpointTimeoutMs,
       authorizeUrl,
       mode: 'interactive',
