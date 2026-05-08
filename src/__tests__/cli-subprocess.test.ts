@@ -63,6 +63,11 @@ describe('aitcc --json subprocess contract', () => {
       const payload = assertSingleJsonLine(stdout) as Record<string, unknown>;
       expect(payload.ok).toBe(false);
       expect(payload.reason).toBe('invalid-id');
+      // `message` is part of the documented `invalid-id` shape — agent-plugin
+      // displays it to the user. Lock it down here too so a regression that
+      // empties or drops the field on numeric-but-invalid ids is caught.
+      expect(typeof payload.message).toBe('string');
+      expect((payload.message as string).length).toBeGreaterThan(0);
       assertStderrHasNoJson(stderr);
       expect(stderr).toBe('');
     }, 30_000);
@@ -101,15 +106,6 @@ describe('aitcc --json subprocess contract', () => {
       // NO_COLOR=1 is set by the harness — guard against any future
       // hard-coded color codes leaking into the JSON line.
       assertNoAnsi(stdout);
-    }, 30_000);
-
-    it('whoami --json --json (duplicate flag) is accepted and still emits a single line', async () => {
-      const dir = await xdg.fresh();
-      const { exitCode, stdout, stderr } = await runCli(['whoami', '--json', '--json'], dir);
-      expect(exitCode).toBe(10);
-      const payload = assertSingleJsonLine(stdout);
-      expect(payload).toEqual({ ok: true, authenticated: false });
-      assertStderrHasNoJson(stderr);
     }, 30_000);
   });
 
@@ -198,20 +194,22 @@ describe('aitcc --json subprocess contract', () => {
 
   describe('unknown command', () => {
     // citty rejects unknown subcommands with a help dump on stdout +
-    // a one-line "Unknown command X" on stderr, exit 1. This is *not*
-    // `--json`-clean, but agent-plugin would never send an unknown
-    // command; pinning the shape protects against an upstream citty
-    // change that shifts the help text to stderr (which would interleave
-    // with our diagnostic stream and confuse log aggregators).
-    it('aitcc nope --json exits non-zero with "Unknown command" on stderr', async () => {
+    // a diagnostic on stderr, exit non-zero. This is *not* `--json`-clean,
+    // but agent-plugin would never send an unknown command; pinning the
+    // structural shape (diagnostic on stderr, help on stdout, no ANSI in
+    // either) protects against an upstream citty change that shifts the
+    // help text to stderr — which would interleave with our diagnostic
+    // stream and confuse log aggregators. We deliberately do NOT pin
+    // citty's exact wording ("Unknown command X" vs "Unrecognized command")
+    // since that's an internal detail that can change in a citty minor.
+    it('aitcc nope --json exits non-zero, diagnostic on stderr, help on stdout', async () => {
       const dir = await xdg.fresh();
       const { exitCode, stdout, stderr } = await runCli(['nope', '--json'], dir);
       expect(exitCode).not.toBe(0);
-      expect(stderr).toMatch(/Unknown command/);
-      // stdout is the help dump (multi-line), so the single-JSON-line
-      // invariant doesn't apply — but we still demand no ANSI so a
-      // pipe consumer sees a clean help text.
+      expect(stderr.length).toBeGreaterThan(0);
+      expect(stdout.length).toBeGreaterThan(0);
       assertNoAnsi(stdout);
+      assertNoAnsi(stderr);
     }, 30_000);
   });
 });

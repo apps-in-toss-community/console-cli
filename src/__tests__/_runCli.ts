@@ -60,6 +60,16 @@ export async function runCli(
   }
   baseEnv.NO_COLOR = '1';
   baseEnv.XDG_CONFIG_HOME = xdgConfigHome;
+  // On Windows, `paths.ts:configDir()` reads `%APPDATA%` (and `cacheDir()`
+  // reads `%LOCALAPPDATA%`) and ignores `XDG_CONFIG_HOME`. Without these
+  // overrides the child would fall back to the real user profile and a
+  // pre-existing session would flip every "authenticated:false" assertion.
+  // Point both at sub-paths of the scratch dir so cleanup still works via
+  // a single `rm -rf`.
+  if (process.platform === 'win32') {
+    baseEnv.APPDATA = join(xdgConfigHome, 'AppData', 'Roaming');
+    baseEnv.LOCALAPPDATA = join(xdgConfigHome, 'AppData', 'Local');
+  }
 
   try {
     const { stdout, stderr } = await execFileP(process.execPath, [DIST_CLI, ...args], {
@@ -112,17 +122,22 @@ export function assertSingleJsonLine(stdout: string): unknown {
  * Assert no line on stderr parses as JSON. Plain-text diagnostics are
  * fine; a JSON document on stderr is a contract violation that would
  * confuse agent-plugin if it ever fell back to scanning both streams.
+ *
+ * "JSON" here means any value `JSON.parse` accepts — objects, arrays,
+ * but also primitives (`null`, `42`, `"x"`, `true`). A single bare
+ * `null` on stderr from a stray `console.error(maybeNull)` would still
+ * be a contract leak, so we don't gate on the leading character.
  */
 export function assertStderrHasNoJson(stderr: string): void {
   for (const line of stderr.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) continue;
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
+    } catch (e) {
+      if (e instanceof SyntaxError) continue;
+      throw e;
     }
     throw new Error(`stderr contained a JSON document: ${JSON.stringify(parsed)}`);
   }
