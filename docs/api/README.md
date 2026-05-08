@@ -16,7 +16,8 @@
 | Error code 카탈로그 | [`_error-codes.md`](./_error-codes.md) | — |
 | Redaction 정책 | [`_redaction.md`](./_redaction.md) | — |
 | Auth · Session | [`auth-session.md`](./auth-session.md) | ✅ confirmed |
-| Workspaces · Members | [`workspaces.md`](./workspaces.md) | ✅ confirmed |
+| Workspaces | [`workspaces.md`](./workspaces.md) | ✅ confirmed |
+| Members · Invites | [`members.md`](./members.md) | ⚠️ mixed (`GET /members` ✅, invite/remove inferred) |
 | Mini-apps (등록·조회) | [`mini-apps.md`](./mini-apps.md) | ✅ confirmed |
 | Mini-apps · 이미지 업로드 | [`mini-app-images.md`](./mini-app-images.md) | ✅ confirmed |
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
@@ -52,7 +53,8 @@
 | 도메인 | 코드 |
 |---|---|
 | Auth · Session | [`src/api/me.ts`](../../src/api/me.ts), [`src/commands/whoami.ts`](../../src/commands/whoami.ts) |
-| Workspaces · Members | [`src/api/workspaces.ts`](../../src/api/workspaces.ts), [`src/api/members.ts`](../../src/api/members.ts) |
+| Workspaces | [`src/api/workspaces.ts`](../../src/api/workspaces.ts) |
+| Members · Invites | [`src/api/members.ts`](../../src/api/members.ts), [`src/commands/members.ts`](../../src/commands/members.ts) |
 | Mini-apps | [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/register.ts`](../../src/commands/register.ts), [`src/commands/register-payload.ts`](../../src/commands/register-payload.ts) |
 | API Keys | [`src/api/api-keys.ts`](../../src/api/api-keys.ts), [`src/commands/keys.ts`](../../src/commands/keys.ts) |
 | Notices | [`src/api/ipd-thor.ts`](../../src/api/ipd-thor.ts), [`src/commands/notices.ts`](../../src/commands/notices.ts) |
@@ -63,7 +65,7 @@
 
 **우선순위 1 — 빈 워크스페이스에서도 가능 (가장 빨리 해소 가능)**:
 
-- `GET /workspaces/<wid>/members/me` — workspace landing 시 자동 호출, `.playwright-mcp/xhr-captures/`에 raw 있을 가능성. ([`workspaces.md`](./workspaces.md))
+- `GET /workspaces/<wid>/members/me` — workspace landing 시 자동 호출, `.playwright-mcp/xhr-captures/`에 raw 있을 가능성. ([`members.md`](./members.md))
 - `GET /workspaces/<wid>/partner/is-registered` — 동일. ([`workspaces.md`](./workspaces.md))
 - `GET /workspaces/<wid>/console-workspace-terms/<type>/skip-permission` — 등록 마법사 진입 시 호출. ([`workspaces.md`](./workspaces.md))
 - `GET /workspaces/129/posts`, `/categories` (notices) — 사이드바 자동 호출. ([`notices.md`](./notices.md))
@@ -88,6 +90,7 @@
 - `PUT /workspaces/<wid>/api-keys/<id>/disable` — 발급 후 검증 페어로 동시 캡처. ([`api-keys.md`](./api-keys.md))
 - toss-login `review` / `marketing-agreement` / `encryption-key/email` — 토스 로그인 사용 사례 필요. ([`mini-app-misc.md`](./mini-app-misc.md))
 - `smart-message` / `segments` / `templates` / `maintenance-jobs` 도메인 sub-path — `bootstrap.*.js` grep으로 path 추출 후 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
+- [`members.md`](./members.md)의 ⚠️ invite/remove 항목 전체 (`POST /invites/send/by-email`, `POST /invites`, `POST /invites/accept`, `POST /invites/reject`, `DELETE /invites`, `DELETE /members/<biz_user_no>`) — `aitcc members invite` / `members remove` 명령 PR 진행 시 라이브 캡처. accept/reject는 현재 CLI scope 밖이지만 같은 UI 흐름에서 함께 캡처하면 비용이 거의 같다.
 
 ## 확인된 endpoint 부재 (anti-inventory)
 
