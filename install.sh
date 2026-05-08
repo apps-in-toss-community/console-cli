@@ -10,14 +10,35 @@
 # Environment variables:
 #   AITCC_VERSION        Pin to a specific tag (e.g. "v0.1.1"). Default: latest.
 #   AITCC_INSTALL_DIR    Install location. Default: $HOME/.local/bin.
+#                        If unset and $HOME is also unset/missing, falls back
+#                        to /tmp/aitcc-install (not on PATH by default).
 #   AITCC_QUIET=1        Suppress non-error output.
+#
+# Asset 404s (release tag published but binary upload not yet visible) are
+# retried with exponential backoff up to ~30s before giving up.
 
 set -eu
 
 REPO="apps-in-toss-community/console-cli"
-INSTALL_DIR="${AITCC_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${AITCC_VERSION:-latest}"
 QUIET="${AITCC_QUIET:-0}"
+
+# -- resolve install dir -----------------------------------------------------
+# `${AITCC_INSTALL_DIR:-...}` would treat an explicit empty export the same
+# as unset, but we want to be explicit so that the "$HOME unset" warning
+# fires for both `unset HOME` and `HOME=""` callers.
+if [ -z "${AITCC_INSTALL_DIR:-}" ]; then
+  if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+    INSTALL_DIR="$HOME/.local/bin"
+  else
+    INSTALL_DIR="/tmp/aitcc-install"
+    # shellcheck disable=SC2016  # $HOME is intentionally literal in the message.
+    printf 'aitcc installer: warning: $HOME is unset; falling back to %s (not on PATH by default)\n' \
+      "$INSTALL_DIR" >&2
+  fi
+else
+  INSTALL_DIR="$AITCC_INSTALL_DIR"
+fi
 
 log() {
   [ "$QUIET" = "1" ] || printf '%s\n' "$*"
@@ -64,13 +85,64 @@ bin_url="$base_url/$binary"
 sums_url="$base_url/SHA256SUMS"
 
 # -- pick tools --------------------------------------------------------------
+# `dl_once` writes the URL body to $2 and prints the HTTP status code on
+# stdout (or "000" if the transport itself failed). The wrapper `dl_retry`
+# turns 404s — caused by the brief race between a release being tagged and
+# its assets becoming visible on the CDN — into a bounded exponential
+# backoff. Any other non-200 status fails fast: a 5xx or DNS failure won't
+# fix itself by waiting, and silently retrying would mask real breakage.
 if command -v curl >/dev/null 2>&1; then
-  dl() { curl -fsSL --retry 3 --retry-delay 2 --output "$2" "$1"; }
+  dl_once() {
+    # `--retry 3` here covers transient transport hiccups (TLS reset etc.);
+    # the explicit 404 retry sits one layer up.
+    curl -sSL --retry 3 --retry-delay 2 \
+      -o "$2" -w '%{http_code}' "$1" 2>/dev/null || printf '000'
+  }
 elif command -v wget >/dev/null 2>&1; then
-  dl() { wget -q -O "$2" "$1"; }
+  dl_once() {
+    # wget exit codes: 0=ok, 8=server issued error response. Map both 404
+    # and any other non-zero into a status string for dl_retry to inspect.
+    if wget -q -O "$2" "$1" 2>/dev/null; then
+      printf '200'
+    else
+      # `--spider` does a HEAD-equivalent so we can read the status without
+      # re-downloading. Captured stderr lines look like "  HTTP/1.1 404 ...".
+      status=$(wget --spider -S "$1" 2>&1 | awk '/^[ \t]*HTTP\// {code=$2} END {print code+0}')
+      [ "$status" -gt 0 ] 2>/dev/null && printf '%s' "$status" || printf '000'
+    fi
+  }
 else
   die "need curl or wget"
 fi
+
+# Retry only on 404. POSIX-only arithmetic; macOS BSD sleep accepts integer
+# seconds. Total elapsed wait capped at ~30s (1+2+4+8+8+8 = 31).
+dl_retry() {
+  url=$1
+  out=$2
+  attempt=0
+  total=0
+  while :; do
+    status=$(dl_once "$url" "$out")
+    if [ "$status" = "200" ]; then
+      return 0
+    fi
+    if [ "$status" != "404" ] || [ "$total" -ge 30 ]; then
+      err "download failed: $url (status $status)"
+      return 1
+    fi
+    delay=$((1 << attempt))
+    if [ "$delay" -gt 8 ]; then
+      delay=8
+    fi
+    log "asset not yet available (404), retrying in ${delay}s..."
+    sleep "$delay"
+    total=$((total + delay))
+    attempt=$((attempt + 1))
+  done
+}
+
+dl() { dl_retry "$1" "$2"; }
 
 if command -v shasum >/dev/null 2>&1; then
   sha_check() { shasum -a 256 -c "$1"; }
@@ -88,11 +160,7 @@ log "Downloading $binary..."
 dl "$bin_url" "$tmp/$binary" || die "failed to download $bin_url"
 
 log "Downloading SHA256SUMS..."
-if ! dl "$sums_url" "$tmp/SHA256SUMS"; then
-  err "could not fetch SHA256SUMS from $sums_url"
-  err "the release may still be uploading; wait a minute and retry"
-  exit 1
-fi
+dl "$sums_url" "$tmp/SHA256SUMS" || die "failed to download $sums_url"
 
 # Keep only the line for our binary, then verify.
 (
