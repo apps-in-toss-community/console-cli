@@ -193,3 +193,49 @@ export async function fetchWorkspaceTerms(
     };
   });
 }
+
+// `(termsId, revisionId)` pair the agree endpoint expects per term. The
+// shape is intentionally loose — `WorkspaceTerm` carries a lot more (title,
+// actionType, isAgreed) that the server has no use for on submit, so this
+// helper stays narrow.
+export interface WorkspaceTermAgreement {
+  readonly termsId: number;
+  readonly revisionId: number;
+}
+
+/**
+ * Persist agreement for one-or-more workspace terms. The endpoint takes a
+ * single `agreedList` regardless of which bucket the terms came from — the
+ * type tag is implicit in the (termsId, revisionId) pairs.
+ *
+ * Captured behaviour (2026-05-08, ws=36577):
+ *   - `POST /workspaces/<wid>/console-workspace-terms` with body
+ *     `{"agreedList":[{"termsId": <int>, "revisionId": <int>}, ...]}`
+ *   - Response on success: `{"resultType":"SUCCESS","success":{}}` — no
+ *     useful payload. We resolve `void`.
+ *   - Re-submitting an already-agreed term returns `errorCode: 500`
+ *     (Internal Server Error). The server is NOT idempotent, so callers
+ *     must filter to `isAgreed === false` before invoking.
+ *   - Empty `agreedList` returns SUCCESS (no-op), but we throw client-side
+ *     before sending — round-tripping a no-op request is wasted.
+ *
+ * Failure surfaces through `TossApiError` like every other write helper.
+ */
+export async function agreeWorkspaceTerms(
+  workspaceId: number,
+  terms: readonly WorkspaceTermAgreement[],
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<void> {
+  if (terms.length === 0) {
+    throw new Error('agreeWorkspaceTerms requires at least one term');
+  }
+  const url = `${WORKSPACES_BASE}/workspaces/${workspaceId}/console-workspace-terms`;
+  await requestConsoleApi<unknown>({
+    method: 'POST',
+    url,
+    cookies,
+    body: { agreedList: terms.map(({ termsId, revisionId }) => ({ termsId, revisionId })) },
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+}

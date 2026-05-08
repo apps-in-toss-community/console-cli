@@ -1,7 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WORKSPACE_TERM_TYPES, type WorkspaceTermType } from '../api/workspaces.js';
+import { TossApiError } from '../api/http.js';
+import {
+  WORKSPACE_TERM_TYPES,
+  type WorkspaceTerm,
+  type WorkspaceTermType,
+} from '../api/workspaces.js';
 import { parsePositiveInt } from './_shared.js';
-import { blocksFor, formatBlocksHint, TERM_BLOCKS } from './workspace.js';
+import {
+  blocksFor,
+  describeAgreeError,
+  formatBlocksHint,
+  processAgreeBuckets,
+  TERM_BLOCKS,
+  validateAgreeArgs,
+} from './workspace.js';
 
 // Regression guard for the strict workspace-id parser used by
 // `workspace use` and `workspace show --workspace`. `Number.parseInt` alone
@@ -156,5 +168,163 @@ describe('formatBlocksHint', () => {
     // agreed terms — agreed entries are supposed to render the hint in
     // default styling so users see the gating context regardless.
     expect(out).toContain('blocks if missing: iap product register, iap config');
+  });
+});
+
+// `validateAgreeArgs` is the pure-arg gate before any session/network is
+// touched. It owns the mutually-exclusive / argument-required /
+// unknown-term-type branches that map straight to the JSON contract's
+// `reason` field, plus the case-insensitive positional matching.
+describe('validateAgreeArgs', () => {
+  it('returns argument-required when neither positional nor --all is given', () => {
+    const r = validateAgreeArgs({ positional: '', all: false });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('argument-required');
+    }
+  });
+
+  it('returns mutually-exclusive when both positional and --all are given', () => {
+    const r = validateAgreeArgs({ positional: 'IAP', all: true });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('mutually-exclusive');
+    }
+  });
+
+  it('expands --all to every term type', () => {
+    const r = validateAgreeArgs({ positional: '', all: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.types).toEqual(WORKSPACE_TERM_TYPES);
+    }
+  });
+
+  it('accepts a known term type case-insensitively', () => {
+    const r = validateAgreeArgs({ positional: 'iap', all: false });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.types).toEqual(['IAP']);
+    }
+  });
+
+  it('returns unknown-term-type with given+allowed for an unknown positional', () => {
+    const r = validateAgreeArgs({ positional: 'NOT_A_TYPE', all: false });
+    expect(r.ok).toBe(false);
+    if (!r.ok && r.reason === 'unknown-term-type') {
+      expect(r.given).toBe('NOT_A_TYPE');
+      expect(r.allowed).toEqual([...WORKSPACE_TERM_TYPES]);
+    }
+  });
+});
+
+// `processAgreeBuckets` is the orchestration core: given fetched buckets +
+// an injectable submitter, partition into agreed/unchanged/failed.
+// Tests use a `WorkspaceTerm` factory so the snapshot input mimics what
+// `fetchWorkspaceTerms` returns.
+function term(
+  termsId: number,
+  revisionId: number,
+  isAgreed: boolean,
+  title = `term-${termsId}`,
+): WorkspaceTerm {
+  return {
+    required: true,
+    termsId,
+    revisionId,
+    title,
+    contentsUrl: `https://terms/${termsId}/${revisionId}`,
+    actionType: 'NONE',
+    isAgreed,
+    isOneTimeConsent: false,
+  };
+}
+
+describe('processAgreeBuckets', () => {
+  it('moves all-pending terms to agreed when submit succeeds', async () => {
+    const submitted: { type: WorkspaceTermType; pending: readonly { termsId: number }[] }[] = [];
+    const out = await processAgreeBuckets(
+      [{ type: 'IAP', terms: [term(1, 10, false), term(2, 20, false)] }],
+      async (type, pending) => {
+        submitted.push({ type, pending: pending.map((p) => ({ termsId: p.termsId })) });
+      },
+    );
+    expect(out.agreed.map((a) => a.termsId)).toEqual([1, 2]);
+    expect(out.unchanged).toEqual([]);
+    expect(out.failed).toEqual([]);
+    expect(submitted).toEqual([{ type: 'IAP', pending: [{ termsId: 1 }, { termsId: 2 }] }]);
+  });
+
+  it('moves already-agreed terms to unchanged and skips the API call entirely', async () => {
+    let submitCalls = 0;
+    const out = await processAgreeBuckets(
+      [{ type: 'IAP', terms: [term(1, 10, true), term(2, 20, true)] }],
+      async () => {
+        submitCalls++;
+      },
+    );
+    expect(submitCalls).toBe(0);
+    expect(out.agreed).toEqual([]);
+    expect(out.unchanged.map((u) => u.termsId)).toEqual([1, 2]);
+    expect(out.failed).toEqual([]);
+  });
+
+  it('mixes agreed + unchanged within the same bucket', async () => {
+    const out = await processAgreeBuckets(
+      [{ type: 'IAP', terms: [term(1, 10, true), term(2, 20, false), term(3, 30, true)] }],
+      async () => {},
+    );
+    expect(out.agreed.map((a) => a.termsId)).toEqual([2]);
+    expect(out.unchanged.map((u) => u.termsId)).toEqual([1, 3]);
+    expect(out.failed).toEqual([]);
+  });
+
+  it('records partial failure: one bucket fails, the next still proceeds', async () => {
+    const apiErr = new TossApiError(200, '500', 'INTERNAL', 0);
+    const out = await processAgreeBuckets(
+      [
+        { type: 'IAP', terms: [term(1, 10, false)] },
+        { type: 'IAA', terms: [term(2, 20, false)] },
+      ],
+      async (type) => {
+        if (type === 'IAP') throw apiErr;
+      },
+    );
+    expect(out.agreed.map((a) => a.type)).toEqual(['IAA']);
+    expect(out.failed).toHaveLength(1);
+    expect(out.failed[0]?.type).toBe('IAP');
+    // Message comes from `TossApiError.message` directly (no extra suffix):
+    //   "Toss API error 500: INTERNAL (HTTP 200)"
+    expect(out.failed[0]?.message).toBe('Toss API error 500: INTERNAL (HTTP 200)');
+  });
+
+  it('processes every requested bucket for the --all path', async () => {
+    const calls: WorkspaceTermType[] = [];
+    const buckets = WORKSPACE_TERM_TYPES.map((t, i) => ({
+      type: t,
+      terms: [term(i + 1, (i + 1) * 10, false)],
+    }));
+    const out = await processAgreeBuckets(buckets, async (type) => {
+      calls.push(type);
+    });
+    expect(calls).toEqual([...WORKSPACE_TERM_TYPES]);
+    expect(out.agreed).toHaveLength(WORKSPACE_TERM_TYPES.length);
+    expect(out.unchanged).toEqual([]);
+    expect(out.failed).toEqual([]);
+  });
+});
+
+describe('describeAgreeError', () => {
+  it('returns TossApiError.message verbatim (errorCode + reason already embedded)', () => {
+    const err = new TossApiError(200, '500', 'INTERNAL', 0);
+    expect(describeAgreeError(err)).toBe('Toss API error 500: INTERNAL (HTTP 200)');
+  });
+
+  it('renders generic Error.message', () => {
+    expect(describeAgreeError(new Error('boom'))).toBe('boom');
+  });
+
+  it('coerces non-Error values to a string', () => {
+    expect(describeAgreeError('weird')).toBe('weird');
   });
 });

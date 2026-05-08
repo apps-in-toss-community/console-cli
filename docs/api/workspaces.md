@@ -16,6 +16,7 @@
 | GET | `/workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=` | 사업자번호 조회 | ⚠️ |
 | GET | `/workspaces/<wid>/segments/list` | 세그먼트 목록 (page/category/search) | ⚠️ |
 | GET | `/workspaces/<wid>/console-workspace-terms/<type>/skip-permission` | 약관 동의 필요 여부 | ⚠️ |
+| POST | `/workspaces/<wid>/console-workspace-terms` | 약관 동의 제출 (`agreedList`) | ✅ |
 
 > **Note**: console-cli는 사용자 워크스페이스 목록을 별도로 가져오지 않는다. `GET /members/me/user-info`의 `workspaces[]`를 그대로 사용한다 ([`auth-session.md`](./auth-session.md) 참고). 아래 `GET /workspaces`는 콘솔 SPA의 동작 캡처이며 CLI 코드 경로엔 없음.
 
@@ -107,11 +108,36 @@
 
 shape은 [`auth-session.md`](./auth-session.md)의 `/console-user-terms/me`와 동일.
 
+## `POST /workspaces/<wid>/console-workspace-terms` — 약관 동의 제출
+
+- **Used by**: [`src/api/workspaces.ts#agreeWorkspaceTerms`](../../src/api/workspaces.ts), `aitcc workspace terms agree`
+- **Capture status**: ✅ confirmed (2026-05-08, ws=36577, BIZ_WORKSPACE 3건 동의)
+- **Request body**: `{"agreedList": [{"termsId": <int>, "revisionId": <int>}, ...]}`
+- 단일 endpoint로 여러 type을 한 번에 받는다 — type tag는 implicit이고 (`termsId`, `revisionId`) 페어로만 식별. 클라이언트가 `<type>/skip-permission` 응답에서 받은 그 페어를 그대로 echo back하면 됨.
+
+### Response
+
+```json
+{ "resultType": "SUCCESS", "success": {} }
+```
+
+`success`는 빈 객체. 의미 있는 payload는 없음.
+
+### 비-idempotent 동작
+
+이미 동의된 `(termsId, revisionId)`를 다시 보내면 `errorCode: "500"` (Internal Server Error)이 떨어진다. 클라이언트는 `<type>/skip-permission`을 먼저 호출해서 `isAgreed === false`인 항목만 추려서 제출해야 한다. CLI 측은 `agreeWorkspaceTerms`를 호출하기 전에 항상 fetch → filter pending → submit 순서를 강제한다.
+
+빈 `agreedList`를 보내면 SUCCESS가 떨어지지만(no-op), 이쪽도 클라이언트가 round-trip 전에 가드한다 (`agreeWorkspaceTerms` requires at least one term).
+
+### 짝 endpoint (미캡처)
+
+- `POST /workspaces/<wid>/console-workspace-terms/re-agree`: 콘솔이 약관 개정 시 호출하는 동의 갱신. CLI는 미사용.
+
 ## 미캡처 endpoint
 
 - `GET /workspaces/<wid>/partner`, `/partner/is-registered`: 파트너 등록 흐름. CLI 미사용. 코드의 `fetchWorkspacePartner`는 inferred shape.
 - `GET /workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=`: 사업자번호 조회. 콘솔 등록 마법사에서 호출됨.
 - `POST /workspaces`, `PATCH /workspaces/<wid>/edit`: 워크스페이스 생성/수정. CLI scope 밖.
 - `POST /workspaces/<wid>/owner-delegations`, `/owner-delegations/complete`: 소유권 위임. CLI scope 밖.
-- `POST /workspaces/<wid>/console-workspace-terms`, `/re-agree`: 약관 동의. CLI scope 밖.
+- `POST /workspaces/<wid>/console-workspace-terms/re-agree`: 약관 개정 시 동의 갱신. CLI 미사용 (정규 동의는 `POST .../console-workspace-terms` 항목 참조).
 - 초대 관리(`POST /invites/...`, `DELETE /invites`)와 멤버 제거(`DELETE /members/<biz_user_no>`)는 [`members.md`](./members.md)로 분리.
