@@ -137,6 +137,32 @@ describe('runAuthImport', () => {
     expect(onDisk).toEqual(sample);
   });
 
+  it('passes forceWrite: true to writeSession (bypasses env-mode no-op)', async () => {
+    // Regression guard: under --from-env, AITCC_SESSION is set, which
+    // makes the production writeSession() a no-op unless forceWrite is
+    // threaded through. If a future refactor drops it, this test
+    // catches the call-site regression.
+    const blob = Buffer.from(JSON.stringify(sample), 'utf8').toString('base64');
+    const calls: Array<{ session: Session; opts: unknown }> = [];
+    const writeSpy = async (session: Session, opts?: unknown) => {
+      calls.push({ session, opts });
+    };
+    const spy = spyStdoutStderr();
+    await captureExit(() =>
+      runAuthImport(
+        { json: true, fromEnv: true, dryRun: false },
+        {
+          env: { AITCC_SESSION: blob },
+          stdinIsTTY: false,
+          writeSession: writeSpy,
+        },
+      ),
+    );
+    spy.restore();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts).toEqual({ forceWrite: true });
+  });
+
   it('exits 2 with env-not-set when --from-env but env unset', async () => {
     const spy = spyStdoutStderr();
     const exited = await captureExit(() =>
