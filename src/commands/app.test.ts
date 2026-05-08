@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compareMiniAppViews,
   deriveLsStatus,
   deriveReviewState,
   findReviewEntry,
@@ -352,5 +353,119 @@ describe('deriveLsStatus', () => {
       locked: true,
       lockReason: 'review-pending',
     });
+  });
+});
+
+// `compareMiniAppViews` is the engine behind `aitcc app show --diff`. It
+// runs a fixed whitelist of fields a user actually edits via `app register`
+// (title, description, iconUri, …) plus two shallow `impression` signals.
+// Deep recursive diffs are intentionally out of scope — the goal is
+// "scannable in a terminal", not "round-trippable".
+describe('compareMiniAppViews', () => {
+  it('returns no changes when both sides match across the whitelist', () => {
+    const same = { title: 'A', titleEn: 'A-en', appName: 'a', description: 'sub' };
+    const result = compareMiniAppViews(same, { ...same });
+    expect(result.changed).toEqual([]);
+    expect(result.hasDraft).toBe(true);
+    expect(result.hasCurrent).toBe(true);
+    expect(result.unchangedCount).toBe(4);
+  });
+
+  it('emits a {field, draft, current} entry for each top-level diff', () => {
+    const draft = { title: '새 제목', description: '새 설명' };
+    const current = { title: '이전 제목', description: '새 설명' };
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([{ field: 'title', draft: '새 제목', current: '이전 제목' }]);
+    expect(result.unchangedCount).toBe(1);
+  });
+
+  it('treats undefined-on-both as "field not present" (not unchanged) so absent fields do not pad the count', () => {
+    // Neither side has any whitelisted field → no changes, no "unchanged"
+    // either. Pads otherwise.
+    const result = compareMiniAppViews({}, {});
+    expect(result.changed).toEqual([]);
+    expect(result.unchangedCount).toBe(0);
+  });
+
+  it('arrays diff structurally — element order matters', () => {
+    const draft = { impression: { keywordList: ['a', 'b'] } };
+    const current = { impression: { keywordList: ['a'] } };
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([
+      { field: 'impression.keywordList', draft: ['a', 'b'], current: ['a'] },
+    ]);
+  });
+
+  it('arrays compare equal when element-wise equal (no false positives from object identity)', () => {
+    const draft = { impression: { keywordList: ['x', 'y'] } };
+    const current = { impression: { keywordList: ['x', 'y'] } };
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([]);
+    expect(result.unchangedCount).toBe(1);
+  });
+
+  it('reduces categoryPath to a single "group > category > subCategory" string', () => {
+    // Only the first path is compared — keeps the diff readable. Full
+    // path objects would dominate output without adding signal.
+    const draft = {
+      impression: {
+        categoryPaths: [
+          {
+            group: { name: '생활' },
+            category: { name: '정보' },
+            subCategory: { name: '생활/정보' },
+          },
+        ],
+      },
+    };
+    const current = {
+      impression: {
+        categoryPaths: [
+          {
+            group: { name: '엔터테인먼트' },
+            category: { name: '게임' },
+            subCategory: { name: '캐주얼' },
+          },
+        ],
+      },
+    };
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([
+      {
+        field: 'impression.categoryPath',
+        draft: '생활 > 정보 > 생활/정보',
+        current: '엔터테인먼트 > 게임 > 캐주얼',
+      },
+    ]);
+  });
+
+  it('hasDraft=false when draft is null — returns empty changed list (no diff possible)', () => {
+    const result = compareMiniAppViews(null, { title: 'A' });
+    expect(result.hasDraft).toBe(false);
+    expect(result.hasCurrent).toBe(true);
+    expect(result.changed).toEqual([]);
+    expect(result.unchangedCount).toBe(0);
+  });
+
+  it('hasCurrent=false when current is null — returns empty changed list', () => {
+    const result = compareMiniAppViews({ title: 'A' }, null);
+    expect(result.hasDraft).toBe(true);
+    expect(result.hasCurrent).toBe(false);
+    expect(result.changed).toEqual([]);
+  });
+
+  it('both sides null — both flags false, empty changed', () => {
+    const result = compareMiniAppViews(null, null);
+    expect(result.hasDraft).toBe(false);
+    expect(result.hasCurrent).toBe(false);
+    expect(result.changed).toEqual([]);
+  });
+
+  it('skips impression fields when impression is missing or wrong-typed (no crash)', () => {
+    // A guard against the schema regressing to a non-object impression.
+    const draft = { title: 'A', impression: 'oops' };
+    const current = { title: 'B', impression: null };
+    const result = compareMiniAppViews(draft, current);
+    expect(result.changed).toEqual([{ field: 'title', draft: 'A', current: 'B' }]);
   });
 });

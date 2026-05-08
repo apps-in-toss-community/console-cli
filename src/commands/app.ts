@@ -200,10 +200,18 @@ const lsCommand = defineCommand({
 // --json contract (consumed by agent-plugin):
 //
 //   app show <id> [--workspace <id>] [--view draft|current|merged]:
-//     { ok: true, workspaceId, appId, view, miniApp: {...} }   exit 0
-//     { ok: false, reason: 'no-workspace-selected' }            exit 2
-//     { ok: false, reason: 'invalid-id', message }              exit 2
-//     { ok: false, reason: 'app-not-found', appId }             exit 2
+//     { ok: true, workspaceId, appId, view, miniApp: {...},
+//       reviewState, locked, lockReason,
+//       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt }   exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                    exit 2
+//     { ok: false, reason: 'invalid-id', message }                      exit 2
+//     { ok: false, reason: 'app-not-found', appId }                     exit 2
+//
+//   app show <id> --diff:
+//     { ok: true, workspaceId, appId, diffMode: true,
+//       reviewState, locked, lockReason,
+//       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt,
+//       diff: { hasDraft, hasCurrent, changed: [{field, draft, current}], unchangedCount } }  exit 0
 //
 // `view` picks which part of the with-draft envelope to surface:
 // - `draft` (default) — the editor's latest state, populated as soon as
@@ -218,6 +226,13 @@ const lsCommand = defineCommand({
 // The `--view` flag intentionally never falls back on its own. If the
 // caller asks for `current` on an unreviewed app they get `miniApp: null`
 // with `view: 'current'` so agent-plugin can tell the two cases apart.
+//
+// `reviewState`/`locked`/`lockReason` are derived from the envelope-level
+// `approvalType` + `current`/`draft`/`rejectedMessage` combo (same shape as
+// `app status`). `serviceStatus`/`shutdownCandidateStatus`/`scheduledShutdownAt`
+// come from the `/review-status` endpoint and may be `null` if that call
+// fails (we still return the review derivation since it's authoritative on
+// its own — see docs/api/mini-apps.md "REVIEW lock 권위").
 export function pickMiniAppView(
   envelope: { current: Record<string, unknown> | null; draft: Record<string, unknown> | null },
   view: 'draft' | 'current' | 'merged',
@@ -236,6 +251,157 @@ export function pickMiniAppView(
   if (view === 'current') return current;
   if (current !== null && draft !== null) return { ...current, ...draft };
   return draft ?? current;
+}
+
+// Whitelist + shallow comparison for `app show --diff`. Deep recursive
+// diffs over arbitrary console payloads aren't useful here — most fields
+// are server-controlled and noisy. We pick the top-level fields the user
+// actually edits via `app register`, plus two shallow `impression`
+// signals (keywordList, first categoryPath name).
+//
+// Each entry maps a stable diff field name (the key surfaced in JSON +
+// printed to stdout) to a getter that pulls the value out of the
+// `miniApp` view returned by `pickMiniAppView` (which already has
+// `impression` nested as a read-side convenience — see docs/api/mini-apps.md
+// "Update-mode payload" for why we don't strip it on read).
+type DiffGetter = (m: Record<string, unknown>) => unknown;
+const DIFF_FIELDS: ReadonlyArray<readonly [string, DiffGetter]> = [
+  ['title', (m) => m.title],
+  ['titleEn', (m) => m.titleEn],
+  ['appName', (m) => m.appName],
+  ['description', (m) => m.description],
+  ['detailDescription', (m) => m.detailDescription],
+  ['homePageUri', (m) => m.homePageUri],
+  ['csEmail', (m) => m.csEmail],
+  ['iconUri', (m) => m.iconUri],
+  ['darkModeIconUri', (m) => m.darkModeIconUri],
+  [
+    'impression.keywordList',
+    (m) => {
+      const imp = m.impression;
+      if (imp === null || typeof imp !== 'object' || Array.isArray(imp)) return undefined;
+      const kw = (imp as Record<string, unknown>).keywordList;
+      return Array.isArray(kw) ? kw : undefined;
+    },
+  ],
+  [
+    'impression.categoryPath',
+    (m) => {
+      // Just the first path's name parts joined "group > category > subCategory".
+      // Single string keeps the diff readable; full path objects are noisy.
+      const imp = m.impression;
+      if (imp === null || typeof imp !== 'object' || Array.isArray(imp)) return undefined;
+      const paths = (imp as Record<string, unknown>).categoryPaths;
+      if (!Array.isArray(paths) || paths.length === 0) return undefined;
+      const first = paths[0];
+      if (first === null || typeof first !== 'object') return undefined;
+      const fp = first as Record<string, unknown>;
+      const parts: string[] = [];
+      for (const key of ['group', 'category', 'subCategory']) {
+        const node = fp[key];
+        if (node !== null && typeof node === 'object') {
+          const nm = (node as Record<string, unknown>).name;
+          if (typeof nm === 'string') parts.push(nm);
+        }
+      }
+      return parts.join(' > ');
+    },
+  ],
+];
+
+export interface DiffEntry {
+  readonly field: string;
+  readonly draft: unknown;
+  readonly current: unknown;
+}
+
+export interface MiniAppDiff {
+  readonly hasDraft: boolean;
+  readonly hasCurrent: boolean;
+  readonly changed: readonly DiffEntry[];
+  readonly unchangedCount: number;
+}
+
+// Equality used by the diff: structural for arrays/objects, strict for
+// primitives. Arrays compare element-by-element with the same predicate;
+// objects key-by-key. Cycles aren't a concern — the with-draft response is
+// JSON, no self-references.
+function diffEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a === null || b === null) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!diffEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (typeof a === 'object' && typeof b === 'object') {
+    const ao = a as Record<string, unknown>;
+    const bo = b as Record<string, unknown>;
+    const ak = Object.keys(ao);
+    const bk = Object.keys(bo);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+      if (!diffEquals(ao[k], bo[k])) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+export function compareMiniAppViews(
+  draft: Record<string, unknown> | null,
+  current: Record<string, unknown> | null,
+): MiniAppDiff {
+  const hasDraft = draft !== null;
+  const hasCurrent = current !== null;
+  if (!hasDraft || !hasCurrent) {
+    return { hasDraft, hasCurrent, changed: [], unchangedCount: 0 };
+  }
+  const changed: DiffEntry[] = [];
+  let unchangedCount = 0;
+  for (const [field, getter] of DIFF_FIELDS) {
+    // We pass the non-null branches so getters don't have to re-check.
+    const d = getter(draft);
+    const c = getter(current);
+    if (d === undefined && c === undefined) continue;
+    if (diffEquals(d, c)) {
+      unchangedCount++;
+    } else {
+      changed.push({ field, draft: d, current: c });
+    }
+  }
+  return { hasDraft, hasCurrent, changed, unchangedCount };
+}
+
+// Plain-mode rendering of a single diff value. Long strings collapse to
+// `<N> chars`; arrays show the count. Goal is "scannable in a terminal",
+// not "round-trippable" — the JSON path keeps the raw values for that.
+function formatDiffValue(v: unknown): string {
+  if (v === null) return 'null';
+  if (v === undefined) return '-';
+  if (typeof v === 'string') {
+    if (v.length > 60) return `${[...v].length} chars`;
+    return JSON.stringify(v);
+  }
+  if (Array.isArray(v)) {
+    return `[${v.length} items]`;
+  }
+  if (typeof v === 'object') {
+    return '<object>';
+  }
+  return String(v);
+}
+
+// Service-status string → human label. Unknown values pass through verbatim
+// (we'd rather show a raw enum we don't recognise than swallow it).
+function describeServiceStatus(s: string): string {
+  if (s === 'PREPARE') return 'PREPARE (출시 전 — release 토글 미사용)';
+  if (s === 'RUNNING') return 'RUNNING (출시 중)';
+  if (s === 'STOPPED') return 'STOPPED (운영 중지)';
+  return s;
 }
 
 const showCommand = defineCommand({
@@ -260,6 +426,13 @@ const showCommand = defineCommand({
       description: 'Which view to render: `draft` (default), `current`, or `merged`.',
       default: 'draft',
     },
+    diff: {
+      type: 'boolean',
+      description:
+        'Compare draft vs current view across the fields users edit (title, description, ' +
+        'iconUri, keywords, category, …). Shallow whitelist — overrides --view.',
+      default: false,
+    },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
@@ -278,6 +451,16 @@ const showCommand = defineCommand({
       return exitAfterFlush(ExitCode.Usage);
     }
 
+    // `--diff` is a different mode of `app show`, not a view selector. If
+    // the user passes both we don't hard-fail (it's harmless and keeps
+    // shell aliases like `aitcc app show $@ --diff` working) — just warn
+    // on stderr and let --diff win.
+    if (args.diff && args.view !== 'draft' && !args.json) {
+      process.stderr.write(
+        `app show: --diff overrides --view ${JSON.stringify(args.view)} (ignored)\n`,
+      );
+    }
+
     const ctx = await resolveAppOrFail({
       json: args.json,
       appIdRaw: args.id,
@@ -290,7 +473,83 @@ const showCommand = defineCommand({
     const { session, workspaceId } = ctx;
 
     try {
-      const envelope = await fetchMiniAppWithDraft(workspaceId, appId, session.cookies);
+      // Fire both requests in parallel — the service-status endpoint is
+      // best-effort: if it fails we still want the review derivation,
+      // which is authoritative on its own (see docs/api/mini-apps.md
+      // "REVIEW lock 권위").
+      const [envelope, service] = await Promise.all([
+        fetchMiniAppWithDraft(workspaceId, appId, session.cookies),
+        fetchAppServiceStatus(workspaceId, appId, session.cookies).catch(() => null),
+      ]);
+      const derived = deriveReviewState(envelope);
+
+      if (args.diff) {
+        const draftMini = pickMiniAppView(envelope, 'draft');
+        const currentMini = pickMiniAppView(envelope, 'current');
+        const diff = compareMiniAppViews(draftMini, currentMini);
+
+        if (args.json) {
+          emitJson({
+            ok: true,
+            workspaceId,
+            appId,
+            diffMode: true,
+            reviewState: derived.state,
+            locked: derived.locked,
+            lockReason: derived.lockReason,
+            serviceStatus: service?.serviceStatus ?? null,
+            shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
+            scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
+            diff,
+          });
+          return exitAfterFlush(ExitCode.Ok);
+        }
+
+        process.stdout.write(`# App ${appId} — diff (draft → current)\n\n`);
+        process.stdout.write(
+          `Review state   ${derived.state}` +
+            (derived.locked ? '  ⚠️  update locked (운영팀 검수 큐 처리 대기)' : '') +
+            '\n',
+        );
+        if (service !== null) {
+          process.stdout.write(`Service        ${describeServiceStatus(service.serviceStatus)}\n`);
+        }
+        process.stdout.write('\n');
+
+        if (!diff.hasDraft && !diff.hasCurrent) {
+          process.stdout.write('App has neither a draft nor a current view yet.\n');
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        if (!diff.hasCurrent) {
+          process.stdout.write('no current view yet — draft is the only state\n');
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        if (!diff.hasDraft) {
+          process.stdout.write('no draft pending — current is the only state\n');
+          return exitAfterFlush(ExitCode.Ok);
+        }
+        if (diff.changed.length === 0) {
+          process.stdout.write('No changes between draft and current.\n');
+          return exitAfterFlush(ExitCode.Ok);
+        }
+
+        // Align field column to the widest changed name for readability.
+        // Cap at 24 so a stray long field name doesn't push the values off
+        // the right edge of an 80-col terminal.
+        const fieldWidth = Math.min(24, Math.max(...diff.changed.map((c) => c.field.length)) + 2);
+        process.stdout.write('Changed:\n');
+        for (const entry of diff.changed) {
+          const name = entry.field.padEnd(fieldWidth);
+          process.stdout.write(
+            `  ${name} ${formatDiffValue(entry.draft)} → ${formatDiffValue(entry.current)}\n`,
+          );
+        }
+        if (diff.unchangedCount > 0) {
+          process.stdout.write(`\nUnchanged: ${diff.unchangedCount} fields\n`);
+        }
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
       const miniApp = pickMiniAppView(envelope, view);
 
       // Emit a one-line stderr hint when `--view current` comes back
@@ -311,6 +570,12 @@ const showCommand = defineCommand({
           appId,
           view,
           miniApp,
+          reviewState: derived.state,
+          locked: derived.locked,
+          lockReason: derived.lockReason,
+          serviceStatus: service?.serviceStatus ?? null,
+          shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
+          scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
         });
         return exitAfterFlush(ExitCode.Ok);
       }
@@ -343,6 +608,19 @@ const showCommand = defineCommand({
       process.stdout.write(`Name (en)      ${pick('titleEn')}\n`);
       process.stdout.write(`App slug       ${pick('appName')}\n`);
       process.stdout.write(`Status         ${pick('status')}\n`);
+      // `Review state` and `Service` are envelope-level — view-orthogonal —
+      // so they sit right after the raw `Status` line regardless of which
+      // view was selected. `Service` is omitted silently when the
+      // `/review-status` call failed; the JSON path still emits
+      // `serviceStatus: null` for callers that care.
+      process.stdout.write(
+        `Review state   ${derived.state}` +
+          (derived.locked ? '  ⚠️  update locked (운영팀 검수 큐 처리 대기)' : '') +
+          '\n',
+      );
+      if (service !== null) {
+        process.stdout.write(`Service        ${describeServiceStatus(service.serviceStatus)}\n`);
+      }
       process.stdout.write(`Home page      ${pick('homePageUri')}\n`);
       process.stdout.write(`CS email       ${pick('csEmail')}\n`);
       process.stdout.write(`Logo           ${pick('iconUri')}\n`);

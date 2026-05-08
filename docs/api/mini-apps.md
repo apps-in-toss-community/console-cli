@@ -308,7 +308,7 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 
 ## `GET /workspaces/<wid>/mini-app/<mini_app_id>/with-draft` — 앱 상세 + draft
 
-- **Used by**: 등록 직후 상태 확인. `aitcc app status` (계획), `aitcc app show --include-draft` (계획).
+- **Used by**: `aitcc app status`, `aitcc app show` (review lock + draft view를 같이 surface; `--diff`로 draft↔current 비교), `aitcc app ls`.
 - **Capture status**: ✅ confirmed (2026-04-22, miniAppId 29349; 2026-05-01 envelope 필드 보강)
 - **Response shape**:
 
