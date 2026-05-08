@@ -40,11 +40,16 @@ import {
 //     { ok: false, reason: 'no-workspace-selected' }                  exit 2
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
 //   workspace terms [--type TYPE | --all] [--workspace <id>]:
-//     { ok: true, workspaceId, type, terms: WorkspaceTerm[] }         exit 0  (single type)
-//     { ok: true, workspaceId, byType: { TYPE: WorkspaceTerm[] } }    exit 0  (--all)
-//     { ok: false, reason: 'invalid-type', allowed: TYPES[] }         exit 2
-//     { ok: false, reason: 'no-workspace-selected' }                  exit 2
-//     { ok: false, reason: 'invalid-id', message }                    exit 2
+//     { ok: true, workspaceId, type, terms: (WorkspaceTerm & {blocks: string[]})[] }       exit 0  (single type)
+//     { ok: true, workspaceId, byType: { TYPE: (WorkspaceTerm & {blocks: string[]})[] } }  exit 0  (--all)
+//     { ok: false, reason: 'invalid-type', allowed: TYPES[] }                              exit 2
+//     { ok: false, reason: 'no-workspace-selected' }                                       exit 2
+//     { ok: false, reason: 'invalid-id', message }                                         exit 2
+//
+//   `blocks` is a per-type list of feature surfaces that become unavailable
+//   while the bucket is un-agreed. The same list appears on every term in
+//   the bucket — it's a property of the bucket, not the individual term.
+//
 //   workspace segments ls [--category <cat>] [--search <text>] [--page N] [--workspace <id>]:
 //     { ok: true, workspaceId, category, segments: [...], totalPage, currentPage }  exit 0
 //     { ok: false, reason: 'invalid-page', message }                                exit 2
@@ -287,6 +292,45 @@ function formatTermLines(term: WorkspaceTerm): string {
   return `  ${tag}${req}  ${term.title}\n    ${term.contentsUrl}\n`;
 }
 
+// What each term-bucket gates if it is left un-agreed. The pairings come
+// from docs/api/_error-codes.md "Auth / 약관 family" (4037/4039/4040/4099/5001
+// rows) cross-referenced with docs/api/workspaces.md `<type>` descriptions
+// — server is the source of truth for the term enum, this table only
+// documents the consumer-side feature surface each enum value gates.
+//
+// Surfaced both in plain-text output (`blocks if missing: …`) and in the
+// `--json` payload (`blocks: string[]`). Order within an entry mirrors the
+// spec PR description so dog-food output stays diffable. Strings are
+// human-readable feature names, not necessarily existing CLI command names
+// (some gated features are still on the roadmap).
+export const TERM_BLOCKS: Record<WorkspaceTermType, readonly string[]> = {
+  TOSS_LOGIN: ['toss login scope for mini-apps', 'app register (login configured apps)'],
+  BIZ_WORKSPACE: ['app register', 'app deploy', 'workspace-level admin'],
+  TOSS_PROMOTION_MONEY: ['promotion money campaign management'],
+  IAA: ['ad campaign management'],
+  IAP: ['iap product register', 'iap config'],
+};
+
+export function blocksFor(type: WorkspaceTermType): readonly string[] {
+  return TERM_BLOCKS[type] ?? [];
+}
+
+export function formatBlocksHint(type: WorkspaceTermType, agreed: boolean): string {
+  // Skip the hint entirely when we have no mapping for this type — keeps
+  // the output clean if the server adds a new bucket before we update
+  // the table. The spec calls this the "simpler" path over emitting
+  // `blocks if missing: -`.
+  const blocks = blocksFor(type);
+  if (blocks.length === 0) return '';
+  // Only highlight when the term is pending — agreed terms still get the
+  // line for context but in default styling. NO_COLOR + non-TTY both
+  // disable the escape; isTTY gate keeps ANSI out of pipes.
+  const useColor = !agreed && process.stdout.isTTY && !process.env.NO_COLOR;
+  const yellow = useColor ? '\x1b[33m' : '';
+  const reset = useColor ? '\x1b[0m' : '';
+  return `    ${yellow}blocks if missing: ${blocks.join(', ')}${reset}\n`;
+}
+
 const termsCommand = defineCommand({
   meta: {
     name: 'terms',
@@ -339,24 +383,43 @@ const termsCommand = defineCommand({
         ),
       );
 
+      // Attach the static `blocks` feature-gate list to every term. Same
+      // list per bucket since it's a property of the term-type, not the
+      // individual term entry — duplicating it on each row keeps the
+      // JSON contract uniform (consumers don't have to look up the
+      // bucket key separately).
+      const enrich = (
+        type: WorkspaceTermType,
+        terms: readonly WorkspaceTerm[],
+      ): readonly (WorkspaceTerm & { readonly blocks: readonly string[] })[] => {
+        const blocks = blocksFor(type);
+        return terms.map((t) => ({ ...t, blocks }));
+      };
+
       if (typesToQuery.length === 1) {
         const [type, terms] = results[0] as readonly [WorkspaceTermType, readonly WorkspaceTerm[]];
         if (args.json) {
-          emitJson({ ok: true, workspaceId, type, terms });
+          emitJson({ ok: true, workspaceId, type, terms: enrich(type, terms) });
           return exitAfterFlush(ExitCode.Ok);
         }
         process.stdout.write(`Workspace ${workspaceId} terms (${type}):\n`);
         if (terms.length === 0) {
           process.stdout.write('  (no terms required)\n');
         } else {
-          for (const t of terms) process.stdout.write(formatTermLines(t));
+          for (const t of terms) {
+            process.stdout.write(formatTermLines(t));
+            process.stdout.write(formatBlocksHint(type, t.isAgreed));
+          }
         }
         return exitAfterFlush(ExitCode.Ok);
       }
 
       // --all path
-      const byType: Record<string, readonly WorkspaceTerm[]> = {};
-      for (const [t, terms] of results) byType[t] = terms;
+      const byType: Record<
+        string,
+        readonly (WorkspaceTerm & { readonly blocks: readonly string[] })[]
+      > = {};
+      for (const [t, terms] of results) byType[t] = enrich(t, terms);
       if (args.json) {
         emitJson({ ok: true, workspaceId, byType });
         return exitAfterFlush(ExitCode.Ok);
@@ -366,7 +429,10 @@ const termsCommand = defineCommand({
         if (terms.length === 0) {
           process.stdout.write('  (no terms required)\n');
         } else {
-          for (const t of terms) process.stdout.write(formatTermLines(t));
+          for (const t of terms) {
+            process.stdout.write(formatTermLines(t));
+            process.stdout.write(formatBlocksHint(type, t.isAgreed));
+          }
         }
       }
       return exitAfterFlush(ExitCode.Ok);
