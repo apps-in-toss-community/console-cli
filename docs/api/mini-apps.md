@@ -214,6 +214,8 @@ const categoryIds = source.impression.categoryPaths.map(p => p.category.id);
 
 `aitcc app status <id>`의 `state: approved-with-edits` 같은 derived 라벨은 **REVIEW lock 해제 여부의 권위가 아니다**. 2026-05-02 dog-food: 4개 앱이 각각 `approved-with-edits`(29349/29356) / `under-review`(29397/29405)로 보였지만 update 호출 결과 **4개 모두 `errorCode: 4046`**. 권위는 `with-draft.success.approvalType` 한 곳뿐 — 그 값이 `REVIEW`이면 lock. CLI가 lock 추정으로 분기하지 말고 항상 시도해서 4046을 받는 패턴이 안전하다.
 
+`aitcc app status`가 이 권위 신호를 직접 surface한다: JSON 모드에 `locked: boolean` + `lockReason: 'review-pending' | null`, plain 모드에 locked일 때 `⚠️ update locked` 한 줄. 다른 lock 사유는 현재 미발견 — 새 값 발견 시 `LockReason` union 확장.
+
 #### Response
 
 ```json

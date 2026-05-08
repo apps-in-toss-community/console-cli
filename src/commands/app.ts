@@ -364,12 +364,21 @@ export type ReviewState =
   | 'approved-with-edits'
   | 'unknown';
 
+// `locked` is the operational signal for "can I update this app right now?".
+// It is authoritative — derived `state` (e.g. `approved-with-edits`) is not.
+// 2026-05-02 dog-food showed apps in different derived states all rejecting
+// updates with `errorCode: 4046` because the envelope-level `approvalType`
+// was `REVIEW`. Tracked in docs/api/mini-apps.md "REVIEW lock 권위".
+export type LockReason = 'review-pending';
+
 export interface DerivedStatus {
   readonly state: ReviewState;
   readonly approvalType: string | null;
   readonly rejectedMessage: string | null;
   readonly hasCurrent: boolean;
   readonly hasDraft: boolean;
+  readonly locked: boolean;
+  readonly lockReason: LockReason | null;
 }
 
 export function deriveReviewState(env: {
@@ -400,7 +409,9 @@ export function deriveReviewState(env: {
   if (approvalType !== null && approvalType !== 'REVIEW' && state === 'under-review') {
     state = 'unknown';
   }
-  return { state, approvalType, rejectedMessage, hasCurrent, hasDraft };
+  const locked = approvalType === 'REVIEW';
+  const lockReason: LockReason | null = locked ? 'review-pending' : null;
+  return { state, approvalType, rejectedMessage, hasCurrent, hasDraft, locked, lockReason };
 }
 
 const POLL_MIN_INTERVAL_SEC = 30;
@@ -498,6 +509,7 @@ const statusCommand = defineCommand({
         const svc = service ? ` [${service.serviceStatus}]` : '';
         process.stdout.write(
           `App ${appId} (ws ${workspaceId}): ${status.state}${svc}` +
+            (status.locked ? '\n  ⚠️  update locked (운영팀 검수 큐 처리 대기)' : '') +
             (status.rejectedMessage ? `\n  reason: ${status.rejectedMessage}` : '') +
             (service?.scheduledShutdownAt
               ? `\n  scheduled shutdown: ${service.scheduledShutdownAt}`
