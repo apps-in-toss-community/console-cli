@@ -109,7 +109,10 @@ const STEP_UP_POLL_MS = 1000;
 // Selectors are intentionally robust to id changes (Radix ids look like
 // `radix-:r0:` and aren't stable):
 //   - email input matched by name (`email`/`loginId`/`username`),
-//     then by type (`email`/`text`).
+//     then by `type=email` (which is semantically unambiguous). We do
+//     NOT fall back to `type=text` — a search box or other unrelated
+//     text input rendered above the form would otherwise receive the
+//     credentials in plaintext.
 //   - password input matched by name then by `type=password`.
 //   - submit button matched by `type=submit` first, then by visible text
 //     containing "로그인" / "sign in" / "login".
@@ -140,7 +143,7 @@ const FILL_AND_SUBMIT_FN = `
     }
     const emailInput =
       pickByName(['email', 'loginId', 'username']) ||
-      pickInputByType(['email', 'text']);
+      pickInputByType(['email']);
     const passwordInput =
       pickByName(['password', 'loginPassword']) ||
       pickInputByType(['password']);
