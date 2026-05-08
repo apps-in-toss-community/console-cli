@@ -148,10 +148,18 @@ describe('FILL_AND_SUBMIT_FN is robust to selector drift', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain('username');
     expect(__test.FILL_AND_SUBMIT_FN).toContain('password');
   });
-  it('falls back to type-based picking', () => {
+  it('falls back to type-based picking for email and password', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain("'email'");
-    expect(__test.FILL_AND_SUBMIT_FN).toContain("'text'");
     expect(__test.FILL_AND_SUBMIT_FN).toContain("'password'");
+  });
+  it("does NOT fall back to type='text' for the email input", () => {
+    // A `type=text` fallback would let an unrelated text input (search
+    // box, etc.) rendered above the form silently receive the
+    // credentials in plaintext. Pin the absence so a future cleanup
+    // can't reintroduce it without tripping this test.
+    expect(__test.FILL_AND_SUBMIT_FN).not.toMatch(
+      /pickInputByType\(\[\s*'email'\s*,\s*'text'\s*\]\)/,
+    );
   });
   it('uses the native value setter (React controlled-component fix)', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain('getOwnPropertyDescriptor');
