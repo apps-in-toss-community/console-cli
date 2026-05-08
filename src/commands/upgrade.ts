@@ -21,6 +21,24 @@ function isStandaloneBinary(): boolean {
   return exe.startsWith('aitcc');
 }
 
+// Best-effort cleanup of the `<exePath>.old` left behind by a previous Windows
+// upgrade. Windows can't rename a running exe, so the upgrade flow renames the
+// old binary aside before moving the new one in; the leftover has to be
+// reaped on a later boot when nothing holds it open. Intentionally swallows
+// every error: file may still be in use, perms may differ, or this is POSIX
+// where the path doesn't exist at all. Never logs.
+export async function cleanupStaleUpgradeArtifacts(
+  exePath: string = process.execPath,
+): Promise<void> {
+  if (process.platform !== 'win32') return;
+  if (!exePath) return;
+  try {
+    await unlink(`${exePath}.old`);
+  } catch {
+    // ENOENT, EBUSY, EACCES — all swallowed by design.
+  }
+}
+
 export const upgradeCommand = defineCommand({
   meta: {
     name: 'upgrade',

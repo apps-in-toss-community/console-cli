@@ -8,7 +8,7 @@ import { logoutCommand } from './commands/logout.js';
 import { meCommand } from './commands/me.js';
 import { membersCommand } from './commands/members.js';
 import { noticesCommand } from './commands/notices.js';
-import { upgradeCommand } from './commands/upgrade.js';
+import { cleanupStaleUpgradeArtifacts, upgradeCommand } from './commands/upgrade.js';
 import { whoamiCommand } from './commands/whoami.js';
 import { workspaceCommand } from './commands/workspace.js';
 import { VERSION } from './version.js';
@@ -33,6 +33,10 @@ const main = defineCommand({
     me: meCommand,
     completion: completionCommand,
   },
+});
+
+cleanupStaleUpgradeArtifacts().catch(() => {
+  // best-effort; failure must not affect command execution.
 });
 
 runMain(main);
