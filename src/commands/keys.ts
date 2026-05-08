@@ -5,6 +5,7 @@ import {
   disableApiKey,
   fetchApiKeys,
 } from '../api/api-keys.js';
+import { APP_NAME_REGEX } from '../config/app-manifest.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import {
@@ -58,11 +59,9 @@ import {
 export const NAME_MAX = 16;
 const NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
-// `appName` slugs are kebab-case ASCII per the mini-app registration regex
-// (see APP_NAME_REGEX in src/config/app-manifest.ts). Validate the same way
-// here so a typo on `--apps` fails locally rather than as an opaque server
-// FAIL after the network round-trip.
-const APP_SLUG_REGEX = /^[a-z][a-z0-9-]*$/;
+// `appName` slugs are kebab-case ASCII per the mini-app registration regex.
+// Reuse the canonical regex so a future tightening (length cap, allowed
+// chars) flows here automatically instead of drifting.
 
 export type NameValidationError = 'too-short' | 'too-long' | 'bad-chars';
 export function validateKeyName(raw: string): NameValidationError | null {
@@ -82,7 +81,7 @@ export function parseAppsFlag(raw: string): AppsParseResult {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (slugs.length === 0) return { ok: false, reason: 'empty' };
-  const bad = slugs.filter((s) => !APP_SLUG_REGEX.test(s));
+  const bad = slugs.filter((s) => !APP_NAME_REGEX.test(s));
   if (bad.length > 0) return { ok: false, reason: 'invalid', bad };
   return { ok: true, slugs };
 }
@@ -253,13 +252,9 @@ const revokeCommand = defineCommand({
     const { session, workspaceId } = ctx;
     printContextHeader(ctx, { json: args.json });
 
-    const rawId = String(args.id ?? '');
-    if (rawId.length === 0) {
-      const message = 'api key id is required';
-      if (args.json) emitJson({ ok: false, reason: 'invalid-id', message });
-      else process.stderr.write(`${message}\n`);
-      return exitAfterFlush(ExitCode.Usage);
-    }
+    // citty enforces `required: true` on the positional, so `args.id` is
+    // always present when `run` is called.
+    const rawId = String(args.id);
 
     try {
       await disableApiKey(workspaceId, rawId, session.cookies);

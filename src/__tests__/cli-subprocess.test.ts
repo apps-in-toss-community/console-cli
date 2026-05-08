@@ -148,12 +148,13 @@ describe('aitcc --json subprocess contract', () => {
       expect(stderr).toBe('');
     }, 30_000);
 
-    // `keys create` validates `--name` *after* loading the session, so the
-    // no-session path here is identical to `ls`. The interesting case is
-    // bad chars: it lands on the `invalid-name` reason once a session
-    // exists. We can't fake a session in the subprocess harness, so we
-    // pick a name validation that rides through the auth gate first —
-    // the auth-gate response is enough to lock the contract entry point.
+    // `keys create` loads the session before validating `--name`, so a
+    // no-session run never reaches name validation. We pass `x` (a valid
+    // 1-char name) so the test exercises *only* the auth-gate branch —
+    // the post-auth `invalid-name` shape is covered by the unit tests in
+    // `keys.test.ts`. Faking a session in the subprocess harness isn't
+    // worth the wiring; the auth-gate response is enough to lock the
+    // contract entry point for `keys create --json`.
     it('keys create --name x --json with no session emits authenticated:false (exit 10)', async () => {
       const dir = await xdg.fresh();
       const { exitCode, stdout, stderr } = await runCli(

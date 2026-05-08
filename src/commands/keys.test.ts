@@ -72,4 +72,14 @@ describe('formatExpiry', () => {
   it('returns "expired" once the timestamp is in the past', () => {
     expect(formatExpiry(now - 1, now)).toBe('expired');
   });
+
+  // D-0 boundary: anything from "right now" up to "just under one full day
+  // remaining" is the same UI bucket. Pin both ends so a future refactor
+  // that swaps `Math.floor` for `Math.ceil` (or shifts the < 0 cutoff) is
+  // caught — the UI's countdown badge depends on this exact behaviour.
+  it('returns D-0 for the same-day window (now .. now + <1 day)', () => {
+    expect(formatExpiry(now, now)).toBe('D-0');
+    expect(formatExpiry(now + 1, now)).toBe('D-0');
+    expect(formatExpiry(now + 86_400_000 - 1, now)).toBe('D-0');
+  });
 });
