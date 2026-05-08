@@ -208,6 +208,10 @@ describe('aitcc --json subprocess contract', () => {
       expect(exitCode).not.toBe(0);
       expect(stderr.length).toBeGreaterThan(0);
       expect(stdout.length).toBeGreaterThan(0);
+      // Even on this off-contract path, stderr must stay plain — a future
+      // wrapper that JSON-envelopes citty's diagnostic for `--json` mode
+      // would leak structured data onto the diagnostic stream.
+      assertStderrHasNoJson(stderr);
       assertNoAnsi(stdout);
       assertNoAnsi(stderr);
     }, 30_000);
