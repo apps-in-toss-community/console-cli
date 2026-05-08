@@ -19,6 +19,22 @@
 
 자세한 결정 근거는 console-cli `CLAUDE.md` "Login 선택 근거" 참고.
 
+## Cookie portability (실측)
+
+세션 쿠키는 **country-bound (KR allowlist)**. 같은 cookie blob이라도:
+- 한국 residential IP: cross-machine, cross-network OK (200)
+- 한국 외 IP (예: GHA Azure US/EU): 401 / `errorCode: 4010`
+
+UA / Origin / Referer / TLS fingerprint는 enforce 안 됨 — 차단은
+순수 IP-based. Cookie는 거부당해도 invalidate되지 않음 (KR로
+돌아오면 다시 200).
+
+인증에 충분한 쿠키는 **`TBIZAUTH` 한 개**. 나머지는 analytics/
+hotjar/channel.io noise.
+
+실측 데이터는 spike 보고서 (2026-05-08 spike-ci-cookie) 기준
+— 정책 변경 시 재검증 필요.
+
 ## `GET /members/me/user-info` — 현재 사용자 정보
 
 CLI 로그인 직후의 liveness check. 모든 명령이 부팅 시점에 한 번씩 호출.
