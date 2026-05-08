@@ -50,13 +50,23 @@ function summarize(session: Session): SessionSummary {
  * the file is corrupt, or when the shape fails validation — each of those
  * emits a one-line warning on stderr for diagnostics.
  *
+ * **`AITCC_SESSION` env precedence**: when the env var is set with a valid
+ * blob (raw JSON or base64-encoded JSON), this function returns it directly
+ * and never touches the session file. This is the read path for the CI
+ * single-shot flow seeded by `aitcc auth export`. Invalid env content
+ * falls back to the file with a one-shot warning so a typo doesn't
+ * silently strand a CI run.
+ *
  * **Side effect**: a v1 session file is transparently rewritten to v2 on
  * the first successful read of this process. This keeps read-only callers
  * (`whoami`, `workspace ls`) from stranding users on an old schema. If the
  * rewrite fails, we warn once per process and continue with the in-memory
- * v2 value so the calling command still succeeds.
+ * v2 value so the calling command still succeeds. The env path performs
+ * the same v1 → v2 upgrade in memory only — env mode never writes.
  */
 export async function readSession(): Promise<Session | null> {
+  const fromEnv = readSessionFromEnv();
+  if (fromEnv !== undefined) return fromEnv;
   const path = sessionFilePath();
   let raw: string;
   try {
@@ -118,6 +128,140 @@ function warnMigrationOnce(path: string, code: string | undefined): void {
   );
 }
 
+// One-shot latches so we don't spam stderr when many commands read the
+// session in a single process (e.g. ctx resolver + http call + diagnostics).
+let envFallbackWarned = false;
+let envWriteWarned = false;
+
+/**
+ * Test-only: reset the one-shot stderr warning latches. Production
+ * code should never call this — the latches exist precisely so a
+ * single CLI invocation that reads the session many times only warns
+ * once. The shared vitest process keeps modules alive across tests so
+ * a latch tripped by an earlier case would suppress the warning the
+ * later case asserts on.
+ */
+export function __resetSessionWarningsForTests(): void {
+  envFallbackWarned = false;
+  envWriteWarned = false;
+  migrationWarned = false;
+}
+
+/**
+ * Decode `AITCC_SESSION` env var into a `Session`. Returns:
+ *   - `undefined` when the env var is unset (caller falls through to file).
+ *   - `Session` when set + valid (caller uses it, ignores file).
+ *   - `null` when set but malformed/invalid; emits a one-shot stderr warning
+ *     and the caller falls through to the file path. We use `null` here as
+ *     "tried env, gave up" so the file path still runs — the goal is to
+ *     never strand a developer who accidentally exported garbage but has a
+ *     working session file underneath.
+ *
+ * The blob may be either raw JSON or base64-encoded JSON; we autodetect by
+ * peeking at the decoded body for a leading `{`. This matches the symmetry
+ * `auth export` ↔ `auth import` even when a user hand-edits a secret.
+ */
+function readSessionFromEnv(): Session | null | undefined {
+  const raw = process.env.AITCC_SESSION;
+  if (!raw || raw.length === 0) return undefined;
+  const decoded = decodeSessionBlob(raw);
+  if (decoded === null) {
+    warnEnvFallbackOnce('AITCC_SESSION env is set but not valid JSON');
+    return undefined;
+  }
+  const reason = validateSessionShape(decoded);
+  if (reason) {
+    warnEnvFallbackOnce(`AITCC_SESSION env ignored (${reason})`);
+    return undefined;
+  }
+  const validated = decoded as { schemaVersion: 1 | 2 } & Omit<Session, 'schemaVersion'>;
+  // v1 → v2 upgrade in memory only — env mode is read-only by contract.
+  return validated.schemaVersion === 1
+    ? { ...validated, schemaVersion: 2 }
+    : (validated as Session);
+}
+
+/**
+ * True iff `AITCC_SESSION` is set AND parses+validates as a session.
+ * The write/clear no-ops MUST gate on this rather than on
+ * `process.env.AITCC_SESSION` truthiness alone — otherwise a corrupted
+ * env blob silently swallows `workspace use` writes even though
+ * `readSession()` correctly fell back to the file. Callers in this
+ * module use it instead of inlining the check; `auth import` does NOT
+ * call this (it should always write when invoked, see `forceWrite`).
+ */
+function envSessionActive(): boolean {
+  return readSessionFromEnv() !== undefined;
+}
+
+function warnEnvFallbackOnce(message: string): void {
+  if (envFallbackWarned) return;
+  envFallbackWarned = true;
+  process.stderr.write(`warning: ${message}; falling back to session file\n`);
+}
+
+function warnEnvWriteOnce(): void {
+  if (envWriteWarned) return;
+  envWriteWarned = true;
+  process.stderr.write('warning: AITCC_SESSION env active — session updates not persisted\n');
+}
+
+/**
+ * Best-effort blob decoder shared by `readSessionFromEnv` and the
+ * `auth import` command. Tries base64 first; if the result doesn't look
+ * like JSON, falls back to treating the input as raw JSON. Returns the
+ * parsed value on success, `null` on parse failure.
+ */
+export function decodeSessionBlob(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  // Direct JSON: cheap path, no base64 round-trip.
+  if (trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  // Try base64 → JSON.
+  let decoded: string;
+  try {
+    decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+  } catch {
+    decoded = '';
+  }
+  const decodedTrim = decoded.trim();
+  if (decodedTrim.startsWith('{')) {
+    try {
+      return JSON.parse(decodedTrim);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a candidate session blob. Returns `null` on success or a
+ * short reason string on failure. Exported so `auth import` can run the
+ * exact same validation `readSession` uses, eliminating drift between
+ * the two write paths.
+ */
+export function validateSessionBlob(input: unknown): string | null {
+  return validateSessionShape(input);
+}
+
+/**
+ * Normalise a validated blob to a `Session` (auto-upgrading v1 → v2).
+ * Caller must have already passed the value through `validateSessionBlob`.
+ */
+export function normalizeValidatedSession(input: unknown): Session {
+  const validated = input as { schemaVersion: 1 | 2 } & Omit<Session, 'schemaVersion'>;
+  return validated.schemaVersion === 1
+    ? { ...validated, schemaVersion: 2 }
+    : (validated as Session);
+}
+
 // v1 → v2 migration: v1 files are still valid, we just treat the absent
 // `currentWorkspaceId` as "no workspace selected yet". The next write (e.g.
 // from `workspace use`) bumps the stored schemaVersion. The validator input
@@ -162,7 +306,32 @@ export async function readSessionSummary(): Promise<SessionSummary | null> {
   return s ? summarize(s) : null;
 }
 
-export async function writeSession(session: Session): Promise<void> {
+export interface WriteSessionOptions {
+  /**
+   * Force the write even when `AITCC_SESSION` env is active. Only
+   * `auth import` should set this — the user explicitly asked us to
+   * persist, and the env no-op would otherwise swallow that intent.
+   * Bypasses the env mutation hack the previous revision relied on.
+   */
+  readonly forceWrite?: boolean;
+}
+
+export async function writeSession(
+  session: Session,
+  options: WriteSessionOptions = {},
+): Promise<void> {
+  // CI single-shot mode (`AITCC_SESSION` env active and valid) is
+  // read-only by contract — silently creating or overwriting a file
+  // would defeat the 0600 guarantee on hosts that don't expect a
+  // persistent session and leave a stale blob behind on shared runners.
+  // One-shot warn so a misuse (`workspace use` on a CI box) is visible
+  // without spamming. Gated on the same "set and valid" predicate that
+  // `readSession` uses so a corrupted env blob doesn't silently swallow
+  // a legitimate write.
+  if (!options.forceWrite && envSessionActive()) {
+    warnEnvWriteOnce();
+    return;
+  }
   const dir = dirname(sessionFilePath());
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await writeFile(sessionFilePath(), JSON.stringify(session, null, 2), {
@@ -190,6 +359,15 @@ export async function setCurrentWorkspaceId(workspaceId: number): Promise<Sessio
 }
 
 export async function clearSession(): Promise<{ existed: boolean }> {
+  // Env mode is read-only — pretend we cleared, but warn so the operator
+  // knows the AITCC_SESSION secret in their pipeline still authenticates
+  // the next command. (Symmetric with `writeSession` above; same "set and
+  // valid" gate so a corrupted env blob doesn't suppress a legitimate
+  // logout against the underlying file.)
+  if (envSessionActive()) {
+    warnEnvWriteOnce();
+    return { existed: false };
+  }
   try {
     await unlink(sessionFilePath());
     return { existed: true };

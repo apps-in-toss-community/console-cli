@@ -35,6 +35,30 @@ hotjar/channel.io noise.
 실측 데이터는 spike 보고서 (2026-05-08 spike-ci-cookie) 기준
 — 정책 변경 시 재검증 필요.
 
+## Export/import for CI
+
+`aitcc auth export` / `auth import`은 desktop에서 잡은 세션을 CI 시크릿으로
+옮기기 위한 짝 명령이다.
+
+- `aitcc auth export --format env`은 stdout에 정확히 한 줄
+  `AITCC_SESSION=<base64>`을 emit. base64 페이로드는 `session.json`을
+  그대로 인코딩한 것이라 stdout/SHA가 그대로 secret manager / `>> $GITHUB_ENV`로
+  들어간다. 디버그용 `--format json`은 raw shape를 pretty-print해서 사람이
+  열어 볼 수 있게 한다.
+- `aitcc auth import --from-env` (env에서 읽기) 또는 `aitcc auth import < blob.json`
+  (stdin)으로 다시 file 형식으로 복원. base64 / raw JSON 자동 감지. 스키마
+  검증을 거치고 v1 blob은 v2로 마이그레이트한다. `--dry-run`은 검증만.
+- `AITCC_SESSION` env가 set이면 모든 명령은 file 대신 env에서 세션을
+  읽는다. 같은 모드에서 `writeSession` / `clearSession`은 의도적으로
+  no-op (`logout`, `workspace use` 등이 CI 호스트에 0600 파일을 남기지
+  않게).
+
+**KR-only 제약**은 export/import 자체가 풀어주지 못한다. 같은 blob을
+GHA-hosted runner (Azure US/EU)에 박으면 첫 호출부터 401/`errorCode: 4010`.
+KR self-hosted runner / 한국 VPS / 사용자 로컬에서만 동작. README와 모든
+명령 surface (`--help`, stderr warning, `--json` envelope의
+`warning: 'kr-only-cookies'` 필드)에서 같은 문구로 경고한다.
+
 ## `GET /members/me/user-info` — 현재 사용자 정보
 
 CLI 로그인 직후의 liveness check. 모든 명령이 부팅 시점에 한 번씩 호출.

@@ -10,6 +10,8 @@ import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession } from '../session.js';
 import { emitJson } from './_shared.js';
+import { authExportCommand } from './auth-export.js';
+import { authImportCommand } from './auth-import.js';
 
 // `aitcc auth` — user-facing surface over the credentials library
 // introduced in PR α. The library handles env precedence, OS keychain
@@ -361,11 +363,13 @@ const statusCommand = defineCommand({
 export const authCommand = defineCommand({
   meta: {
     name: 'auth',
-    description: 'Manage saved login credentials (email + keychain-backed password).',
+    description: 'Manage saved login credentials and export/import portable session blobs for CI.',
   },
   subCommands: {
     set: setCommand,
     clear: clearCommand,
     status: statusCommand,
+    export: authExportCommand,
+    import: authImportCommand,
   },
 });
