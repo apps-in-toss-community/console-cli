@@ -26,6 +26,13 @@
 // `_error-codes.md` is the source of truth for which prefix codes are
 // known.
 
+// `<camelCaseDomain>.<PascalCaseReason>`. The reason segment requires at
+// least two characters (one uppercase + one more) — every prefix code we
+// have observed in console responses has a multi-character reason, and
+// matching a single uppercase letter would also accept things like
+// `module.X` that look more like internal logger tags than user-visible
+// errorCodes. If a real one-character reason ever shows up we'll widen
+// this to `[a-zA-Z0-9]*`.
 const PREFIX_ERROR_CODE_PATTERN = /^[a-z][a-zA-Z0-9]*\.[A-Z][a-zA-Z0-9]+$/;
 
 export function isPrefixFormErrorCode(code: string): boolean {
@@ -62,13 +69,25 @@ export interface DescribeApiErrorInput {
 /**
  * Compose the user-visible message for a Toss API error.
  *
- * Returns the original `fallback` for numeric / null / unknown-shape codes
- * — those keep existing behaviour byte-for-byte. For prefix-form codes,
- * a known mapping is prepended to the fallback so the JSON `message`
- * field carries both the actionable hint and the underlying server text.
- * For unknown prefix codes, the dotted code is embedded in a `(<code>)`
- * marker so a downstream reader sees the identifier they need to look
- * up in `docs/api/_error-codes.md`.
+ * Behaviour by code shape:
+ *
+ * - **numeric / null / non-matching shape**: returns `fallback` verbatim.
+ *   This preserves the pre-existing `TossApiError.message` text byte-for-
+ *   byte, so commands that already surface things like
+ *   `"Toss API error 4046: 검수중인 요청이 있어 검수요청을 할 수 없어요 (HTTP 400)"`
+ *   keep doing exactly that.
+ *
+ * - **known prefix code**: returns the mapped action sentence, with the
+ *   server `reason` appended in a `(server reason: …)` clause when
+ *   present. The `fallback` is intentionally NOT included — the mapped
+ *   sentence is self-contained and already names the field/file the user
+ *   needs to edit, so prepending the `Toss API error …` envelope text
+ *   would just bury the action.
+ *
+ * - **unknown prefix code**: returns `fallback` verbatim. `TossApiError`'s
+ *   own template already embeds the dotted identifier
+ *   (`Toss API error <code>: <reason> (HTTP <status>)`), so the code is
+ *   discoverable in logs without us double-wrapping it.
  *
  * `errorCode` itself is left to the caller — this only shapes `message`.
  */
@@ -81,10 +100,9 @@ export function describeApiError(input: DescribeApiErrorInput): string {
     const reasonSuffix = reason ? ` (server reason: ${reason})` : '';
     return `${mapped}${reasonSuffix}`;
   }
-  // Unknown prefix code: surface the dotted identifier so logs and JSON
-  // consumers can grep for it, but don't claim a meaning we haven't
-  // verified. Reason text is appended when present so the user still
-  // sees the server's Korean explanation.
-  if (reason) return `(${errorCode}) ${reason}`;
-  return `(${errorCode}) ${fallback}`;
+  // Unknown prefix code: defer to the caller's fallback. `TossApiError`
+  // formats its `message` as `Toss API error <code>: <reason> (HTTP …)`,
+  // which already exposes the dotted identifier — wrapping it in
+  // `(<code>) …` here just duplicated the code without adding signal.
+  return fallback;
 }

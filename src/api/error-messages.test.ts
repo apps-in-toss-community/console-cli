@@ -53,16 +53,21 @@ describe('describeApiError', () => {
     expect(message).toContain('title-case');
   });
 
-  it('falls back to "(<code>) <reason>" for unknown prefix codes (do not invent a meaning)', () => {
+  it('returns the fallback verbatim for unknown prefix codes (do not invent a meaning)', () => {
+    // `TossApiError.message` already templates the dotted code into
+    // `Toss API error <code>: <reason> (HTTP …)`, so the unknown-prefix
+    // branch just defers to that fallback rather than re-wrapping the
+    // code and producing a duplicated identifier.
+    const fallback = 'Toss API error something.NewlyDiscovered: 서버측 사유 (HTTP 400)';
     const message = describeApiError({
       errorCode: 'something.NewlyDiscovered',
       reason: '서버측 사유',
-      fallback: 'Toss API error something.NewlyDiscovered: 서버측 사유 (HTTP 400)',
+      fallback,
     });
-    // Code identifier is preserved so a downstream reader can grep for it
-    // in docs/api/_error-codes.md.
+    expect(message).toBe(fallback);
+    // Sanity-check that the fallback already exposes the dotted
+    // identifier, which is the assumption the no-rewrap path relies on.
     expect(message).toContain('something.NewlyDiscovered');
-    expect(message).toContain('서버측 사유');
   });
 
   it('returns the fallback verbatim for numeric error codes (no regression on existing behaviour)', () => {
@@ -81,13 +86,20 @@ describe('describeApiError', () => {
     );
   });
 
-  it('handles unknown prefix code with no reason by surfacing the code in the message', () => {
+  it('returns the fallback verbatim when an unknown prefix code arrives with no reason (no double-wrap)', () => {
+    // Regression guard for an earlier shape that returned
+    // `(<code>) <fallback>`, which produced
+    // `(something.Mystery) Toss API error something.Mystery: ? (HTTP 400)`
+    // — the dotted code was duplicated. The describer now defers to
+    // `fallback`, which already contains the code via the
+    // `TossApiError.message` template.
     const fallback = 'Toss API error something.Mystery: ? (HTTP 400)';
     const message = describeApiError({
       errorCode: 'something.Mystery',
       reason: undefined,
       fallback,
     });
-    expect(message).toContain('something.Mystery');
+    expect(message).toBe(fallback);
+    expect(message.startsWith('(')).toBe(false);
   });
 });
