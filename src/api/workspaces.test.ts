@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
-import type { FetchLike } from './http.js';
+import { type FetchLike, TossApiError } from './http.js';
 import {
+  agreeWorkspaceTerms,
   fetchWorkspaceDetail,
   fetchWorkspacePartner,
   fetchWorkspaceSegments,
@@ -316,5 +317,68 @@ describe('fetchWorkspaceSegments', () => {
     await expect(
       fetchWorkspaceSegments({ workspaceId: 3095 }, cookies, { fetchImpl }),
     ).rejects.toThrow(/Unexpected segments shape/);
+  });
+});
+
+describe('agreeWorkspaceTerms', () => {
+  it('POSTs to /console-workspace-terms with an agreedList payload', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody = '';
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = init?.method ?? 'GET';
+      calledBody = typeof init?.body === 'string' ? init.body : '';
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await agreeWorkspaceTerms(
+      36577,
+      [
+        { termsId: 11660, revisionId: 56702 },
+        { termsId: 11661, revisionId: 56703 },
+      ],
+      cookies,
+      { fetchImpl },
+    );
+    expect(calledMethod).toBe('POST');
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/36577/console-workspace-terms',
+    );
+    expect(JSON.parse(calledBody)).toEqual({
+      agreedList: [
+        { termsId: 11660, revisionId: 56702 },
+        { termsId: 11661, revisionId: 56703 },
+      ],
+    });
+  });
+
+  it('throws synchronously on an empty term list (server is non-idempotent)', async () => {
+    let called = false;
+    const fetchImpl: FetchLike = async () => {
+      called = true;
+      return new Response('', { status: 200 });
+    };
+    await expect(agreeWorkspaceTerms(36577, [], cookies, { fetchImpl })).rejects.toThrow(
+      /at least one term/,
+    );
+    expect(called).toBe(false);
+  });
+
+  it('surfaces server-side failures as TossApiError', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'FAIL',
+          success: null,
+          error: { errorType: 0, errorCode: '500', reason: 'already-agreed' },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    await expect(
+      agreeWorkspaceTerms(36577, [{ termsId: 1, revisionId: 1 }], cookies, { fetchImpl }),
+    ).rejects.toBeInstanceOf(TossApiError);
   });
 });

@@ -1,6 +1,8 @@
 import { defineCommand } from 'citty';
+import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
 import {
+  agreeWorkspaceTerms,
   fetchWorkspaceDetail,
   fetchWorkspacePartner,
   fetchWorkspaceSegments,
@@ -39,9 +41,9 @@ import {
 //       rejectMessage, partner }                                      exit 0
 //     { ok: false, reason: 'no-workspace-selected' }                  exit 2
 //     { ok: false, reason: 'invalid-id', message }                    exit 2
-//   workspace terms [--type TYPE | --all] [--workspace <id>]:
+//   workspace terms [--type TYPE] [--workspace <id>]:
 //     { ok: true, workspaceId, type, terms: (WorkspaceTerm & {blocks: string[]})[] }       exit 0  (single type)
-//     { ok: true, workspaceId, byType: { TYPE: (WorkspaceTerm & {blocks: string[]})[] } }  exit 0  (--all)
+//     { ok: true, workspaceId, byType: { TYPE: (WorkspaceTerm & {blocks: string[]})[] } }  exit 0  (default — every bucket)
 //     { ok: false, reason: 'invalid-type', allowed: TYPES[] }                              exit 2
 //     { ok: false, reason: 'no-workspace-selected' }                                       exit 2
 //     { ok: false, reason: 'invalid-id', message }                                         exit 2
@@ -49,6 +51,30 @@ import {
 //   `blocks` is a per-type list of feature surfaces that become unavailable
 //   while the bucket is un-agreed. The same list appears on every term in
 //   the bucket — it's a property of the bucket, not the individual term.
+//
+//   workspace terms agree <type> [--workspace <id>]:
+//   workspace terms agree --all   [--workspace <id>]:
+//     { ok: true, partial: false, workspaceId, agreed: AgreedTerm[],
+//       unchanged: AgreedTerm[], failed: [] }                            exit 0  (full success or all-already-agreed)
+//     { ok: false, partial: true, workspaceId, agreed: AgreedTerm[],
+//       unchanged: AgreedTerm[],
+//       failed: { termsId, revisionId, type, message }[] }                exit 1  (some buckets succeeded, others failed)
+//                                                                         exit 17 (full transport-level failure handled by emitFailureFromError)
+//     { ok: false, reason: 'argument-required', message }                exit 2  (no <type> and no --all)
+//     { ok: false, reason: 'mutually-exclusive', message }                exit 2  (<type> and --all both given)
+//     { ok: false, reason: 'unknown-term-type', given, allowed: TYPES[] } exit 2  (positional <type> not in enum)
+//     { ok: false, reason: 'no-workspace-selected' }                     exit 2
+//     { ok: false, reason: 'invalid-id', message }                       exit 2
+//
+//   `AgreedTerm = { termsId, revisionId, type, title }`. `agreed` lists what
+//   this run flipped from pending → agreed; `unchanged` lists terms that
+//   were already agreed at fetch time and got skipped (idempotent path).
+//   `failed` lists transport/server failures per term batch — populated only
+//   when `partial === true`. `ok` is a single-bool decision flag for
+//   agent-plugin (`ok && !failed.length`-style branching is unnecessary):
+//   `ok: true` means every requested bucket either succeeded or was already
+//   agreed; `ok: false, partial: true` means at least one bucket failed and
+//   the caller should inspect `failed`.
 //
 //   workspace segments ls [--category <cat>] [--search <text>] [--page N] [--workspace <id>]:
 //     { ok: true, workspaceId, category, segments: [...], totalPage, currentPage }  exit 0
@@ -331,9 +357,9 @@ export function formatBlocksHint(type: WorkspaceTermType, agreed: boolean): stri
   return `    ${yellow}blocks if missing: ${blocks.join(', ')}${reset}\n`;
 }
 
-const termsCommand = defineCommand({
+const termsShowCommand = defineCommand({
   meta: {
-    name: 'terms',
+    name: 'show',
     description:
       'Show the console terms-of-agreement state that gate workspace-level features (Toss login, IAP, IAA, biz workspace, promotion money).',
   },
@@ -440,6 +466,301 @@ const termsCommand = defineCommand({
       return emitFailureFromError(args.json, err);
     }
   },
+});
+
+// Per-term agreement record surfaced in the `agree` JSON payload. We carry
+// `(termsId, revisionId)` so consumers can correlate with `terms show`
+// output, plus `type` (bucket) + `title` so dog-food output and human
+// messages don't have to look the title back up. The shape is the same
+// for `agreed` and `unchanged` buckets — only the bucket says whether this
+// run flipped the state.
+export interface AgreedTerm {
+  readonly termsId: number;
+  readonly revisionId: number;
+  readonly type: WorkspaceTermType;
+  readonly title: string;
+}
+
+export interface FailedTerm {
+  readonly termsId: number;
+  readonly revisionId: number;
+  readonly type: WorkspaceTermType;
+  readonly message: string;
+}
+
+export function describeAgreeError(err: unknown): string {
+  // `TossApiError.message` already embeds errorCode + reason + HTTP status
+  // (`"Toss API error <code>: <reason> (HTTP <status>)"`), so we don't tack
+  // on a redundant `(errorCode: ...)` suffix.
+  if (err instanceof TossApiError) return err.message;
+  if (err instanceof NetworkError) return `network error: ${err.message}`;
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+// Pure validation of the (positional, --all) arg pair. Extracted so the
+// command-level mutually-exclusive / argument-required / unknown-term-type
+// branches can be unit-tested without invoking the full citty `run`.
+// Case-insensitive on the positional so `iap` and `IAP` both work.
+export type AgreeArgsValidation =
+  | { readonly ok: true; readonly types: readonly WorkspaceTermType[] }
+  | { readonly ok: false; readonly reason: 'argument-required'; readonly message: string }
+  | { readonly ok: false; readonly reason: 'mutually-exclusive'; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly reason: 'unknown-term-type';
+      readonly given: string;
+      readonly allowed: readonly WorkspaceTermType[];
+      // `message` here is for stderr only — the `--json` emit path intentionally
+      // omits it and surfaces `given` + `allowed` instead so the agent-plugin
+      // can render its own message without parsing prose.
+      readonly message: string;
+    };
+
+export function validateAgreeArgs(input: {
+  positional: string;
+  all: boolean;
+}): AgreeArgsValidation {
+  const hasPositional = input.positional.length > 0;
+  if (!hasPositional && !input.all) {
+    return {
+      ok: false,
+      reason: 'argument-required',
+      message: 'Specify a term bucket (e.g. `aitcc workspace terms agree IAP`) or pass --all.',
+    };
+  }
+  if (hasPositional && input.all) {
+    return {
+      ok: false,
+      reason: 'mutually-exclusive',
+      message: '<type> and --all are mutually exclusive — pass one or the other, not both.',
+    };
+  }
+  if (input.all) {
+    return { ok: true, types: WORKSPACE_TERM_TYPES };
+  }
+  const upper = input.positional.toUpperCase();
+  if (!(WORKSPACE_TERM_TYPES as readonly string[]).includes(upper)) {
+    return {
+      ok: false,
+      reason: 'unknown-term-type',
+      given: input.positional,
+      allowed: [...WORKSPACE_TERM_TYPES],
+      message: `Unknown term bucket: ${input.positional}. Allowed: ${WORKSPACE_TERM_TYPES.join(', ')}.`,
+    };
+  }
+  return { ok: true, types: [upper as WorkspaceTermType] };
+}
+
+// Pure orchestration: given the fetched buckets and an injectable agree
+// function, partition terms into agreed/unchanged/failed. Server is NOT
+// idempotent — already-agreed terms are dropped on the client side, and
+// each bucket's agree call is independent (one bucket failing does not
+// block the others).
+export interface BucketSnapshot {
+  readonly type: WorkspaceTermType;
+  readonly terms: readonly WorkspaceTerm[];
+}
+
+export interface AgreeOutcome {
+  readonly agreed: readonly AgreedTerm[];
+  readonly unchanged: readonly AgreedTerm[];
+  readonly failed: readonly FailedTerm[];
+}
+
+export async function processAgreeBuckets(
+  buckets: readonly BucketSnapshot[],
+  submit: (
+    type: WorkspaceTermType,
+    pending: readonly { termsId: number; revisionId: number }[],
+  ) => Promise<void>,
+): Promise<AgreeOutcome> {
+  const agreed: AgreedTerm[] = [];
+  const unchanged: AgreedTerm[] = [];
+  const failed: FailedTerm[] = [];
+
+  for (const { type, terms } of buckets) {
+    for (const t of terms) {
+      if (t.isAgreed) {
+        unchanged.push({ termsId: t.termsId, revisionId: t.revisionId, type, title: t.title });
+      }
+    }
+    const pending = terms.filter((t) => !t.isAgreed);
+    if (pending.length === 0) continue;
+    try {
+      await submit(
+        type,
+        pending.map((t) => ({ termsId: t.termsId, revisionId: t.revisionId })),
+      );
+      for (const t of pending) {
+        agreed.push({ termsId: t.termsId, revisionId: t.revisionId, type, title: t.title });
+      }
+    } catch (err) {
+      const message = describeAgreeError(err);
+      for (const t of pending) {
+        failed.push({ termsId: t.termsId, revisionId: t.revisionId, type, message });
+      }
+    }
+  }
+  return { agreed, unchanged, failed };
+}
+
+const termsAgreeCommand = defineCommand({
+  meta: {
+    name: 'agree',
+    description:
+      'Agree to workspace-level terms. Pass a single bucket as positional argument, or --all to agree to every pending bucket. Already-agreed terms are skipped (idempotent).',
+  },
+  args: {
+    type: {
+      type: 'positional',
+      description: `Term bucket to agree to (positional, NOT --type): ${WORKSPACE_TERM_TYPES.join(' | ')}. Asymmetric with \`terms show --type ...\` because agree is a one-shot intent — pass the bucket name directly or --all.`,
+      required: false,
+    },
+    all: {
+      type: 'boolean',
+      description:
+        'Agree to every pending bucket. Mutually exclusive with the positional argument.',
+      default: false,
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID to inspect. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const validation = validateAgreeArgs({
+      positional: args.type !== undefined ? String(args.type) : '',
+      all: Boolean(args.all),
+    });
+    if (!validation.ok) {
+      if (args.json) {
+        if (validation.reason === 'unknown-term-type') {
+          emitJson({
+            ok: false,
+            reason: 'unknown-term-type',
+            given: validation.given,
+            allowed: validation.allowed,
+          });
+        } else {
+          emitJson({ ok: false, reason: validation.reason, message: validation.message });
+        }
+      } else {
+        process.stderr.write(`${validation.message}\n`);
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
+
+    try {
+      // Fetch every requested bucket in parallel — same pattern as `show`.
+      // The agree endpoint is per-bucket but the GET isn't, and we need
+      // the (termsId, revisionId) + isAgreed snapshot before deciding
+      // what to submit (server is NOT idempotent — re-submitting an
+      // already-agreed term returns 500).
+      const buckets: readonly BucketSnapshot[] = await Promise.all(
+        validation.types.map(async (type) => ({
+          type,
+          terms: await fetchWorkspaceTerms(workspaceId, type, session.cookies),
+        })),
+      );
+
+      const { agreed, unchanged, failed } = await processAgreeBuckets(
+        buckets,
+        async (_type, pending) => {
+          await agreeWorkspaceTerms(workspaceId, pending, session.cookies);
+        },
+      );
+
+      const partial = failed.length > 0;
+      if (args.json) {
+        emitJson({
+          ok: !partial,
+          partial,
+          workspaceId,
+          agreed,
+          unchanged,
+          failed,
+        });
+      } else if (agreed.length === 0 && failed.length === 0) {
+        process.stdout.write(
+          unchanged.length === 0
+            ? '(no terms to agree to)\n'
+            : `Already agreed: ${unchanged.length} term(s) — nothing to do.\n`,
+        );
+      } else {
+        if (agreed.length > 0) {
+          // Group by type for a tighter rendering.
+          const byType = new Map<WorkspaceTermType, AgreedTerm[]>();
+          for (const a of agreed) {
+            const arr = byType.get(a.type) ?? [];
+            arr.push(a);
+            byType.set(a.type, arr);
+          }
+          for (const [type, items] of byType) {
+            const blocks = blocksFor(type);
+            const blocksHint = blocks.length > 0 ? ` (unblocks: ${blocks.join(', ')})` : '';
+            process.stdout.write(`✓ Agreed to ${items.length} term(s) in ${type}${blocksHint}\n`);
+            for (const a of items) {
+              process.stdout.write(`    - ${a.title}\n`);
+            }
+          }
+        }
+        if (unchanged.length > 0) {
+          process.stdout.write(`(skipped ${unchanged.length} already-agreed term(s))\n`);
+        }
+        if (failed.length > 0) {
+          process.stderr.write(`✗ ${failed.length} term(s) failed:\n`);
+          for (const f of failed) {
+            process.stderr.write(`    - [${f.type}] termsId=${f.termsId}: ${f.message}\n`);
+          }
+        }
+      }
+      return exitAfterFlush(partial ? ExitCode.Generic : ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const termsCommand = defineCommand({
+  meta: {
+    name: 'terms',
+    description:
+      'Show or agree to console terms-of-agreement that gate workspace-level features (Toss login, IAP, IAA, biz workspace, promotion money).',
+  },
+  // citty's `findSubCommandIndex` walks the parent's argsDef to decide
+  // whether `--flag VALUE` consumes one or two raw args. If the parent
+  // doesn't declare a string-typed flag, the VALUE half gets read as a
+  // positional and citty treats it as the subcommand name → "Unknown
+  // command 36577". Mirror the `show` subcommand's value-flags here so
+  // `aitcc workspace terms --workspace 36577 --type IAP` still routes
+  // bare → show via `default` (the previous, no-subtree behaviour). These
+  // declarations are PURE ROUTING SCAFFOLDING — the parent never reads
+  // them; `runCommand` re-parses raw args inside the resolved subcommand.
+  // Importantly, `--type` here does NOT mean `terms agree --type IAP` is
+  // valid: agree takes the bucket as a positional. The flag name overlap
+  // is incidental — see `termsAgreeCommand.args.type` for the real shape.
+  args: {
+    type: {
+      type: 'string',
+      description: 'Forwarded to `show` (routing only — see `agree --help`).',
+    },
+    workspace: { type: 'string', description: 'Forwarded to the resolved subcommand.' },
+    json: { type: 'boolean', description: 'Forwarded to the resolved subcommand.', default: false },
+  },
+  subCommands: {
+    show: termsShowCommand,
+    agree: termsAgreeCommand,
+  },
+  // Bare `aitcc workspace terms` (no subcommand) routes to `show` so the
+  // existing read-only behaviour is preserved.
+  default: 'show',
 });
 
 const segmentsLsCommand = defineCommand({
