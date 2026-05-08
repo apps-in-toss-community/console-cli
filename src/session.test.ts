@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetSessionWarningsForTests,
   clearSession,
   readSession,
   type Session,
@@ -219,5 +220,108 @@ describe('session file IO', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('AITCC_SESSION env precedence', () => {
+  // The env path is the read side of the `auth export` / `auth import`
+  // CI flow. `readSession()` must prefer it when valid, fall back to
+  // file when invalid (with one-shot warn), and `writeSession` /
+  // `clearSession` must no-op so a stray `workspace use` on a CI host
+  // doesn't materialise a 0600 file the operator never expected.
+
+  const originalXdg = process.env.XDG_CONFIG_HOME;
+  const originalEnv = process.env.AITCC_SESSION;
+  let root: string;
+
+  beforeEach(() => {
+    root = freshConfigRoot();
+    process.env.XDG_CONFIG_HOME = root;
+    delete process.env.AITCC_SESSION;
+    __resetSessionWarningsForTests();
+  });
+
+  afterEach(() => {
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdg;
+    if (originalEnv === undefined) delete process.env.AITCC_SESSION;
+    else process.env.AITCC_SESSION = originalEnv;
+  });
+
+  it('readSession returns the env blob without touching the file', async () => {
+    const blob = Buffer.from(JSON.stringify(sample), 'utf8').toString('base64');
+    process.env.AITCC_SESSION = blob;
+    const got = await readSession();
+    expect(got).toEqual(sample);
+    // No file should have been created by reading.
+    let exists = true;
+    try {
+      readFileSync(join(root, 'aitcc', 'session.json'), 'utf8');
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
+  });
+
+  it('readSession accepts raw JSON in env (no base64)', async () => {
+    process.env.AITCC_SESSION = JSON.stringify(sample);
+    expect(await readSession()).toEqual(sample);
+  });
+
+  it('readSession falls back to file when env is malformed and warns once', async () => {
+    // Seed the file BEFORE the env var is set — writeSession would
+    // otherwise no-op under the env guard.
+    await writeSession(sample);
+    process.env.AITCC_SESSION = 'not-base64-or-json-or-anything-coherent::::';
+    const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await readSession();
+      expect(got).toEqual(sample);
+      const joined = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(joined).toMatch(/AITCC_SESSION/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('writeSession is a no-op (and warns once) under env mode', async () => {
+    process.env.AITCC_SESSION = Buffer.from(JSON.stringify(sample), 'utf8').toString('base64');
+    const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await writeSession({ ...sample, currentWorkspaceId: 9999 });
+      const joined = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(joined).toMatch(/not persisted/);
+    } finally {
+      spy.mockRestore();
+    }
+    // No file written.
+    let exists = true;
+    try {
+      readFileSync(join(root, 'aitcc', 'session.json'), 'utf8');
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
+  });
+
+  it('migrates a v1 env blob to v2 in memory only', async () => {
+    const v1 = {
+      schemaVersion: 1,
+      user: { id: 'u_1', email: 'a@b.co' },
+      cookies: [],
+      origins: [],
+      capturedAt: '2026-05-08T03:00:00.000Z',
+    };
+    process.env.AITCC_SESSION = Buffer.from(JSON.stringify(v1), 'utf8').toString('base64');
+    const got = await readSession();
+    expect(got?.schemaVersion).toBe(2);
+    // No file written either.
+    let exists = true;
+    try {
+      readFileSync(join(root, 'aitcc', 'session.json'), 'utf8');
+    } catch {
+      exists = false;
+    }
+    expect(exists).toBe(false);
   });
 });

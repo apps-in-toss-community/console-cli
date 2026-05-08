@@ -110,6 +110,21 @@ The containing directory is created with mode `0700`. Cookies captured during lo
 
 See [CLAUDE.md](./CLAUDE.md) for the rationale behind using a plain `0600` file instead of an OS keychain.
 
+## Continuous integration
+
+For one-shot CI runs (e.g. `aitcc app deploy` from a workflow), seed the runner with a session captured on a desktop machine:
+
+```sh
+# Desktop (already logged in):
+aitcc auth export --format env >> $GITHUB_ENV       # or: aitcc auth export --format env  → store as a secret
+# CI (with the secret exposed as $AITCC_SESSION):
+aitcc app deploy --bundle ./dist/app.zip --json
+```
+
+When `AITCC_SESSION` is set, every command reads the session from that env var instead of the local file. `logout` / `workspace use` / other write paths are silenced under env mode so a CI host never materialises a session file. Use `aitcc auth import --from-env` if you actually want the blob persisted to disk (mainly for restoring a desktop after a wipe).
+
+> **KR-only**: console session cookies are bound to KR residential IPs. The same `AITCC_SESSION` blob succeeds from a Korean machine but **fails with `401` / `errorCode: 4010`** from non-KR egress, including GitHub-hosted runners (Azure US/EU). Use a KR self-hosted runner or run the command yourself. See [`docs/api/auth-session.md`](./docs/api/auth-session.md).
+
 ## Update notifications
 
 When running interactively, `aitcc` occasionally checks for a newer release and prints a one-line notice on stderr if one exists. The check is rate-limit friendly:
