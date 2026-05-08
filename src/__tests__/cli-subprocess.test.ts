@@ -137,6 +137,57 @@ describe('aitcc --json subprocess contract', () => {
     }, 30_000);
   });
 
+  describe('keys', () => {
+    it('keys ls --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(['keys', 'ls', '--json'], dir);
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+
+    // `keys create` validates `--name` *after* loading the session, so the
+    // no-session path here is identical to `ls`. The interesting case is
+    // bad chars: it lands on the `invalid-name` reason once a session
+    // exists. We can't fake a session in the subprocess harness, so we
+    // pick a name validation that rides through the auth gate first —
+    // the auth-gate response is enough to lock the contract entry point.
+    it('keys create --name x --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(
+        ['keys', 'create', '--name', 'x', '--json'],
+        dir,
+      );
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+
+    it('keys revoke abc --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(['keys', 'revoke', 'abc', '--json'], dir);
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+
+    // Sanity: stdout from `keys create` must be plain JSON only (no ANSI),
+    // since the plaintext key is what callers will pipe into a secret
+    // manager. The auth-gate path here doesn't print the key, but the
+    // ANSI invariant should hold across every keys subcommand.
+    it('keys create --name foo --json never emits ANSI to stdout', async () => {
+      const dir = await xdg.fresh();
+      const { stdout } = await runCli(['keys', 'create', '--name', 'foo', '--json'], dir);
+      assertNoAnsi(stdout);
+    }, 30_000);
+  });
+
   describe('logout', () => {
     // logout is the one fail path that returns ok:0 — it's idempotent:
     // "no session to delete" is success, not an error. Locking down the
