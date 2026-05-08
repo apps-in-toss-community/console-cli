@@ -6,6 +6,7 @@ import {
   isDueForCheck,
   maybeCheckForUpdate,
   readCache,
+  sweepStaleTempfiles,
   UPDATE_CHECK_INTERVAL_MS,
   writeCache,
 } from './update-check.js';
@@ -109,6 +110,72 @@ describe('cache file IO', () => {
       // Either null (read raced ahead of first write) or a valid parsed object.
       if (r !== null) expect(typeof r.lastCheckedAt).toBe('string');
     }
+  });
+});
+
+describe('sweepStaleTempfiles', () => {
+  const originalCache = process.env.XDG_CACHE_HOME;
+  let root: string;
+  let dir: string;
+  let basePath: string;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'aitcc-update-check-sweep-'));
+    process.env.XDG_CACHE_HOME = root;
+    // Materialize the cache directory by writing once — keeps the test in
+    // lockstep with the real layout (`<XDG>/aitcc/upgrade-check.json`).
+    await writeCache({ lastCheckedAt: '2026-01-01T00:00:00Z' });
+    dir = join(root, 'aitcc');
+    basePath = join(dir, 'upgrade-check.json');
+  });
+
+  afterEach(() => {
+    if (originalCache === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = originalCache;
+  });
+
+  it('removes matching tempfiles older than the 7-day TTL', async () => {
+    const { writeFileSync, utimesSync, existsSync } = await import('node:fs');
+    const stale = `${basePath}.123.1700000000000.abcd1234.tmp`;
+    writeFileSync(stale, 'leftover');
+    // Set mtime to 8 days ago.
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000;
+    utimesSync(stale, eightDaysAgo, eightDaysAgo);
+    await sweepStaleTempfiles(dir, basePath);
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  it('preserves matching tempfiles inside the TTL window', async () => {
+    const { writeFileSync, existsSync } = await import('node:fs');
+    const fresh = `${basePath}.456.1700000000001.efgh5678.tmp`;
+    writeFileSync(fresh, 'recent');
+    await sweepStaleTempfiles(dir, basePath);
+    expect(existsSync(fresh)).toBe(true);
+  });
+
+  it('does not touch tempfiles whose name does not match the writer pattern', async () => {
+    const { writeFileSync, utimesSync, existsSync } = await import('node:fs');
+    // An editor swap or someone else's tempfile in the same dir — even if
+    // ancient, sweep must leave it alone.
+    const foreign = join(dir, 'random.tmp');
+    writeFileSync(foreign, 'someone-elses');
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000;
+    utimesSync(foreign, eightDaysAgo, eightDaysAgo);
+    // Also a near-miss: same prefix but missing the random segment.
+    const nearMiss = `${basePath}.123.1700000000000.tmp`;
+    writeFileSync(nearMiss, 'wrong-shape');
+    utimesSync(nearMiss, eightDaysAgo, eightDaysAgo);
+    await sweepStaleTempfiles(dir, basePath);
+    expect(existsSync(foreign)).toBe(true);
+    expect(existsSync(nearMiss)).toBe(true);
+  });
+
+  it('is a no-op when the directory does not exist', async () => {
+    // Sweep should swallow ENOENT — the very first writeCache invocation
+    // races against directory creation in real life.
+    await expect(
+      sweepStaleTempfiles(join(root, 'does-not-exist'), join(root, 'does-not-exist', 'x.json')),
+    ).resolves.toBeUndefined();
   });
 });
 
