@@ -13,6 +13,7 @@ import {
   type Session,
   sessionPathForDiagnostics,
   validateSessionBlob,
+  type WriteSessionOptions,
   writeSession,
 } from '../session.js';
 import { emitJson } from './_shared.js';
@@ -50,7 +51,7 @@ export interface AuthImportDeps {
   readonly env?: NodeJS.ProcessEnv;
   readonly stdinIsTTY?: boolean;
   readonly readExistingSession?: () => Promise<Session | null>;
-  readonly writeSession?: (s: Session) => Promise<void>;
+  readonly writeSession?: (s: Session, opts?: WriteSessionOptions) => Promise<void>;
 }
 
 export async function runAuthImport(
@@ -133,26 +134,12 @@ export async function runAuthImport(
   // Write path. We deliberately call `writeSession` even when reading
   // from --from-env; the user explicitly invoked import to persist, and
   // the env-write no-op in session.ts would otherwise swallow the write
-  // silently. We sidestep that by clearing the env locally for the call.
-  // Rationale: the env no-op exists to protect commands that *might*
-  // accidentally write (like `workspace use` on a CI host), not the
-  // command whose entire job is to write.
+  // silently. The `forceWrite` option opts into the write path without
+  // touching `process.env` — the env no-op exists to protect commands
+  // that *might* accidentally write (like `workspace use` on a CI host),
+  // not the command whose entire job is to write.
   try {
-    if (args.fromEnv && env.AITCC_SESSION) {
-      // Temporarily clear so writeSession's guard doesn't no-op us. We
-      // only mutate the live process env when reading from env mode —
-      // restored in `finally`. Tests pass an explicit deps.writeSession
-      // so this branch isn't exercised in unit tests.
-      const previous = process.env.AITCC_SESSION;
-      delete process.env.AITCC_SESSION;
-      try {
-        await (deps.writeSession ?? writeSession)(session);
-      } finally {
-        process.env.AITCC_SESSION = previous;
-      }
-    } else {
-      await (deps.writeSession ?? writeSession)(session);
-    }
+    await (deps.writeSession ?? writeSession)(session, { forceWrite: true });
   } catch (err) {
     const message = (err as Error).message;
     if (args.json) {

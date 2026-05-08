@@ -181,6 +181,19 @@ function readSessionFromEnv(): Session | null | undefined {
     : (validated as Session);
 }
 
+/**
+ * True iff `AITCC_SESSION` is set AND parses+validates as a session.
+ * The write/clear no-ops MUST gate on this rather than on
+ * `process.env.AITCC_SESSION` truthiness alone — otherwise a corrupted
+ * env blob silently swallows `workspace use` writes even though
+ * `readSession()` correctly fell back to the file. Callers in this
+ * module use it instead of inlining the check; `auth import` does NOT
+ * call this (it should always write when invoked, see `forceWrite`).
+ */
+function envSessionActive(): boolean {
+  return readSessionFromEnv() !== undefined;
+}
+
 function warnEnvFallbackOnce(message: string): void {
   if (envFallbackWarned) return;
   envFallbackWarned = true;
@@ -293,13 +306,29 @@ export async function readSessionSummary(): Promise<SessionSummary | null> {
   return s ? summarize(s) : null;
 }
 
-export async function writeSession(session: Session): Promise<void> {
-  // CI single-shot mode (`AITCC_SESSION` env active) is read-only by
-  // contract — silently creating or overwriting a file would defeat the
-  // 0600 guarantee on hosts that don't expect a persistent session and
-  // leave a stale blob behind on shared runners. One-shot warn so a
-  // misuse (`workspace use` on a CI box) is visible without spamming.
-  if (process.env.AITCC_SESSION) {
+export interface WriteSessionOptions {
+  /**
+   * Force the write even when `AITCC_SESSION` env is active. Only
+   * `auth import` should set this — the user explicitly asked us to
+   * persist, and the env no-op would otherwise swallow that intent.
+   * Bypasses the env mutation hack the previous revision relied on.
+   */
+  readonly forceWrite?: boolean;
+}
+
+export async function writeSession(
+  session: Session,
+  options: WriteSessionOptions = {},
+): Promise<void> {
+  // CI single-shot mode (`AITCC_SESSION` env active and valid) is
+  // read-only by contract — silently creating or overwriting a file
+  // would defeat the 0600 guarantee on hosts that don't expect a
+  // persistent session and leave a stale blob behind on shared runners.
+  // One-shot warn so a misuse (`workspace use` on a CI box) is visible
+  // without spamming. Gated on the same "set and valid" predicate that
+  // `readSession` uses so a corrupted env blob doesn't silently swallow
+  // a legitimate write.
+  if (!options.forceWrite && envSessionActive()) {
     warnEnvWriteOnce();
     return;
   }
@@ -332,8 +361,10 @@ export async function setCurrentWorkspaceId(workspaceId: number): Promise<Sessio
 export async function clearSession(): Promise<{ existed: boolean }> {
   // Env mode is read-only — pretend we cleared, but warn so the operator
   // knows the AITCC_SESSION secret in their pipeline still authenticates
-  // the next command. (Symmetric with `writeSession` above.)
-  if (process.env.AITCC_SESSION) {
+  // the next command. (Symmetric with `writeSession` above; same "set and
+  // valid" gate so a corrupted env blob doesn't suppress a legitimate
+  // logout against the underlying file.)
+  if (envSessionActive()) {
     warnEnvWriteOnce();
     return { existed: false };
   }
