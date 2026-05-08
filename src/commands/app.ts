@@ -509,7 +509,7 @@ const statusCommand = defineCommand({
         const svc = service ? ` [${service.serviceStatus}]` : '';
         process.stdout.write(
           `App ${appId} (ws ${workspaceId}): ${status.state}${svc}` +
-            (status.locked ? '\n⚠️  update locked (운영팀 검수 큐 처리 대기)' : '') +
+            (status.locked ? '\n  ⚠️  update locked (운영팀 검수 큐 처리 대기)' : '') +
             (status.rejectedMessage ? `\n  reason: ${status.rejectedMessage}` : '') +
             (service?.scheduledShutdownAt
               ? `\n  scheduled shutdown: ${service.scheduledShutdownAt}`

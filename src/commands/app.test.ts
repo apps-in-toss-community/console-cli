@@ -238,4 +238,21 @@ describe('deriveReviewState', () => {
     expect(s.locked).toBe(false);
     expect(s.lockReason).toBeNull();
   });
+
+  // `state` and `locked` are intentionally decoupled — see docs/api/mini-apps.md
+  // "REVIEW lock 권위". An app can read as `state: 'approved'` (current row,
+  // no draft) while envelope `approvalType` is still `REVIEW` because the
+  // server flips it asynchronously. Pin the combo so a future refactor that
+  // tries to "fix" the apparent inconsistency doesn't break the contract.
+  it('keeps state and locked decoupled when approvalType=REVIEW with no fresh draft', () => {
+    const s = deriveReviewState({
+      current: { miniApp: { status: 'LIVE' } },
+      draft: null,
+      approvalType: 'REVIEW',
+      rejectedMessage: null,
+    });
+    expect(s.state).toBe('approved');
+    expect(s.locked).toBe(true);
+    expect(s.lockReason).toBe('review-pending');
+  });
 });
