@@ -23,7 +23,8 @@ import { emitJson } from './_shared.js';
 //     { ok: false, reason: 'interactive-required'|'invalid-email'|... }  exit 2/...
 //
 //   auth clear:
-//     { ok: true, status: 'deleted'|'absent' }                            exit 0
+//     { ok: true, status: 'deleted'|'absent'|'cancelled' }                exit 0
+//     { ok: false, reason: 'confirmation-required', ... }                 exit 2
 //
 //   auth status:
 //     { ok: true, credentials: { stored, email?, source? },
@@ -163,7 +164,25 @@ export async function runAuthClear(args: AuthClearArgs, deps: AuthDeps = {}): Pr
     () => null,
   );
 
-  if (!args.yes && interactive) {
+  if (!args.yes) {
+    if (!interactive) {
+      // Non-TTY (script, pipe, --json) without --yes is treated as a
+      // mistake — silently wiping credentials from a piped invocation
+      // would surprise the operator. Refuse and ask for the explicit
+      // opt-in. The TTY branch below covers the human-confirm path.
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'confirmation-required',
+          message: 'pass --yes to clear credentials in non-interactive mode',
+        });
+      } else {
+        process.stderr.write(
+          'Refusing to clear credentials without confirmation. Pass --yes to proceed.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
     const label = active?.email ?? '(unknown)';
     let confirmed: boolean;
     try {
@@ -179,7 +198,9 @@ export async function runAuthClear(args: AuthClearArgs, deps: AuthDeps = {}): Pr
       throw err;
     }
     if (!confirmed) {
-      if (args.json) emitJson({ ok: true, status: 'absent' });
+      // Distinct status from `'absent'`: the user actively said no even
+      // though credentials may exist, vs. nothing was there to begin with.
+      if (args.json) emitJson({ ok: true, status: 'cancelled' });
       else process.stdout.write('Aborted.\n');
       return exitAfterFlush(ExitCode.Ok);
     }

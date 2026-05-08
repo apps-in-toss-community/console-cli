@@ -249,6 +249,24 @@ describe('runAuthClear', () => {
     expect(payload.status).toBe('absent');
   });
 
+  it('refuses non-TTY without --yes (confirmation-required)', async () => {
+    // Regression guard for the blocker spotted in pass 1 review: a
+    // piped/scripted invocation that omitted --yes used to silently
+    // delete because the confirm block was gated on `interactive`.
+    // Now non-TTY + missing --yes must hard-fail with exit 2 so the
+    // operator notices and adds --yes explicitly.
+    const backend = new InMemoryBackend();
+    const spy = spyStdoutStderr();
+    const exited = await captureExit(() =>
+      runAuthClear({ json: true, yes: false }, { backend, env: {} }),
+    );
+    spy.restore();
+    expect(exited?.code).toBe(2);
+    const payload = JSON.parse(spy.stdout.join('').trimEnd()) as Record<string, unknown>;
+    expect(payload.ok).toBe(false);
+    expect(payload.reason).toBe('confirmation-required');
+  });
+
   it('deletes both keychain entry and pointer when present', async () => {
     const backend = new InMemoryBackend();
     // Seed by going through saveCredentials so the auth-state file exists.
