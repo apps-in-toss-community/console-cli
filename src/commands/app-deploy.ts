@@ -1,3 +1,4 @@
+import { describeApiError } from '../api/error-messages.js';
 import { type FetchLike, NetworkError, TossApiError } from '../api/http.js';
 import {
   postBundleMemo,
@@ -419,17 +420,22 @@ async function emitPartialFailure(
     return exitAfterFlush(ExitCode.NotAuthenticated);
   }
   if (err instanceof TossApiError) {
+    const message = describeApiError({
+      errorCode: err.errorCode,
+      reason: err.reason,
+      fallback: err.message,
+    });
     if (json) {
       emitJson({
         ok: false,
         reason: 'api-error',
         status: err.status,
         ...(err.errorCode !== undefined ? { errorCode: err.errorCode } : {}),
-        message: err.message,
+        message,
         ...progress,
       });
     } else {
-      process.stderr.write(`Unexpected error: ${err.message}\n`);
+      process.stderr.write(`Unexpected error: ${message}\n`);
     }
     return exitAfterFlush(ExitCode.ApiError);
   }

@@ -61,6 +61,19 @@ bundle에 `Zpe` enum과 `KycHighRiskGroupError` 클래스로 살아있다. 개�
 |---|---|
 | `5000` | KYC 고위험군 사업자(`Zpe.고위험군사업자`). SPA는 `KycHighRiskGroupError`로 wrapping. |
 
+## Prefix-form errorCodes (`<domain>.<Reason>`)
+
+`errorCode`가 항상 숫자 문자열인 것은 아니다. 일부 도메인은 `<camelCaseDomain>.<PascalCaseReason>` 형태(domain-tagged) 코드도 함께 emit한다. envelope shape은 같다 — `error.errorCode`가 `"miniApp.InvalidTitle"` 같은 dotted string으로 와도 `error.reason`은 평소처럼 한국어 문구다.
+
+dog-food 중 sdk-example#39 등록 (2026-05-03) 시 처음 관찰됐고, 콘솔 SPA bundle에는 numeric enum과 별도로 이 prefix 형태가 카테고리별로 흩어져 있다 (bundle 정적 분석에서 prefix가 numeric만큼 깔끔하게 enum화돼 있지 않아 발견 시점마다 추가). 새 prefix 코드를 만나면 도메인 파일(`mini-apps.md` 등) 캡처와 함께 이 표에 한 줄 추가한다.
+
+| errorCode | 도메인 | 의미 | 발생 endpoint | 사용자 액션 |
+|---|---|---|---|---|
+| `miniApp.InvalidTitle` | `miniApp` | `titleKo`가 길이/허용 문자 규칙 위반 (`^[가-힣A-Za-z0-9 :·?]+$`, 공백 제외 ≤ 10 code points). 콘솔 SPA가 form 입력 단계에서 cap을 걸어 두기 때문에 일반 사용자는 잘 못 만나지만, CLI/매니페스트는 입력 길이를 자동 제한하지 않으므로 직격당한다. | `POST /workspaces/:wid/mini-app/review` | `aitcc.yaml`의 `titleKo`를 ≤ 10 글자(공백 제외)로 줄이고 허용 문자만 남긴다. CLI의 `app-manifest.ts` preflight가 같은 규칙을 enforce — 통과 못 하면 그 메시지를 그대로 따른다. |
+| `miniApp.InvalidTitleEn` | `miniApp` | `titleEn`이 길이/case/허용 문자 규칙 위반 (`^[A-Za-z0-9 :·?]+$`, 공백 제외 ≤ 15 code points, 단어별 title-case — 첫 글자만 uppercase + 나머지 lowercase, `AITC` 같은 all-caps 거부). 정규식 위반 시 reason은 "앱 영문 이름은 영어, 숫자, 공백, 콜론(:)만 사용 가능해요" 메시지가 함께 옴. | `POST /workspaces/:wid/mini-app/review` | `aitcc.yaml`의 `titleEn`을 위 규칙에 맞춰 수정 (예: `Aitc Sdk Example`). preflight는 `app-manifest.ts`의 `TITLE_EN_REGEX` + `isTitleCaseWord`. |
+
+알려진 prefix 코드의 출처/캡처: [`docs/api/mini-apps.md`](./mini-apps.md) "Server-side validation" 섹션. CLI는 위 두 코드를 `src/api/error-messages.ts`에서 사용자 액션 한 줄로 매핑하고, **알려지지 않은** prefix 코드는 매핑 없이 코드를 그대로 surface한다(`(<errorCode>) <reason>`) — 추측해서 표에 채우지 않는 게 원칙.
+
 ## HTTP retry 정책 (transport-level)
 
 콘솔 SPA의 fetch wrapper(`r6`/`AGe`/`Fle`)가 정의한 transport-level 재시도 정책. envelope의 `errorCode`가 아니라 raw HTTP status에 대한 동작이다.
