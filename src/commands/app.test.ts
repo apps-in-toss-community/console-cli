@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { deriveReviewState, findReviewEntry, pickMiniAppView, reviewStateFor } from './app.js';
+import {
+  deriveLsStatus,
+  deriveReviewState,
+  findReviewEntry,
+  pickMiniAppView,
+  reviewStateFor,
+  serviceStatusFor,
+} from './app.js';
 
 // parseNonNegativeInt is not exported (rendering would widen the surface
 // without enough reuse) — ratings parsing is covered at the CLI level via
@@ -254,5 +261,92 @@ describe('deriveReviewState', () => {
     expect(s.state).toBe('approved');
     expect(s.locked).toBe(true);
     expect(s.lockReason).toBe('review-pending');
+  });
+});
+
+describe('serviceStatusFor', () => {
+  it('returns the string serviceStatus when present', () => {
+    expect(serviceStatusFor({ serviceStatus: 'PREPARE' })).toBe('PREPARE');
+    expect(serviceStatusFor({ serviceStatus: 'RUNNING' })).toBe('RUNNING');
+  });
+
+  it('returns undefined when missing or wrong-typed', () => {
+    expect(serviceStatusFor(null)).toBeUndefined();
+    expect(serviceStatusFor({})).toBeUndefined();
+    expect(serviceStatusFor({ serviceStatus: 1 })).toBeUndefined();
+  });
+});
+
+// `app ls`'s status column composes deriveReviewState (per-app /with-draft)
+// with the workspace review-status entry's serviceStatus. The lock gate is
+// authoritative on approvalType === 'REVIEW' (docs/api/mini-apps.md
+// "REVIEW lock 권위") — the derived ladder labels alone are not the gate.
+describe('deriveLsStatus', () => {
+  const base = {
+    state: 'approved' as const,
+    approvalType: 'APPROVED' as string | null,
+    rejectedMessage: null,
+    hasCurrent: true,
+    hasDraft: false,
+  };
+
+  it('returns unknown + unlocked when no with-draft is available', () => {
+    expect(deriveLsStatus(null, undefined)).toEqual({
+      status: 'unknown',
+      locked: false,
+      lockReason: null,
+    });
+  });
+
+  it('locked + lockReason="review-pending" when approvalType === "REVIEW"', () => {
+    expect(deriveLsStatus({ ...base, approvalType: 'REVIEW' }, 'PREPARE')).toEqual({
+      status: 'approved',
+      locked: true,
+      lockReason: 'review-pending',
+    });
+  });
+
+  it('not locked when approvalType is APPROVED', () => {
+    expect(deriveLsStatus(base, 'PREPARE')).toEqual({
+      status: 'approved',
+      locked: false,
+      lockReason: null,
+    });
+  });
+
+  it('promotes approved → in-service when serviceStatus === "RUNNING"', () => {
+    expect(deriveLsStatus(base, 'RUNNING').status).toBe('in-service');
+  });
+
+  it('does not promote non-approved states even when RUNNING is reported', () => {
+    // A workspace entry that reports RUNNING for an app whose with-draft
+    // says under-review is internally inconsistent — trust with-draft.
+    expect(
+      deriveLsStatus(
+        { ...base, state: 'under-review', approvalType: 'REVIEW', hasCurrent: false },
+        'RUNNING',
+      ).status,
+    ).toBe('under-review');
+  });
+
+  it('forwards approved-with-edits with lock when both current and draft exist under REVIEW', () => {
+    const row = deriveLsStatus(
+      {
+        state: 'approved-with-edits',
+        approvalType: 'REVIEW',
+        rejectedMessage: null,
+        hasCurrent: true,
+        hasDraft: true,
+      },
+      'RUNNING',
+    );
+    // Even though serviceStatus says RUNNING, the derived state is not
+    // `approved` (it's `approved-with-edits`), so the in-service promotion
+    // does not fire. Lock is on because approvalType === 'REVIEW'.
+    expect(row).toEqual({
+      status: 'approved-with-edits',
+      locked: true,
+      lockReason: 'review-pending',
+    });
   });
 });

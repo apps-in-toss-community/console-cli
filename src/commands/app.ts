@@ -53,10 +53,14 @@ import { runRegister } from './register.js';
 // --json contract (consumed by agent-plugin):
 //
 //   app ls [--workspace <id>]:
-//     { ok: true, workspaceId, hasPolicyViolation, apps: [{id, name, reviewState?, extra}] } exit 0
+//     { ok: true, workspaceId, hasPolicyViolation,
+//       apps: [{id, name, reviewState?, status, locked, lockReason, extra}] }                exit 0
 //     { ok: false, reason: 'no-workspace-selected' }                                         exit 2
 //     { ok: false, reason: 'invalid-id', message }                                           exit 2
 //
+//   `status` is derived (kebab-case enum: not-submitted | under-review | approved |
+//   approved-with-edits | rejected | in-service | unknown). `locked` is
+//   `approvalType === 'REVIEW'` (see docs/api/mini-apps.md "REVIEW lock 권위").
 //   Auth/network/api failures follow the shared contract from workspace/whoami
 //   (ok: true authenticated: false exit 10, network-error exit 11, api-error exit 17).
 
@@ -116,17 +120,43 @@ const lsCommand = defineCommand({
         fetchReviewStatus(workspaceId, session.cookies),
       ]);
 
+      // The workspace-level review-status entry only exposes serviceStatus +
+      // a few flags — not the approvalType/current/draft trio that drives
+      // the "approved-with-edits" vs "under-review" distinction. So per-app
+      // /with-draft is the only authority. Fan out in parallel and degrade
+      // a single failure to `unknown` so one stale id doesn't block the
+      // rest of the list.
+      const drafts = await Promise.all(
+        apps.map(async (app) => {
+          const numericId = typeof app.id === 'number' ? app.id : Number(app.id);
+          if (!Number.isFinite(numericId)) return null;
+          try {
+            const env = await fetchMiniAppWithDraft(workspaceId, numericId, session.cookies);
+            return deriveReviewState(env);
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      const rows = apps.map((app, i) => {
+        const entry = findReviewEntry(review.miniApps, app.id);
+        const derived = drafts[i] ?? null;
+        const ls = deriveLsStatus(derived, serviceStatusFor(entry));
+        const reviewState = reviewStateFor(entry);
+        return { app, entry, derived, ls, reviewState };
+      });
+
       if (args.json) {
-        const joined = apps.map((app) => {
-          const entry = findReviewEntry(review.miniApps, app.id);
-          const reviewState = reviewStateFor(entry);
-          return {
-            id: app.id,
-            name: app.name ?? null,
-            ...(reviewState !== undefined ? { reviewState } : {}),
-            extra: app.extra,
-          };
-        });
+        const joined = rows.map(({ app, ls, reviewState }) => ({
+          id: app.id,
+          name: app.name ?? null,
+          ...(reviewState !== undefined ? { reviewState } : {}),
+          status: ls.status,
+          locked: ls.locked,
+          lockReason: ls.lockReason,
+          extra: app.extra,
+        }));
         emitJson({
           ok: true,
           workspaceId,
@@ -143,14 +173,16 @@ const lsCommand = defineCommand({
         }
         return exitAfterFlush(ExitCode.Ok);
       }
-      for (const app of apps) {
-        const entry = findReviewEntry(review.miniApps, app.id);
-        const reviewState = reviewStateFor(entry) ?? '-';
+      const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+      const yellow = useColor ? '\x1b[33m' : '';
+      const reset = useColor ? '\x1b[0m' : '';
+      for (const { app, ls } of rows) {
         // Defensive: the upstream mini-app payload shape is not yet fully
         // observed (no registered apps in our workspaces). Tighten this
         // once sdk-example is registered and `name` is confirmed required.
         const name = app.name ?? '(unnamed)';
-        process.stdout.write(`${app.id}\t${name}\t${reviewState}\n`);
+        const lockMark = ls.locked ? ` ${yellow}🔒${reset}` : '';
+        process.stdout.write(`${app.id}\t${name}\t${ls.status}${lockMark}\n`);
       }
       if (review.hasPolicyViolation) {
         process.stderr.write('Note: workspace-wide policy violation flag is set.\n');
@@ -412,6 +444,51 @@ export function deriveReviewState(env: {
   const locked = approvalType === 'REVIEW';
   const lockReason: LockReason | null = locked ? 'review-pending' : null;
   return { state, approvalType, rejectedMessage, hasCurrent, hasDraft, locked, lockReason };
+}
+
+// Status column for `app ls`. Composes the with-draft-derived `ReviewState`
+// with the workspace review-status entry's `serviceStatus` so a published,
+// running app shows `in-service` instead of the bare `approved`. lock is
+// authoritative on `approvalType === 'REVIEW'` (see docs/api/mini-apps.md
+// "REVIEW lock 권위") — derived ladder labels like `approved-with-edits`
+// imply lock but are not the gate themselves.
+export type AppLsStatus =
+  | 'not-submitted'
+  | 'under-review'
+  | 'approved'
+  | 'approved-with-edits'
+  | 'rejected'
+  | 'in-service'
+  | 'unknown';
+
+export interface AppLsStatusRow {
+  readonly status: AppLsStatus;
+  readonly locked: boolean;
+  readonly lockReason: 'review-pending' | null;
+}
+
+export function deriveLsStatus(
+  derived: DerivedStatus | null,
+  serviceStatus: string | undefined,
+): AppLsStatusRow {
+  if (!derived) {
+    return { status: 'unknown', locked: false, lockReason: null };
+  }
+  const locked = derived.approvalType === 'REVIEW';
+  const lockReason = locked ? 'review-pending' : null;
+  let status: AppLsStatus = derived.state;
+  if (status === 'approved' && serviceStatus === 'RUNNING') {
+    status = 'in-service';
+  }
+  return { status, locked, lockReason };
+}
+
+export function serviceStatusFor(
+  entry: Readonly<Record<string, unknown>> | null,
+): string | undefined {
+  if (!entry) return undefined;
+  const raw = entry.serviceStatus;
+  return typeof raw === 'string' ? raw : undefined;
 }
 
 const POLL_MIN_INTERVAL_SEC = 30;
