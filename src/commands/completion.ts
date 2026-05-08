@@ -28,6 +28,7 @@ const TOP_LEVEL: readonly string[] = [
   'whoami',
   'login',
   'logout',
+  'auth',
   'upgrade',
   'workspace',
   'app',
@@ -65,6 +66,7 @@ const SUB_COMMANDS: Record<string, readonly string[]> = {
   // review, release, test-push, test-links.
   notices: ['categories', 'ls', 'show'],
   me: ['terms'],
+  auth: ['set', 'clear', 'status'],
   completion: ['bash', 'zsh', 'fish'],
 };
 
