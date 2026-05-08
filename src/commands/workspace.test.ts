@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TossApiError } from '../api/http.js';
+import { NetworkError, TossApiError } from '../api/http.js';
 import {
   WORKSPACE_TERM_TYPES,
   type WorkspaceTerm,
@@ -293,6 +293,11 @@ describe('processAgreeBuckets', () => {
     expect(out.agreed.map((a) => a.type)).toEqual(['IAA']);
     expect(out.failed).toHaveLength(1);
     expect(out.failed[0]?.type).toBe('IAP');
+    // The (termsId, revisionId) pair on the failed entry must echo the pending
+    // term's identity so the caller can correlate retries; regression guard
+    // against accidentally dropping these fields during a refactor.
+    expect(out.failed[0]?.termsId).toBe(1);
+    expect(out.failed[0]?.revisionId).toBe(10);
     // Message comes from `TossApiError.message` directly (no extra suffix):
     //   "Toss API error 500: INTERNAL (HTTP 200)"
     expect(out.failed[0]?.message).toBe('Toss API error 500: INTERNAL (HTTP 200)');
@@ -318,6 +323,13 @@ describe('describeAgreeError', () => {
   it('returns TossApiError.message verbatim (errorCode + reason already embedded)', () => {
     const err = new TossApiError(200, '500', 'INTERNAL', 0);
     expect(describeAgreeError(err)).toBe('Toss API error 500: INTERNAL (HTTP 200)');
+  });
+
+  it('prefixes NetworkError with "network error:" so callers can disambiguate transport vs API failures', () => {
+    const err = new NetworkError('https://example.test/agree', new Error('ECONNREFUSED'));
+    expect(describeAgreeError(err)).toBe(
+      'network error: Network request to https://example.test/agree failed: ECONNREFUSED',
+    );
   });
 
   it('renders generic Error.message', () => {

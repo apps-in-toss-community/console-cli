@@ -511,6 +511,9 @@ export type AgreeArgsValidation =
       readonly reason: 'unknown-term-type';
       readonly given: string;
       readonly allowed: readonly WorkspaceTermType[];
+      // `message` here is for stderr only — the `--json` emit path intentionally
+      // omits it and surfaces `given` + `allowed` instead so the agent-plugin
+      // can render its own message without parsing prose.
       readonly message: string;
     };
 
