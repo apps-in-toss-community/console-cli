@@ -1,6 +1,8 @@
-# Workspaces · Members
+# Workspaces
 
 `<base>` = `https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole`
+
+> 멤버 조회·초대·제거 endpoint는 [`members.md`](./members.md)로 분리됨 (2026-05-08).
 
 ## 색인
 
@@ -9,8 +11,6 @@
 | GET | `/workspaces` | 사용자 워크스페이스 목록 (앱 inline 포함) | ✅ |
 | GET | `/workspaces/invited` | 받은 초대 목록 | ✅ |
 | GET | `/workspaces/<wid>` | 워크스페이스 상세 | ✅ |
-| GET | `/workspaces/<wid>/members` | 멤버 목록 | ✅ |
-| GET | `/workspaces/<wid>/members/me` | 내 멤버 정보 (per-workspace) | ⚠️ |
 | GET | `/workspaces/<wid>/partner` | 파트너(빌링/정산 주체) 정보 | ⚠️ |
 | GET | `/workspaces/<wid>/partner/is-registered` | 파트너 등록 여부 | ⚠️ |
 | GET | `/workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=` | 사업자번호 조회 | ⚠️ |
@@ -57,37 +57,6 @@
   }
 }
 ```
-
-## `GET /workspaces/<wid>/members` — 멤버 목록
-
-- **Used by**: [`src/api/members.ts#fetchWorkspaceMembers`](../../src/api/members.ts), `aitcc members`
-- **Capture status**: ✅ confirmed
-
-### Response
-
-```json
-{
-  "resultType": "SUCCESS",
-  "success": [
-    {
-      "workspaceId": 3095,
-      "bizUserNo": <biz_user_no>,
-      "name": "<name>",
-      "email": "<email>",
-      "status": "ACTIVE",
-      "role": "OWNER",
-      "isOwnerDelegationRequested": false,
-      "isAdult": true
-    }
-  ]
-}
-```
-
-**메모**:
-
-- `bizUserNo`가 person-stable identifier. 같은 사람이 여러 워크스페이스에 속해 있어도 동일.
-- `status`: 관측값 `"ACTIVE"`. `"INVITED"`, `"REMOVED"` 등 추가 enum은 미관측.
-- `role`: `"OWNER"`, `"MEMBER"` 등.
 
 ## `GET /workspaces/<wid>/segments/list` — 세그먼트 목록
 
@@ -145,4 +114,4 @@ shape은 [`auth-session.md`](./auth-session.md)의 `/console-user-terms/me`와 �
 - `POST /workspaces`, `PATCH /workspaces/<wid>/edit`: 워크스페이스 생성/수정. CLI scope 밖.
 - `POST /workspaces/<wid>/owner-delegations`, `/owner-delegations/complete`: 소유권 위임. CLI scope 밖.
 - `POST /workspaces/<wid>/console-workspace-terms`, `/re-agree`: 약관 동의. CLI scope 밖.
-- `POST /workspaces/<wid>/invites`, `/invites/send/by-email`, `/invites/accept`, `/invites/reject`, `DELETE /workspaces/<wid>/invites`: 초대 관리. CLI scope 밖.
+- 초대 관리(`POST /invites/...`, `DELETE /invites`)와 멤버 제거(`DELETE /members/<biz_user_no>`)는 [`members.md`](./members.md)로 분리.
