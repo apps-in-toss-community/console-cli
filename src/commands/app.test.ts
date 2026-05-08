@@ -195,4 +195,47 @@ describe('deriveReviewState', () => {
     expect(s.hasCurrent).toBe(true);
     expect(s.hasDraft).toBe(true);
   });
+
+  // `locked` reflects the authoritative update-lock signal. The derived `state`
+  // ladder isn't a reliable proxy: a `approved-with-edits` app can still be
+  // locked (4046) because review is queued for the in-flight draft. Single
+  // source of truth is `with-draft.success.approvalType === 'REVIEW'`.
+  it('locked when approvalType is REVIEW (under-review case)', () => {
+    const s = deriveReviewState({
+      ...base,
+      approvalType: 'REVIEW',
+      current: null,
+    });
+    expect(s.locked).toBe(true);
+    expect(s.lockReason).toBe('review-pending');
+  });
+
+  it('locked when approvalType is REVIEW even with current row + draft (approved-with-edits)', () => {
+    const s = deriveReviewState({
+      current: { miniApp: { status: 'LIVE' } },
+      draft: { miniApp: { status: 'PREPARE' } },
+      approvalType: 'REVIEW',
+      rejectedMessage: null,
+    });
+    expect(s.state).toBe('approved-with-edits');
+    expect(s.locked).toBe(true);
+    expect(s.lockReason).toBe('review-pending');
+  });
+
+  it('not locked when approvalType is null (not-submitted)', () => {
+    const s = deriveReviewState({ ...base });
+    expect(s.locked).toBe(false);
+    expect(s.lockReason).toBeNull();
+  });
+
+  it('not locked when approvalType is not REVIEW', () => {
+    const s = deriveReviewState({
+      ...base,
+      approvalType: 'APPROVED',
+      current: { miniApp: {} },
+      draft: null,
+    });
+    expect(s.locked).toBe(false);
+    expect(s.lockReason).toBeNull();
+  });
 });
