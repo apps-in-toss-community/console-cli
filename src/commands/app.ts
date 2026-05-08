@@ -173,6 +173,9 @@ const lsCommand = defineCommand({
         }
         return exitAfterFlush(ExitCode.Ok);
       }
+      // NO_COLOR honoured per the project convention; isTTY gate keeps ANSI
+      // escapes out of pipes (`update-check.ts` bails earlier on non-TTY for
+      // the same reason).
       const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
       const yellow = useColor ? '\x1b[33m' : '';
       const reset = useColor ? '\x1b[0m' : '';
