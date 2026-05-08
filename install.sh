@@ -94,21 +94,34 @@ sums_url="$base_url/SHA256SUMS"
 if command -v curl >/dev/null 2>&1; then
   dl_once() {
     # `--retry 3` here covers transient transport hiccups (TLS reset etc.);
-    # the explicit 404 retry sits one layer up.
+    # the explicit 404 retry sits one layer up. Without `-f`, curl exits 0
+    # on a 404 and writes the HTML error body to `$2`; that's fine because
+    # `-o` truncates on each call and SHA-256 verification gates the install.
     curl -sSL --retry 3 --retry-delay 2 \
       -o "$2" -w '%{http_code}' "$1" 2>/dev/null || printf '000'
   }
 elif command -v wget >/dev/null 2>&1; then
   dl_once() {
-    # wget exit codes: 0=ok, 8=server issued error response. Map both 404
-    # and any other non-zero into a status string for dl_retry to inspect.
-    if wget -q -O "$2" "$1" 2>/dev/null; then
+    # Wipe any prior partial body so a failed retry can't leave stale bytes
+    # behind for the SHA-256 check. (`-O` truncates on each call too, but
+    # being explicit is cheap insurance.)
+    rm -f "$2"
+    # `-S` prints response headers to stderr; capture them in one round-trip
+    # so we don't race a separate `--spider` call against the live release.
+    # Status lines look like `  HTTP/1.1 404 Not Found`. POSIX awk: use
+    # `[[:blank:]]` for portable whitespace.
+    err_out=$(wget -q -S -O "$2" "$1" 2>&1) && {
       printf '200'
+      return 0
+    }
+    status=$(
+      printf '%s\n' "$err_out" \
+        | awk '/^[[:blank:]]*HTTP\// {code=$2} END {print code+0}'
+    )
+    if [ "${status:-0}" -gt 0 ] 2>/dev/null; then
+      printf '%s' "$status"
     else
-      # `--spider` does a HEAD-equivalent so we can read the status without
-      # re-downloading. Captured stderr lines look like "  HTTP/1.1 404 ...".
-      status=$(wget --spider -S "$1" 2>&1 | awk '/^[ \t]*HTTP\// {code=$2} END {print code+0}')
-      [ "$status" -gt 0 ] 2>/dev/null && printf '%s' "$status" || printf '000'
+      printf '000'
     fi
   }
 else
