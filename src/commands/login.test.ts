@@ -4,6 +4,8 @@ import { TossApiError } from '../api/http.js';
 import {
   AUTH_SETTLE_DELAY_MS,
   chooseLoginMode,
+  computeFallbackTimeoutMs,
+  INTERACTIVE_FALLBACK_FLOOR_MS,
   isAllowedAuthorizeHost,
   isLoginLanding,
   resolveUserWithRetry,
@@ -174,5 +176,27 @@ describe('chooseLoginMode', () => {
   });
   it('--interactive without credentials still produces interactive', () => {
     expect(chooseLoginMode({ interactiveFlag: true, hasCredentials: false })).toBe('interactive');
+  });
+});
+
+describe('computeFallbackTimeoutMs', () => {
+  // After a headless attempt fails and we hand off to the visible Chrome
+  // fallback, the user's `--timeout` budget should be honoured — but never
+  // below the floor that gives the human time to actually type.
+  it('subtracts elapsed time from the overall budget', () => {
+    expect(computeFallbackTimeoutMs(300_000, 5_000)).toBe(295_000);
+  });
+  it('floors at INTERACTIVE_FALLBACK_FLOOR_MS when the budget is nearly exhausted', () => {
+    expect(computeFallbackTimeoutMs(60_000, 59_000)).toBe(INTERACTIVE_FALLBACK_FLOOR_MS);
+  });
+  it('floors when the headless attempt overshot the total budget', () => {
+    // Should not produce a negative timeout — `Math.max` clamps.
+    expect(computeFallbackTimeoutMs(20_000, 25_000)).toBe(INTERACTIVE_FALLBACK_FLOOR_MS);
+  });
+  it('returns the full budget when no time has elapsed', () => {
+    expect(computeFallbackTimeoutMs(300_000, 0)).toBe(300_000);
+  });
+  it('honours small budgets exactly when above the floor', () => {
+    expect(computeFallbackTimeoutMs(45_000, 5_000)).toBe(40_000);
   });
 });
