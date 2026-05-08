@@ -1,3 +1,4 @@
+import { describeApiError } from '../api/error-messages.js';
 import { NetworkError, TossApiError } from '../api/http.js';
 import { findProjectContext, type ProjectContext } from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
@@ -109,7 +110,12 @@ export async function emitFailureFromError(json: boolean, err: unknown): Promise
     return exitAfterFlush(ExitCode.NotAuthenticated);
   }
   if (err instanceof TossApiError) {
-    emitApiError(json, err.message, { status: err.status, errorCode: err.errorCode });
+    const message = describeApiError({
+      errorCode: err.errorCode,
+      reason: err.reason,
+      fallback: err.message,
+    });
+    emitApiError(json, message, { status: err.status, errorCode: err.errorCode });
     return exitAfterFlush(ExitCode.ApiError);
   }
   if (err instanceof NetworkError) {
