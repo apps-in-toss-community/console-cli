@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fetchLatestReleaseConditional, versionFromTag } from './github.js';
 import { upgradeCheckPath } from './paths.js';
 import { compareSemver } from './semver.js';
@@ -62,7 +62,12 @@ export async function readCache(): Promise<UpdateCheckCache | null> {
 
 export async function writeCache(entry: UpdateCheckCache): Promise<void> {
   const path = upgradeCheckPath();
-  await mkdir(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true });
+  // Best-effort: clean up tempfiles a previous SIGKILL/power-loss left
+  // behind between writeFile() and rename() below. Fire-and-forget so
+  // it never blocks the actual write; failures are swallowed silently.
+  void sweepStaleTempfiles(dir, path);
   // Atomic promote: write to a unique sibling tempfile, then rename. On
   // POSIX rename(2) is atomic within the same filesystem, so a truncated
   // or crash-interrupted write never becomes the canonical cache file.
@@ -84,6 +89,40 @@ export async function writeCache(entry: UpdateCheckCache): Promise<void> {
     await unlink(tmp).catch(() => {});
     throw err;
   }
+}
+
+const TEMPFILE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Matches the suffix shape produced by writeCache:
+//   `<path>.<pid>.<ts>.<rand>.tmp`
+// where pid + ts are decimals and rand is base36 (a-z0-9). Anchored so an
+// arbitrary `.tmp` file (someone's editor swap, a future tool's tempfile)
+// is left alone.
+const TEMPFILE_SUFFIX_RE = /\.\d+\.\d+\.[a-z0-9]+\.tmp$/i;
+
+export async function sweepStaleTempfiles(dir: string, basePath: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - TEMPFILE_TTL_MS;
+  const baseName = basePath.slice(dir.length + 1);
+  await Promise.all(
+    entries.map(async (name) => {
+      // Only sweep tempfiles that this writer would itself produce. Belt-
+      // and-suspenders: prefix match on `<base>.` plus the suffix regex.
+      if (!name.startsWith(`${baseName}.`)) return;
+      if (!TEMPFILE_SUFFIX_RE.test(name)) return;
+      const p = join(dir, name);
+      try {
+        const st = await stat(p);
+        if (st.mtimeMs < cutoff) await unlink(p);
+      } catch {
+        // ENOENT (race), EACCES, etc — best-effort, ignore.
+      }
+    }),
+  );
 }
 
 /** Has the throttle window elapsed since the last recorded check? */
