@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { FetchLike } from '../api/http.js';
 import { TossApiError } from '../api/http.js';
+import type { CredentialsSource } from '../auth/credentials.js';
 import {
   AUTH_SETTLE_DELAY_MS,
   chooseLoginMode,
@@ -8,7 +9,12 @@ import {
   INTERACTIVE_FALLBACK_FLOOR_MS,
   isAllowedAuthorizeHost,
   isLoginLanding,
+  type LoginCommandArgs,
+  type LoginDeps,
+  type PromptDeps,
+  resolveCredentialsForLogin,
   resolveUserWithRetry,
+  type SaveTarget,
 } from './login.js';
 
 // The live flow is E2E-only (needs a real Chrome and a human) but the
@@ -198,5 +204,273 @@ describe('computeFallbackTimeoutMs', () => {
   });
   it('honours small budgets exactly when above the floor', () => {
     expect(computeFallbackTimeoutMs(45_000, 5_000)).toBe(40_000);
+  });
+});
+
+// `resolveCredentialsForLogin` is the new policy core that decides where
+// the email + password come from on a given invocation. It is the seam
+// agent-plugin observes via `--json` reasons, so each branch needs an
+// explicit lockdown — surprise behaviour here breaks scripted callers.
+describe('resolveCredentialsForLogin', () => {
+  const baseArgs: LoginCommandArgs = {
+    json: false,
+    timeout: '300',
+    interactive: false,
+    passwordStdin: false,
+  };
+
+  // Default opts simulate a non-TTY shell (e.g. CI) so we have to opt in
+  // to TTY for the prompt-path tests.
+  const nonTty = { stdoutIsTTY: false, stdinIsTTY: false } as const;
+  const tty = { stdoutIsTTY: true, stdinIsTTY: true } as const;
+
+  it('returns argv credentials when --email + --password are passed', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, email: 'a@b', password: 'pw' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toEqual({
+        kind: 'ok',
+        credentials: { source: 'argv', email: 'a@b', password: 'pw' },
+        saveTarget: 'none',
+      });
+      // --password on argv must emit the `ps`-visibility warning.
+      const calls = writeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((s) => s.includes('visible in `ps`'))).toBe(true);
+    } finally {
+      writeMock.mockRestore();
+    }
+  });
+
+  it('honours --save keychain by reporting it on the argv path', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, email: 'a@b', password: 'pw', save: 'keychain' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toMatchObject({ kind: 'ok', saveTarget: 'keychain' });
+    } finally {
+      writeMock.mockRestore();
+    }
+  });
+
+  it('reads --password-stdin via the injected reader and strips trailing newline', async () => {
+    const deps: LoginDeps = { readStdin: () => Promise.resolve('pw-from-pipe\n') };
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, email: 'a@b', passwordStdin: true },
+      deps,
+      { env: {}, ...nonTty },
+    );
+    expect(got).toEqual({
+      kind: 'ok',
+      credentials: { source: 'argv', email: 'a@b', password: 'pw-from-pipe' },
+      saveTarget: 'none',
+    });
+  });
+
+  it('rejects --password and --password-stdin together (exit 2)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, email: 'a@b', password: 'pw', passwordStdin: true },
+      {},
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({
+      kind: 'error',
+      reason: 'conflicting-password-source',
+      exitCode: 2,
+    });
+  });
+
+  it('rejects an empty --password-stdin payload (exit 2)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, email: 'a@b', passwordStdin: true },
+      { readStdin: () => Promise.resolve('\n') },
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'invalid-password' });
+  });
+
+  it('rejects --email without any password source (exit 2)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, email: 'a@b' },
+      {},
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'missing-password' });
+  });
+
+  it('rejects an email without an "@" (exit 2)', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, email: 'no-at-sign', password: 'pw' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toMatchObject({ kind: 'error', reason: 'invalid-email' });
+    } finally {
+      writeMock.mockRestore();
+    }
+  });
+
+  it('rejects an unknown --save value (exit 2)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, email: 'a@b', password: 'pw', save: 'file' },
+      {},
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'invalid-save' });
+  });
+
+  it('falls through to env when no flags are set and both env vars are present', async () => {
+    const got = await resolveCredentialsForLogin(
+      baseArgs,
+      {},
+      {
+        env: { AITCC_EMAIL: 'env@x', AITCC_PASSWORD: 'env-pw' },
+        ...nonTty,
+      },
+    );
+    expect(got).toEqual({
+      kind: 'ok',
+      credentials: { source: 'env', email: 'env@x', password: 'env-pw' },
+      saveTarget: 'none',
+    });
+  });
+
+  it('uses the keychain when getCredentials returns a value (no env)', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const fromStore: CredentialsSource = {
+        kind: 'keychain',
+        email: 'kc@x',
+        password: 'kc-pw',
+      };
+      const got = await resolveCredentialsForLogin(
+        baseArgs,
+        { getCredentials: () => Promise.resolve(fromStore) },
+        { env: {}, ...nonTty },
+      );
+      expect(got).toEqual({
+        kind: 'ok',
+        credentials: { source: 'keychain', email: 'kc@x', password: 'kc-pw' },
+        saveTarget: 'none',
+      });
+      const calls = writeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((s) => s.includes('Using credentials from OS keychain for kc@x'))).toBe(
+        true,
+      );
+    } finally {
+      writeMock.mockRestore();
+    }
+  });
+
+  it('refuses non-TTY runs with no credentials configured', async () => {
+    const got = await resolveCredentialsForLogin(
+      baseArgs,
+      { getCredentials: () => Promise.resolve(null) },
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'interactive-required' });
+  });
+
+  it('drives the interactive prompts when stdin is a TTY and no creds exist', async () => {
+    const calls: string[] = [];
+    const prompts: PromptDeps = {
+      email: () => {
+        calls.push('email');
+        return Promise.resolve('typed@x');
+      },
+      password: () => {
+        calls.push('password');
+        return Promise.resolve('typed-pw');
+      },
+      saveTarget: () => {
+        calls.push('saveTarget');
+        return Promise.resolve('keychain' as SaveTarget);
+      },
+    };
+    const got = await resolveCredentialsForLogin(
+      baseArgs,
+      { getCredentials: () => Promise.resolve(null), prompts },
+      { env: {}, ...tty },
+    );
+    expect(got).toEqual({
+      kind: 'ok',
+      credentials: { source: 'prompt', email: 'typed@x', password: 'typed-pw' },
+      saveTarget: 'keychain',
+    });
+    expect(calls).toEqual(['email', 'password', 'saveTarget']);
+  });
+
+  it('skips the saveTarget prompt when --save was passed explicitly', async () => {
+    const calls: string[] = [];
+    const prompts: PromptDeps = {
+      email: () => Promise.resolve('typed@x'),
+      password: () => Promise.resolve('typed-pw'),
+      saveTarget: () => {
+        calls.push('saveTarget');
+        return Promise.resolve('none' as SaveTarget);
+      },
+    };
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, save: 'none' },
+      { getCredentials: () => Promise.resolve(null), prompts },
+      { env: {}, ...tty },
+    );
+    expect(got).toMatchObject({ kind: 'ok', saveTarget: 'none' });
+    expect(calls).toEqual([]);
+  });
+
+  it('rejects --interactive combined with --email (no silent drop of credentials)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, interactive: true, email: 'a@b', password: 'pw' },
+      {},
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'conflicting-interactive-flags' });
+  });
+
+  it('rejects --interactive combined with --save (so the user sees their save was ignored)', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, interactive: true, save: 'keychain' },
+      {},
+      { env: {}, ...nonTty },
+    );
+    expect(got).toMatchObject({ kind: 'error', reason: 'conflicting-interactive-flags' });
+  });
+
+  it('--interactive returns ok with null credentials so the visible browser drives the form', async () => {
+    const got = await resolveCredentialsForLogin(
+      { ...baseArgs, interactive: true },
+      { getCredentials: () => Promise.resolve(null) },
+      { env: { AITCC_EMAIL: 'env@x', AITCC_PASSWORD: 'env-pw' }, ...nonTty },
+    );
+    expect(got).toEqual({ kind: 'ok', credentials: null, saveTarget: 'none' });
+  });
+
+  it('--json suppresses the keychain breadcrumb so machine consumers do not see noise', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const fromStore: CredentialsSource = {
+        kind: 'keychain',
+        email: 'kc@x',
+        password: 'kc-pw',
+      };
+      await resolveCredentialsForLogin(
+        { ...baseArgs, json: true },
+        { getCredentials: () => Promise.resolve(fromStore) },
+        { env: {}, ...nonTty },
+      );
+      const calls = writeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((s) => s.includes('Using credentials from OS keychain'))).toBe(false);
+    } finally {
+      writeMock.mockRestore();
+    }
   });
 });

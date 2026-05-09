@@ -19,6 +19,42 @@
 
 자세한 결정 근거는 console-cli `CLAUDE.md` "Login 선택 근거" 참고.
 
+## CLI surface (consolidated 0.1.x)
+
+`aitcc login` / `aitcc logout` / `aitcc whoami`가 단일 진입점이다. 흩어져 있던
+`aitcc auth set` / `auth clear` / `auth status`는 deprecation shim으로 한동안 유지되며
+1.0에서 제거된다.
+
+**Credential resolution 우선순위 (`aitcc login`)**:
+
+1. `--email` + `--password-stdin` (또는 `--password` plain — `ps`/Task Manager 노출 경고).
+2. `AITCC_EMAIL` + `AITCC_PASSWORD` env.
+3. OS keychain (이전 `--save keychain` 또는 인터랙티브 prompt에서 저장한 값).
+4. TTY interactive prompt — email / password / 저장 위치(`keychain` | `none`)를 한 번에 묻는다.
+5. Non-TTY + 자격 정보 없음 → exit 2 (`interactive-required`)로 명시적 거부.
+
+`--save keychain`은 로그인을 시도하기 전에 먼저 keychain write를 시도한다. backend가 없거나
+실패하면 fatal (exit 2 `keychain-save-failed`) — partial state를 만들지 않는다.
+`--interactive`는 자격 정보가 있어도 visible 브라우저 흐름을 강제한다 (계정 전환·step-up용).
+이때 `--email/--password*/--save`와 함께 쓰면 사용자가 입력한 자격이 form-fill에 쓰이지 않고
+조용히 버려지므로, 조합을 일찍 거부한다 (exit 2 `conflicting-interactive-flags`).
+
+**예시 시나리오**:
+
+- 첫 사용 (desktop, TTY): `aitcc login` → 이메일·비밀번호 입력 → "OS keychain (recommended)" 선택
+  → 다음부터 `aitcc login`은 prompt 없이 headless 진행.
+- CI single-shot: `printf '%s' "$PW" | aitcc login --email you@x --password-stdin --json`
+  (stdin이 TTY가 아니어야 안전, 비밀번호는 argv에 노출되지 않음).
+
+**JSON 계약**:
+
+- `aitcc whoami --json`: `{ ok, authenticated, credentialSource: 'env'|'keychain'|'none', credentialEmail?, … }`.
+  agent-plugin이 `credentialSource === 'none'`이면 `aitcc login` 안내를 띄운다.
+- `aitcc logout --json`: `{ ok, sessionRemoved, credentialsPurged, path, purgeError? }`.
+  `--purge`로 keychain credential까지 같이 지운다.
+- `aitcc login --json`: `credentialSource: 'argv'|'env'|'keychain'|'prompt'|'browser'`,
+  `saved: 'created'|'updated'|'unchanged'|'skipped'` 필드로 어떤 경로로 들어갔고 무엇을 저장했는지 보고한다.
+
 ## Cookie portability (실측)
 
 세션 쿠키는 **country-bound (KR allowlist)**. 같은 cookie blob이라도:

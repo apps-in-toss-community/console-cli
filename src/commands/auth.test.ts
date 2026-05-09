@@ -355,3 +355,58 @@ describe('runAuthStatus', () => {
     expect(payload.credentials.source).toBe('env');
   });
 });
+
+// All three legacy `auth` commands now emit a deprecation banner on stderr
+// pointing users at the consolidated surface (login / logout --purge /
+// whoami). The banner must not pollute --json stdout.
+describe('auth command deprecation banner', () => {
+  let originalXdg: string | undefined;
+
+  beforeEach(() => {
+    originalXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), 'aitcc-auth-deprecation-'));
+  });
+
+  afterEach(() => {
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdg;
+  });
+
+  it('runAuthSet warns about removal and points at `aitcc login`', async () => {
+    const backend = new InMemoryBackend();
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    const spy = spyStdoutStderr();
+    await captureExit(() =>
+      runAuthSet({ json: true, email: 'dep@example.com', password: 'pw' }, { backend, env: {} }),
+    );
+    spy.restore();
+    const stderr = spy.stderr.join('');
+    expect(stderr).toContain('deprecated');
+    expect(stderr).toContain('removed in 1.0');
+    expect(stderr).toContain('aitcc login');
+    // --json stdout must remain a single JSON line — no banner spillover.
+    const stdout = spy.stdout.join('');
+    expect(stdout.trim().split('\n')).toHaveLength(1);
+  });
+
+  it('runAuthClear warns about removal and points at `aitcc logout --purge`', async () => {
+    const backend = new InMemoryBackend();
+    const spy = spyStdoutStderr();
+    await captureExit(() => runAuthClear({ json: true, yes: true }, { backend, env: {} }));
+    spy.restore();
+    const stderr = spy.stderr.join('');
+    expect(stderr).toContain('deprecated');
+    expect(stderr).toContain('aitcc logout --purge');
+  });
+
+  it('runAuthStatus warns about removal and points at `aitcc whoami`', async () => {
+    const backend = new InMemoryBackend();
+    const spy = spyStdoutStderr();
+    await captureExit(() => runAuthStatus({ json: true }, { backend, env: {} }));
+    spy.restore();
+    const stderr = spy.stderr.join('');
+    expect(stderr).toContain('deprecated');
+    expect(stderr).toContain('aitcc whoami');
+  });
+});
