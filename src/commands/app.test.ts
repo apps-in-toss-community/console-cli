@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  augmentCertExpiry,
   compareMiniAppViews,
   deriveDaysUntilExpiry,
   deriveLsStatus,
   deriveReviewState,
   findReviewEntry,
+  pickCertById,
   pickMiniAppView,
   reviewStateFor,
   serviceStatusFor,
@@ -524,5 +526,107 @@ describe('deriveDaysUntilExpiry', () => {
   it('returns null on non-finite numbers', () => {
     expect(deriveDaysUntilExpiry({ expireTs: Number.NaN }, now)).toBeNull();
     expect(deriveDaysUntilExpiry({ expireTs: Number.POSITIVE_INFINITY }, now)).toBeNull();
+  });
+});
+
+// `pickCertById` mirrors `app certs ls`'s id resolution (id || certId)
+// because the server has been ambivalent on field naming. Comparison is
+// string-coerced — a captured cert id like "42" must match the
+// number-typed `id: 42` and vice versa, otherwise `app certs show` would
+// silently say not-found on a cert that very much exists.
+describe('pickCertById', () => {
+  it('matches by `id` (string)', () => {
+    const certs = [{ id: 'abc', name: 'one' }];
+    expect(pickCertById(certs, 'abc')).toBe(certs[0]);
+  });
+
+  it('matches by `certId` fallback when `id` absent', () => {
+    const certs = [{ certId: 'xyz', name: 'one' }];
+    expect(pickCertById(certs, 'xyz')).toBe(certs[0]);
+  });
+
+  it('coerces number ids on either side', () => {
+    const certs = [{ id: 42, name: 'one' }];
+    expect(pickCertById(certs, '42')).toBe(certs[0]);
+  });
+
+  it('prefers `id` over `certId` when both are present', () => {
+    const certs = [{ id: 'primary', certId: 'secondary' }];
+    expect(pickCertById(certs, 'primary')).toBe(certs[0]);
+    expect(pickCertById(certs, 'secondary')).toBeNull();
+  });
+
+  it('returns null on miss', () => {
+    expect(pickCertById([{ id: 'a' }, { id: 'b' }], 'c')).toBeNull();
+  });
+
+  it('returns null on empty list', () => {
+    expect(pickCertById([], 'anything')).toBeNull();
+  });
+
+  it('returns null and does not throw on whitespace-only target', () => {
+    expect(pickCertById([{ id: 'a' }], '   ')).toBeNull();
+  });
+});
+
+// `augmentCertExpiry` accepts any of the three field shapes the server
+// has emitted across captures (`expireTs` millis, `expiresAt` ISO,
+// `validUntil` ISO) and is missing-field tolerant. Pinning the precedence
+// here so a refactor doesn't silently start preferring a stale field.
+describe('augmentCertExpiry', () => {
+  const now = Date.parse('2026-01-01T00:00:00Z');
+
+  it('reads `expireTs` (millis since epoch)', () => {
+    const ts = Date.parse('2026-01-11T00:00:00Z');
+    const r = augmentCertExpiry({ expireTs: ts }, now);
+    expect(r.expiresAtMs).toBe(ts);
+    expect(r.daysUntilExpiry).toBe(10);
+  });
+
+  it('falls back to `expiresAt` (ISO) when `expireTs` is missing', () => {
+    const r = augmentCertExpiry({ expiresAt: '2026-01-06T00:00:00Z' }, now);
+    expect(r.daysUntilExpiry).toBe(5);
+  });
+
+  it('falls back to `validUntil` (ISO) when neither is present', () => {
+    const r = augmentCertExpiry({ validUntil: '2026-02-01T00:00:00Z' }, now);
+    expect(r.daysUntilExpiry).toBe(31);
+  });
+
+  it('prefers `expireTs` over the ISO fields', () => {
+    const ts = Date.parse('2026-01-11T00:00:00Z');
+    const r = augmentCertExpiry(
+      { expireTs: ts, expiresAt: '2030-01-01T00:00:00Z', validUntil: '2031-01-01T00:00:00Z' },
+      now,
+    );
+    expect(r.expiresAtMs).toBe(ts);
+    expect(r.daysUntilExpiry).toBe(10);
+  });
+
+  it('preserves negative days for already-expired certs', () => {
+    const r = augmentCertExpiry({ expireTs: Date.parse('2025-12-25T00:00:00Z') }, now);
+    expect(r.daysUntilExpiry).toBe(-7);
+  });
+
+  it('treats expireTs: 0 as the Unix epoch, not as missing', () => {
+    // Number.isFinite(0) === true, so 0 must round-trip as a real
+    // (extremely-expired) timestamp rather than collapsing to "no expiry".
+    const r = augmentCertExpiry({ expireTs: 0 }, now);
+    expect(r.expiresAtMs).toBe(0);
+    expect(typeof r.daysUntilExpiry).toBe('number');
+    expect(r.daysUntilExpiry).toBeLessThan(0);
+  });
+
+  it('returns empty object when no expiry field is present', () => {
+    expect(augmentCertExpiry({ id: 'abc' }, now)).toEqual({});
+  });
+
+  it('ignores wrong-typed fields without crashing', () => {
+    expect(augmentCertExpiry({ expireTs: 'not-a-number' }, now)).toEqual({});
+    expect(augmentCertExpiry({ expiresAt: 12345 }, now)).toEqual({});
+  });
+
+  it('ignores unparseable ISO strings rather than NaN-propagating', () => {
+    expect(augmentCertExpiry({ expiresAt: 'definitely not a date' }, now)).toEqual({});
   });
 });
