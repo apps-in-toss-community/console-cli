@@ -608,6 +608,15 @@ describe('augmentCertExpiry', () => {
     expect(r.daysUntilExpiry).toBe(-7);
   });
 
+  it('treats expireTs: 0 as the Unix epoch, not as missing', () => {
+    // Number.isFinite(0) === true, so 0 must round-trip as a real
+    // (extremely-expired) timestamp rather than collapsing to "no expiry".
+    const r = augmentCertExpiry({ expireTs: 0 }, now);
+    expect(r.expiresAtMs).toBe(0);
+    expect(typeof r.daysUntilExpiry).toBe('number');
+    expect(r.daysUntilExpiry).toBeLessThan(0);
+  });
+
   it('returns empty object when no expiry field is present', () => {
     expect(augmentCertExpiry({ id: 'abc' }, now)).toEqual({});
   });

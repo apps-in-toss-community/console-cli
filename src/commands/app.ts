@@ -2195,7 +2195,8 @@ export function augmentCertExpiry(
 //     { ok: true, workspaceId, appId, cert,
 //       daysUntilExpiry?: number, expiresAtMs?: number }      exit 0
 //     { ok: false, reason: 'missing-cert-id' | 'not-found'
-//                        | 'invalid-id' | ... }               exit 2
+//                        | 'invalid-id' | 'missing-app-id'
+//                        | 'no-workspace-selected' }          exit 2
 //
 // Single-cert detail view. There is no dedicated detail endpoint on the
 // console (see comment above `pickCertById`); this is a list fetch +
@@ -2298,7 +2299,11 @@ const certsShowCommand = defineCommand({
       if (expiresAtIso) lines.push(`  expiresAt:   ${expiresAtIso}`);
       if (expiry.daysUntilExpiry !== undefined) {
         const d = expiry.daysUntilExpiry;
-        const suffix = d < 0 ? ` (expired ${-d} day(s) ago)` : ` (D-${d})`;
+        // d > 0 → D-N countdown; d === 0 → "expires today" (D-0 reads
+        // ambiguously as both "0 left" and "the countdown number"); d < 0 →
+        // already expired.
+        const suffix =
+          d > 0 ? ` (D-${d})` : d === 0 ? ' (expires today)' : ` (expired ${-d} day(s) ago)`;
         lines.push(`  daysUntilExpiry: ${d}${suffix}`);
       }
       if (status) lines.push(`  status:      ${status}`);
