@@ -436,8 +436,7 @@ export async function fetchConversionMetrics(
   return { metrics, cacheTime };
 }
 
-// mTLS cert API moved to ./certs.ts (split out 2026-05-09 — kept the path
-// quirk comment with the implementation rather than re-asserting it here).
+// mTLS cert API → src/api/certs.ts
 
 // --- Share rewards ---
 //

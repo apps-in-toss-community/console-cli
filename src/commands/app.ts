@@ -2109,12 +2109,18 @@ const certsLsCommand = defineCommand({
               : '-';
         const cn = typeof c.commonName === 'string' ? c.commonName : '-';
         const createdAt = typeof c.createdAt === 'string' ? c.createdAt : '';
+        // `expireTs` (ms epoch) is the canonical server field per
+        // docs/api/mini-app-misc.md; `expiresAt`/`validUntil` are tolerated
+        // for forward-compat. Render whichever is present so the column
+        // never blanks when only `expireTs` (the typical case) is returned.
         const expiresAt =
           typeof c.expiresAt === 'string'
             ? c.expiresAt
             : typeof c.validUntil === 'string'
               ? c.validUntil
-              : '';
+              : typeof c.expireTs === 'number' && Number.isFinite(c.expireTs)
+                ? new Date(c.expireTs).toISOString()
+                : '';
         process.stdout.write(
           `${id}\t${cn}\t${createdAt}\t${expiresAt}${expiryMarker(c.daysUntilExpiry)}\n`,
         );
