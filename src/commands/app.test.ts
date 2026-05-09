@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compareMiniAppViews,
+  deriveDaysUntilExpiry,
   deriveLsStatus,
   deriveReviewState,
   findReviewEntry,
@@ -483,5 +484,45 @@ describe('compareMiniAppViews', () => {
     const result = compareMiniAppViews(draft, current);
     expect(result.changed).toEqual([{ field: 'darkModeIconUri', draft: null, current: undefined }]);
     expect(result.unchangedCount).toBe(0);
+  });
+});
+
+describe('deriveDaysUntilExpiry', () => {
+  // Anchor `now` to a fixed point so the floor() boundaries are deterministic.
+  const now = Date.parse('2026-05-09T00:00:00Z');
+  const day = 86_400_000;
+
+  it('returns positive day count for future expiry (numeric ms epoch)', () => {
+    expect(deriveDaysUntilExpiry({ expireTs: now + 30 * day }, now)).toBe(30);
+  });
+
+  it('returns 0 for an expiry within the same day window', () => {
+    expect(deriveDaysUntilExpiry({ expireTs: now + day - 1 }, now)).toBe(0);
+  });
+
+  it('returns negative day count for past expiry (already expired)', () => {
+    expect(deriveDaysUntilExpiry({ expireTs: now - 5 * day }, now)).toBe(-5);
+  });
+
+  it('parses ISO string `expireTs` (some endpoints round-trip dates as strings)', () => {
+    const cert = { expireTs: '2026-06-08T00:00:00Z' }; // 30 days out
+    expect(deriveDaysUntilExpiry(cert, now)).toBe(30);
+  });
+
+  it('returns null when `expireTs` is missing', () => {
+    expect(deriveDaysUntilExpiry({}, now)).toBeNull();
+  });
+
+  it('returns null on garbage strings (no fallback to validUntil)', () => {
+    // Deliberate: cert page chunk only references `expireTs`. Guessing
+    // from `validUntil` would be making up data.
+    expect(
+      deriveDaysUntilExpiry({ expireTs: 'not-a-date', validUntil: '2027-04-01' }, now),
+    ).toBeNull();
+  });
+
+  it('returns null on non-finite numbers', () => {
+    expect(deriveDaysUntilExpiry({ expireTs: Number.NaN }, now)).toBeNull();
+    expect(deriveDaysUntilExpiry({ expireTs: Number.POSITIVE_INFINITY }, now)).toBeNull();
   });
 });

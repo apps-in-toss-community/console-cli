@@ -137,6 +137,45 @@ describe('aitcc --json subprocess contract', () => {
     }, 30_000);
   });
 
+  describe('app certs', () => {
+    // `app certs ls` reads the session before fetching certs, so a
+    // no-session run collapses to the auth-gate. We verify the framing
+    // (single JSON line + empty stderr) so a regression that prefixes
+    // the payload with the context header (which `--json` should
+    // suppress) is caught at the process boundary.
+    it('app certs ls --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(
+        ['app', 'certs', 'ls', '31146', '--json'],
+        dir,
+      );
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+      assertNoAnsi(stdout);
+    }, 30_000);
+
+    // `app certs ls` parses the positional id before reading the session,
+    // so an obviously-bad positional reaches the invalid-id branch even
+    // with no session — same shape as `app status xyz`.
+    it('app certs ls xyz --json emits invalid-id and exits 2', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(
+        ['app', 'certs', 'ls', 'xyz', '--json'],
+        dir,
+      );
+      expect(exitCode).toBe(2);
+      const payload = assertSingleJsonLine(stdout) as Record<string, unknown>;
+      expect(payload.ok).toBe(false);
+      expect(payload.reason).toBe('invalid-id');
+      expect(typeof payload.message).toBe('string');
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+  });
+
   describe('keys', () => {
     it('keys ls --json with no session emits authenticated:false (exit 10)', async () => {
       const dir = await xdg.fresh();

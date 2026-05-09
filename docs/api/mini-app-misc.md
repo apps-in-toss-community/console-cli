@@ -105,6 +105,8 @@ Response body: array of cert metadata.
 
 cert 페이지 chunk는 `id`/`name`/`expireTs`만 사용. 다른 field가 있어도 CLI가 신경 쓸 필요 없음.
 
+`aitcc app certs ls --json` 응답의 각 cert 객체에는 추가로 `daysUntilExpiry: number | null`이 붙는다. 이 필드는 **서버 응답이 아니라 CLI가 `expireTs`(ms epoch)와 `Date.now()`로 계산하는 client-augmented 필드** — `expireTs`가 없거나 파싱 실패면 `null`, 이미 만료된 cert는 음수. 같은 임계치(≤30일)로 text 모드의 `⚠ 만료 임박` 마커도 결정한다.
+
 ### Reports (사용자 신고) — 유일한 plural path
 
 | Method | Path | 용도 | 상태 |
