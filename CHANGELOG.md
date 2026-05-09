@@ -1,5 +1,37 @@
 # @ait-co/console-cli
 
+## 0.1.23
+
+### Patch Changes
+
+- 6eb27e7: Add `aitcc app init` to scaffold a well-formed `aitcc.yaml` interactively.
+  Required fields are validated against the same constraints `register`
+  enforces; optional fields are pre-laid as commented lines for later
+  edits. Workspace is selected from the live API list, and the resulting
+  file pins `workspaceId` so subsequent commands inherit the project
+  context without flags.
+- 190518a: `aitcc app ls`가 status 컬럼을 채워 출력합니다. 검수 중인 앱은 🔒 표시 +
+  JSON에 `status` (`under-review` / `approved-with-edits` / `approved` /
+  `in-service` / `rejected` / `not-submitted` / `unknown`), `locked`,
+  `lockReason` 필드.
+- 6e6622e: `aitcc app show`가 review lock 상태와 service status(`PREPARE`/`RUNNING`/...)를 같이 표시합니다. `--diff` 플래그로 draft와 current view를 한 번에 비교할 수 있습니다.
+- 5235833: `aitcc app status`가 update lock 상태를 명시적으로 surface합니다. JSON에 `locked`/`lockReason` 필드, plain mode에는 경고 줄을 추가했습니다. 권위 source는 `with-draft.success.approvalType === 'REVIEW'` — derived `state` (`approved-with-edits`/`under-review`) 만으로는 lock 해제 여부를 알 수 없습니다.
+- 566410c: `aitcc auth export` / `auth import` 추가. 로컬에서 잡은 console session을 portable blob으로 dump하고 `AITCC_SESSION` env로 복원해 단발성 CI 배포에 쓸 수 있습니다. env 모드에서는 `writeSession` / `clearSession`이 no-op이라 CI 호스트에 세션 파일이 만들어지지 않습니다. **세션 쿠키는 KR-only** (한국 외 IP에선 401/`errorCode: 4010`) — GHA-hosted runner는 작동하지 않습니다. 자세한 제약은 `docs/api/auth-session.md`.
+- 3f77571: `aitcc login` 첫 실행 시 자격 증명을 OS 키체인에 저장할지 묻는 onboarding 프롬프트를 추가하고, 사용자-facing 명령 `aitcc auth set` / `aitcc auth clear` / `aitcc auth status`를 노출한다. 프롬프트는 `--json`, 비-TTY, `--skip-onboarding`, 이미 자격 증명이 있는 경우엔 표시되지 않는다. `auth set` 비대화형 사용 시 `--password`는 `ps`/Task Manager에 노출되므로 `AITCC_PASSWORD` 환경 변수 사용을 권장하는 stderr 경고를 출력한다.
+- 684aee6: Add `src/auth/credentials.ts` library for persisting Toss Business email + password across the OS keychain (macOS `security`, Linux `secret-tool`, Windows PowerShell + CredWrite). `loadCredentials()` resolves from `AITCC_EMAIL`+`AITCC_PASSWORD` env first, then falls back to the keychain entry pointed to by `auth-state.json`. `saveCredentials()` is no-op (`status: 'unchanged'`) when the same email + password is already stored. Library only — no CLI surface yet; wiring into the form-fill login path lands in a follow-up PR.
+- 8c363ed: `aitcc login`이 headless 시도가 실패해 visible Chrome으로 fallback할 때, 첫 시도가 이미 소비한 시간을 사용자의 `--timeout` 예산에서 차감한다. 30초 minimum floor가 보장되어 짧은 timeout에서도 사용자가 폼을 채울 시간을 확보. 사용자가 `--timeout 30`으로 호출했는데 headless가 25초를 먹고 fallback해도 visible 창은 30초의 입력 시간을 받는다 (전체 명령은 요청한 timeout보다 약간 길게 실행될 수 있음).
+- d428d04: `aitcc login`이 저장된 자격 증명으로 headless 로그인을 시도하고, step-up 인증이 필요하거나 자격 증명이 없으면 기존 interactive 흐름으로 자동 fallback한다. `--interactive` 플래그로 강제 우회 가능. `--json` 출력에 `mode` (`headless` | `interactive`) 와 `stepUp` 필드 추가.
+- 0236784: `install.sh`가 `$HOME` unset/empty/missing 환경(일부 minimal Docker, CI)에서 `/tmp/aitcc-install`로 fallback하고, GitHub Release asset 업로드 race로 인한 404를 최대 30초 exponential-backoff(1s → 2s → 4s → 8s, 8s cap)로 재시도한다. 404 외의 status는 즉시 fail해 진짜 breakage를 mask하지 않으며, retry 후에도 SHA-256 검증은 항상 수행된다.
+- ab1b702: `--json` 계약을 subprocess 레벨에서 검증하는 vitest harness를 확장. built CLI를 spawn해 stdout이 단일-라인 JSON임을 자동 보증하고 stderr에 JSON이 새지 않는지 점검한다. workspace/whoami/app/logout/auth/--version/unknown-command 12개 케이스. 사용자에게 보이는 동작 변경은 없다.
+- 99594fa: `aitcc keys create --name <label> [--apps <slug,slug>]` / `aitcc keys revoke <id>` 추가. 발급 응답의 plaintext key는 stdout에 한 번만 surface되고 list endpoint는 이를 echo하지 않으므로 즉시 secret manager에 저장해야 합니다 (`aitcc keys create --json`을 keychain pipe에 직접 연결). `keys ls`도 confirmed shape(`{id, name, expireTs}`)에 맞춰 D-N expiry 컬럼을 추가했습니다. endpoint/payload 상세는 `docs/api/api-keys.md`.
+- 4880434: Recognize prefix-form `errorCode` values (`<domain>.<Reason>`, e.g. `miniApp.InvalidTitle`) emitted by `POST /workspaces/:wid/mini-app/review` alongside the legacy numeric codes. Known prefix codes are mapped to a one-line user action in `--json` and stderr output (raw `errorCode` is preserved); unknown prefix codes surface the dotted identifier so it can be looked up in `docs/api/_error-codes.md`. Numeric codes (`4046` / `4032` / `4010` / …) keep existing behaviour byte-for-byte. Discovered during sdk-example#39 dog-food.
+- efb9940: Add `aitcc.yaml` project context resolver: ancestor-walk loader (`findProjectContext`) and priority-chain resolver (`resolveAppContext`) that combines `--workspace`/`<appId>` flags, `AITCC_WORKSPACE`/`AITCC_APP` env vars, yaml fields, and the persisted session. No commands are wired to it yet — wiring lands in a follow-up PR.
+- 7e94d6b: Drop the `type=text` fallback from the headless login email-input picker. If a search box or other unrelated text input were rendered above the sign-in form, the previous fallback would have silently typed the email and password into it in plaintext. The picker now matches by `name` (`email`/`loginId`/`username`) and falls back only to `type=email`, which is semantically unambiguous.
+- 334f2fb: Best-effort 정리: `aitcc whoami`/`upgrade` 등의 update-check cache write 도중 SIGKILL/power-loss로 남을 수 있는 7일 이상 stale `.tmp` 파일을 다음 cache write 시 자동으로 청소합니다. 정상 동작에는 변화 없음.
+- 19cc987: Windows에서 `aitcc upgrade` 후 남은 `<exePath>.old` 파일을 다음 CLI 기동 시 best-effort로 정리합니다. POSIX에선 no-op, 실패는 silently swallow (이전 process가 아직 잡고 있을 수 있음 — 다음 기동 때 재시도). stdout/stderr 출력 없음.
+- 68895c5: `aitcc workspace terms`가 각 약관이 미동의일 때 어떤 명령이 막히는지 `blocks if missing: …` 한 줄 hint로 표시합니다. JSON에 `blocks` 필드 추가.
+- 1ded85b: `aitcc app register` now writes the returned `miniAppId` back into the resolved `aitcc.yaml`/`aitcc.json` after a successful submit, so follow-up commands like `app status` and `app deploy` resolve the same app without an explicit `--app`. YAML round-trips comments and key order; the write is a no-op when the file already pins the same id; `--dry-run` skips it; if no project file exists in the tree, a one-line stderr hint is printed instead of creating one.
+
 ## 0.1.22
 
 ### Patch Changes
