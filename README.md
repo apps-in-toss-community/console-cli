@@ -44,15 +44,27 @@ This is the path that `agent-plugin` uses when a project already has Node instal
 
 ```sh
 aitcc --version          # print the embedded version
-aitcc login              # launch a browser window, sign in there, and capture the session cookies
+aitcc login              # interactive: prompts email/password/save target, then signs in
+aitcc login --interactive   # force the visible-browser flow (skip headless)
 aitcc logout             # delete the local session file
-aitcc whoami             # show the currently logged-in user live from the console API
+aitcc logout --purge     # also delete saved keychain credentials (replaces `auth clear`)
+aitcc whoami             # show the currently logged-in user + credential source
 aitcc whoami --offline   # use the cached identity without hitting the API
 aitcc whoami --json      # machine-readable output for scripts and agents
 aitcc upgrade            # self-update to the latest GitHub Release (binary installs only)
 aitcc upgrade --dry-run  # check for an update without downloading or replacing
 aitcc upgrade --force    # reinstall the latest release even if versions match
 ```
+
+For non-interactive use (CI, scripts), pipe the password instead of typing it:
+
+```sh
+printf '%s' "$AITCC_PASSWORD" | aitcc login --email you@example.com --password-stdin --json
+# or simply export both env vars and let the CLI pick them up:
+AITCC_EMAIL=you@example.com AITCC_PASSWORD=… aitcc login --json
+```
+
+Add `--save keychain` to persist the credentials so the next `aitcc login` runs without prompting.
 
 `aitcc upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
@@ -95,7 +107,9 @@ aitcc app status         # works with no flags — context comes from aitcc.yaml
 
 ### Login details
 
-`aitcc login` launches a Chrome-family browser via the Chrome DevTools Protocol, navigates it to the Apps in Toss developer console sign-in URL, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
+`aitcc login` resolves credentials from (in order) explicit `--email` + `--password` / `--password-stdin` flags, the `AITCC_EMAIL` + `AITCC_PASSWORD` environment, the OS keychain (saved by a prior `--save keychain`), or — on a TTY — an interactive prompt that asks for both fields plus where to save them. It then launches a Chrome-family browser via the Chrome DevTools Protocol, drives the sign-in headlessly when credentials are available, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
+
+Pass `--interactive` to force the visible-browser flow even when credentials are configured (useful for switching accounts or working around step-up auth). The legacy `aitcc auth set` / `auth clear` / `auth status` commands still work but emit a deprecation warning — prefer `aitcc login` (interactive prompt offers a save option), `aitcc logout --purge`, and `aitcc whoami` instead. They will be removed in 1.0.
 
 The CLI looks for Chrome in the standard OS install locations (Google Chrome, Chromium, Microsoft Edge). Override the executable with `AITCC_BROWSER=/path/to/chrome` if your install is elsewhere; override the sign-in URL with `AITCC_OAUTH_URL` if you need to point at a staging environment. `--timeout <seconds>` controls how long the CLI will wait for sign-in to finish (default 300s).
 

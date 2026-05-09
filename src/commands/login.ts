@@ -1,4 +1,4 @@
-import { confirm, password as passwordPrompt } from '@inquirer/prompts';
+import { input, password as passwordPrompt, select } from '@inquirer/prompts';
 import { defineCommand } from 'citty';
 import { type FetchLike, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
@@ -28,21 +28,22 @@ import { type Session, writeSession } from '../session.js';
 
 // Login flow (replaces the prior OAuth-callback-server scaffold):
 //
-//   1. Launch a Chrome-family browser with an isolated user-data-dir,
-//      pointed at the Toss Business sign-in URL that redirects into the
-//      Apps in Toss console after authentication.
-//   2. Watch main-frame navigations over CDP. Once the URL lands on the
-//      console's post-login workspace page, we know the auth cookies have
-//      been set (HttpOnly, so JS can't see them — CDP can).
-//   3. Dump all cookies via `Network.getAllCookies`, resolve the member
-//      user-info from the console API to capture a stable identity, and
-//      persist `{ user, cookies, capturedAt }` at `$XDG_CONFIG_HOME/
-//      aitcc/session.json` (0600).
-//   4. Dispose the Chrome process and wipe the ephemeral user-data-dir.
-//
-// The CDP-discovered redirect URL (`https://apps-in-toss.toss.im/workspace`
-// with optional `?code=...&state=...` auth-code tail) is the production
-// redirect configured on the client_id. We never need a localhost callback.
+//   1. Resolve credentials in priority order — explicit --email/--password*
+//      flags > AITCC_EMAIL/AITCC_PASSWORD env > OS keychain > interactive
+//      prompt (TTY) > error (non-TTY). Optionally persist to the keychain
+//      via the unified --save flag (or by selecting "keychain" in the
+//      interactive prompt) so the next login runs without prompting.
+//   2. Launch a Chrome-family browser with an isolated user-data-dir.
+//      Headless when we have credentials and the user didn't request the
+//      visible flow; visible (`--interactive`) when they did or when no
+//      credentials were available.
+//   3. Watch main-frame navigations over CDP. Once the URL lands on the
+//      console's post-login workspace page, the auth cookies have been set
+//      (HttpOnly, so JS can't see them — CDP can).
+//   4. Dump all cookies via `Network.getAllCookies`, resolve the member
+//      user-info from the console API, and persist `{ user, cookies,
+//      capturedAt }` at `$XDG_CONFIG_HOME/aitcc/session.json` (0600).
+//   5. Dispose the Chrome process and wipe the ephemeral user-data-dir.
 
 const DEFAULT_AUTHORIZE_URL =
   'https://business.toss.im/account/sign-in' +
@@ -134,23 +135,71 @@ export function chooseLoginMode(input: {
 // has reached the workspace page — both paths converge there.
 export type LoginMode = 'interactive' | 'headless';
 
+export type SaveTarget = 'keychain' | 'none';
+
 export interface LoginDeps {
   // DI seam for tests and for keeping the CLI entrypoint as the only
   // module that imports `loadCredentials` directly. `null` means "no
   // credentials configured, take the interactive path".
   readonly getCredentials?: () => Promise<CredentialsSource | null>;
-  // DI seam for the onboarding prompt's keychain write. Tests can
-  // substitute an in-memory backend; production wires `saveCredentials`.
+  // DI seam for the keychain write. Tests can substitute an in-memory
+  // backend; production wires `saveCredentials`.
   readonly saveCredentials?: (
     email: string,
     password: string,
   ) => Promise<{ status: SaveCredentialsStatus }>;
+  // DI seam for stdin reads (`--password-stdin`). Tests inject the
+  // expected password without having to feed a real stream.
+  readonly readStdin?: () => Promise<string>;
+  // DI seam for prompts so tests don't have to run the inquirer renderer.
+  readonly prompts?: PromptDeps;
 }
+
+export interface PromptDeps {
+  readonly email: (defaultValue?: string) => Promise<string>;
+  readonly password: () => Promise<string>;
+  readonly saveTarget: () => Promise<SaveTarget>;
+}
+
+const defaultPromptDeps: PromptDeps = {
+  email: (defaultValue) =>
+    input({
+      message: 'Email:',
+      ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+      validate: (raw) => {
+        const trimmed = raw.trim();
+        if (trimmed.length === 0) return 'email is required';
+        if (!trimmed.includes('@')) return 'must contain "@"';
+        return true;
+      },
+    }).then((s) => s.trim()),
+  password: () =>
+    passwordPrompt({
+      message: 'Password:',
+      mask: true,
+      validate: (raw) => (raw.length > 0 ? true : 'password is required'),
+    }),
+  saveTarget: () =>
+    select<SaveTarget>({
+      message: 'Where would you like to save the credentials?',
+      default: 'keychain',
+      choices: [
+        {
+          name: 'OS keychain (recommended) — next login runs headlessly',
+          value: 'keychain',
+        },
+        {
+          name: 'Do not save — one-shot. (Tip: AITCC_EMAIL/AITCC_PASSWORD env for CI.)',
+          value: 'none',
+        },
+      ],
+    }),
+};
 
 export const loginCommand = defineCommand({
   meta: {
     name: 'login',
-    description: 'Open a browser to sign in, then capture the console session cookies.',
+    description: 'Sign in to the Apps in Toss console and capture the session cookies.',
   },
   args: {
     json: {
@@ -168,9 +217,28 @@ export const loginCommand = defineCommand({
       description: 'Force the visible-browser flow even if credentials are configured.',
       default: false,
     },
+    email: {
+      type: 'string',
+      description: 'Email (skip prompt; required for non-interactive use).',
+    },
+    password: {
+      type: 'string',
+      description:
+        'Password (skip prompt; visible in `ps`/Task Manager — prefer --password-stdin or AITCC_PASSWORD env).',
+    },
+    'password-stdin': {
+      type: 'boolean',
+      description: 'Read the password from stdin (recommended for non-interactive use).',
+      default: false,
+    },
+    save: {
+      type: 'string',
+      description:
+        'Where to persist credentials when --email/--password* are passed: "keychain" or "none" (default).',
+    },
     'skip-onboarding': {
       type: 'boolean',
-      description: 'Skip the post-login prompt to save credentials to the OS keychain.',
+      description: 'Deprecated no-op; kept so existing scripts do not break.',
       default: false,
     },
   },
@@ -180,7 +248,10 @@ export const loginCommand = defineCommand({
         json: args.json,
         timeout: args.timeout,
         interactive: args.interactive,
-        skipOnboarding: args['skip-onboarding'],
+        email: typeof args.email === 'string' ? args.email : undefined,
+        password: typeof args.password === 'string' ? args.password : undefined,
+        passwordStdin: args['password-stdin'],
+        save: typeof args.save === 'string' ? args.save : undefined,
       },
       { getCredentials: loadCredentials, saveCredentials },
     );
@@ -191,8 +262,34 @@ export interface LoginCommandArgs {
   readonly json: boolean;
   readonly timeout: string;
   readonly interactive: boolean;
-  readonly skipOnboarding: boolean;
+  readonly email?: string | undefined;
+  readonly password?: string | undefined;
+  readonly passwordStdin: boolean;
+  readonly save?: string | undefined;
 }
+
+interface ResolvedCredentials {
+  readonly source: 'argv' | 'env' | 'keychain' | 'prompt';
+  readonly email: string;
+  readonly password: string;
+}
+
+interface ResolveCredentialsOk {
+  readonly kind: 'ok';
+  readonly credentials: ResolvedCredentials | null;
+  // 'request' means the user (via --save keychain or interactive prompt)
+  // asked us to persist credentials before login. 'none' means do not save.
+  readonly saveTarget: SaveTarget;
+}
+
+interface ResolveCredentialsError {
+  readonly kind: 'error';
+  readonly reason: string;
+  readonly message: string;
+  readonly exitCode: number;
+}
+
+type ResolveCredentialsResult = ResolveCredentialsOk | ResolveCredentialsError;
 
 export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): Promise<never> {
   const emitError = (payload: Record<string, unknown>, human: string) => {
@@ -238,27 +335,57 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
     process.stderr.write(`Using custom authorize URL from AITCC_OAUTH_URL: ${authorizeUrl}\n`);
   }
 
-  // Decide which mode to run in. `--interactive` always forces the
-  // visible-browser path. Otherwise we ask `loadCredentials()` and use
-  // them if present.
-  let credentials: CredentialsSource | null = null;
-  if (!args.interactive) {
-    const getCredentials = deps.getCredentials;
-    if (getCredentials) {
-      credentials = await getCredentials().catch((err: Error) => {
-        // A credential backend hiccup shouldn't kill `aitcc login` —
-        // log a one-line diagnostic and fall back to interactive.
-        process.stderr.write(
-          `Credential lookup failed (${err.message}); using interactive login.\n`,
-        );
-        return null;
-      });
+  // Resolve credentials before launching anything. The unified surface:
+  // argv flags > env > keychain > interactive prompt > error (non-TTY).
+  const resolved = await resolveCredentialsForLogin(args, deps);
+  if (resolved.kind === 'error') {
+    emitError({ reason: resolved.reason, message: resolved.message }, resolved.message);
+    return exitAfterFlush(resolved.exitCode);
+  }
+
+  // Persist credentials BEFORE attempting login when the user asked us to.
+  // Saving up-front means a successful save followed by a failed login still
+  // leaves the keychain in the user-intended state (so they can re-run
+  // `aitcc login` without re-prompting). Save failure with an explicit
+  // `--save keychain` is fatal — silently downgrading to "session-only" would
+  // be the opposite of the user's request.
+  let saved: SaveCredentialsStatus | 'skipped' = 'skipped';
+  if (resolved.saveTarget === 'keychain' && resolved.credentials !== null) {
+    const save = deps.saveCredentials;
+    if (!save) {
+      emitError(
+        { reason: 'save-unavailable', message: 'no save backend configured' },
+        'Cannot save credentials: no backend configured.',
+      );
+      return exitAfterFlush(ExitCode.Generic);
+    }
+    try {
+      const result = await save(resolved.credentials.email, resolved.credentials.password);
+      saved = result.status;
+      if (!args.json) {
+        if (result.status === 'unchanged') {
+          process.stderr.write('Credentials already saved (no change).\n');
+        } else {
+          process.stderr.write(
+            `Credentials saved to OS keychain (${resolved.credentials.email}).\n`,
+          );
+        }
+      }
+    } catch (err) {
+      const message = (err as Error).message;
+      emitError(
+        { reason: 'keychain-save-failed', message },
+        `Failed to save credentials to the OS keychain: ${message}\n` +
+          'On Linux, install libsecret (`secret-tool`) and retry. ' +
+          'Re-run with `--save none` to skip persistence.',
+      );
+      return exitAfterFlush(ExitCode.Usage);
     }
   }
 
   const initialMode: LoginMode = chooseLoginMode({
     interactiveFlag: args.interactive,
-    hasCredentials: credentials !== null,
+    hasCredentials: resolved.credentials !== null,
   });
 
   // Cap Chrome's own startup window at half the overall --timeout, with
@@ -276,9 +403,9 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
     endpointTimeoutMs,
     authorizeUrl,
     mode: initialMode,
-    credentials,
+    credentials: resolved.credentials,
+    saved,
     emitError,
-    deps,
   });
 
   if (result.status === 'fallback-to-interactive') {
@@ -296,8 +423,8 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
       authorizeUrl,
       mode: 'interactive',
       credentials: null,
+      saved,
       emitError,
-      deps,
     });
     if (second.status === 'exit') return exitAfterFlush(second.code);
     // A fallback returning fallback again is a programmer error — we
@@ -311,15 +438,267 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
   return exitAfterFlush(result.code);
 }
 
+/**
+ * Resolve credentials and the requested save target for `aitcc login`.
+ * Pure-ish: only side-effect is reading stdin via `deps.readStdin` (when
+ * `--password-stdin` is set) and prompting via `deps.prompts` (when TTY).
+ */
+export async function resolveCredentialsForLogin(
+  args: LoginCommandArgs,
+  deps: LoginDeps,
+  opts: {
+    readonly env?: NodeJS.ProcessEnv;
+    readonly stdoutIsTTY?: boolean;
+    readonly stdinIsTTY?: boolean;
+  } = {},
+): Promise<ResolveCredentialsResult> {
+  const env = opts.env ?? process.env;
+  const stdoutIsTTY = opts.stdoutIsTTY ?? Boolean(process.stdout.isTTY);
+  const stdinIsTTY = opts.stdinIsTTY ?? Boolean(process.stdin.isTTY);
+  const interactiveTty = stdoutIsTTY && stdinIsTTY && !args.json;
+
+  // --password and --password-stdin are mutually exclusive: both ask us to
+  // pick a different source for the same field.
+  if (args.password !== undefined && args.passwordStdin) {
+    return {
+      kind: 'error',
+      reason: 'conflicting-password-source',
+      message: '--password and --password-stdin cannot be used together.',
+      exitCode: ExitCode.Usage,
+    };
+  }
+
+  // --interactive forces the visible-browser flow where the human types
+  // credentials directly into the page. Combining it with any credential
+  // source (--email/--password/--password-stdin) or with --save would
+  // silently drop the user's stated intent — the credentials would never
+  // be used to drive form-fill, and the save block (which guards on
+  // `credentials !== null`) would never run. Reject the combination up
+  // front so the user notices instead of seeing a no-op.
+  if (
+    args.interactive &&
+    (args.email !== undefined ||
+      args.password !== undefined ||
+      args.passwordStdin ||
+      args.save !== undefined)
+  ) {
+    return {
+      kind: 'error',
+      reason: 'conflicting-interactive-flags',
+      message:
+        '--interactive cannot be combined with --email/--password/--password-stdin/--save. ' +
+        'Drop --interactive to use credentials, or drop the credential flags to type in the browser.',
+      exitCode: ExitCode.Usage,
+    };
+  }
+
+  // Validate --save value early — it has to be defined here so we can
+  // emit a clean error before we touch the network or any prompt.
+  let saveTarget: SaveTarget | undefined;
+  if (args.save !== undefined) {
+    if (args.save !== 'keychain' && args.save !== 'none') {
+      return {
+        kind: 'error',
+        reason: 'invalid-save',
+        message: `--save must be "keychain" or "none" (got "${args.save}").`,
+        exitCode: ExitCode.Usage,
+      };
+    }
+    saveTarget = args.save;
+  }
+
+  // 1) Explicit --email + (--password | --password-stdin): full argv mode.
+  if (args.email !== undefined || args.password !== undefined || args.passwordStdin) {
+    if (args.email === undefined || args.email.trim().length === 0) {
+      return {
+        kind: 'error',
+        reason: 'missing-email',
+        message: '--email is required when --password / --password-stdin is passed.',
+        exitCode: ExitCode.Usage,
+      };
+    }
+    if (!args.email.includes('@')) {
+      return {
+        kind: 'error',
+        reason: 'invalid-email',
+        message: `Invalid email: ${args.email}`,
+        exitCode: ExitCode.Usage,
+      };
+    }
+
+    let password: string;
+    if (args.passwordStdin) {
+      const reader = deps.readStdin ?? readStdinAll;
+      const raw = await reader();
+      password = stripTrailingNewline(raw);
+      if (password.length === 0) {
+        return {
+          kind: 'error',
+          reason: 'invalid-password',
+          message: '--password-stdin received an empty password on stdin.',
+          exitCode: ExitCode.Usage,
+        };
+      }
+    } else if (args.password !== undefined) {
+      // Loud, single warning: argv passwords leak into `ps`/Task Manager.
+      // Mirrors the warning `auth set` used to emit so existing users see
+      // the same message.
+      process.stderr.write(
+        'Warning: --password on argv is visible in `ps`/Task Manager. ' +
+          'Prefer --password-stdin or the AITCC_PASSWORD environment variable.\n',
+      );
+      password = args.password;
+      if (password.length === 0) {
+        return {
+          kind: 'error',
+          reason: 'invalid-password',
+          message: '--password value is empty.',
+          exitCode: ExitCode.Usage,
+        };
+      }
+    } else {
+      // --email passed but no password source. We could prompt in TTY,
+      // but a half-specified non-interactive call is more often a CI
+      // typo than a feature; refuse to cover the failure mode.
+      return {
+        kind: 'error',
+        reason: 'missing-password',
+        message:
+          '--email passed without a password. Add --password-stdin (recommended) or --password.',
+        exitCode: ExitCode.Usage,
+      };
+    }
+
+    return {
+      kind: 'ok',
+      credentials: { source: 'argv', email: args.email.trim(), password },
+      saveTarget: saveTarget ?? 'none',
+    };
+  }
+
+  // --interactive forces the visible-browser flow regardless of whether
+  // credentials are configured. We still surface --save as user intent
+  // for any subsequent re-run, but we don't drive form-fill ourselves.
+  if (args.interactive) {
+    return { kind: 'ok', credentials: null, saveTarget: saveTarget ?? 'none' };
+  }
+
+  // 2) AITCC_EMAIL + AITCC_PASSWORD env (CI single-shot).
+  if (env.AITCC_EMAIL && env.AITCC_PASSWORD) {
+    return {
+      kind: 'ok',
+      credentials: { source: 'env', email: env.AITCC_EMAIL, password: env.AITCC_PASSWORD },
+      // Env credentials are intentionally ephemeral; --save has to be
+      // explicit to persist them.
+      saveTarget: saveTarget ?? 'none',
+    };
+  }
+
+  // 3) OS keychain — auth-state pointer + keychain entry.
+  const getCredentials = deps.getCredentials;
+  if (getCredentials) {
+    const fromStore = await getCredentials().catch((err: Error) => {
+      // A credential backend hiccup shouldn't kill `aitcc login` — log a
+      // one-line diagnostic and fall through to the interactive prompt.
+      process.stderr.write(`Credential lookup failed (${err.message}); ignoring.\n`);
+      return null;
+    });
+    if (fromStore) {
+      // `loadCredentials` already prefers env over keychain, so reaching
+      // this branch means the env path above didn't fire — this is the
+      // keychain entry. Emit a one-line stderr breadcrumb so the user
+      // knows where the headless attempt is getting its credentials from.
+      if (!args.json) {
+        process.stderr.write(
+          `Using credentials from OS keychain for ${fromStore.email}. ` +
+            'Pass --interactive to type a different account.\n',
+        );
+      }
+      return {
+        kind: 'ok',
+        credentials: {
+          source: fromStore.kind,
+          email: fromStore.email,
+          password: fromStore.password,
+        },
+        // Already stored — no need to re-save unless the user explicitly
+        // asked.
+        saveTarget: saveTarget ?? 'none',
+      };
+    }
+  }
+
+  // 4) Interactive prompt (TTY only). This is the new "first-run" path:
+  // ask for email/password and the save target in one sequence, then run
+  // the headless flow with the captured credentials.
+  if (interactiveTty) {
+    const prompts = deps.prompts ?? defaultPromptDeps;
+    let email: string;
+    let password: string;
+    try {
+      email = await prompts.email();
+      password = await prompts.password();
+    } catch (err) {
+      if (isPromptCancelled(err)) {
+        return {
+          kind: 'error',
+          reason: 'aborted',
+          message: 'Aborted.',
+          exitCode: ExitCode.Usage,
+        };
+      }
+      throw err;
+    }
+
+    let promptedSave: SaveTarget;
+    if (saveTarget !== undefined) {
+      // CLI flag pre-empts the prompt — useful when the user knows the
+      // answer in advance and doesn't want a third question.
+      promptedSave = saveTarget;
+    } else {
+      try {
+        promptedSave = await prompts.saveTarget();
+      } catch (err) {
+        if (isPromptCancelled(err)) {
+          return {
+            kind: 'error',
+            reason: 'aborted',
+            message: 'Aborted.',
+            exitCode: ExitCode.Usage,
+          };
+        }
+        throw err;
+      }
+    }
+
+    return {
+      kind: 'ok',
+      credentials: { source: 'prompt', email, password },
+      saveTarget: promptedSave,
+    };
+  }
+
+  // 5) Non-TTY with no credentials: refuse and tell the operator how to
+  // make the call non-interactive.
+  return {
+    kind: 'error',
+    reason: 'interactive-required',
+    message:
+      'No credentials configured and stdin is not a TTY. ' +
+      'Pass --email + --password-stdin (or set AITCC_EMAIL + AITCC_PASSWORD).',
+    exitCode: ExitCode.Usage,
+  };
+}
+
 interface AttemptOptions {
   readonly args: LoginCommandArgs;
   readonly timeoutMs: number;
   readonly endpointTimeoutMs: number;
   readonly authorizeUrl: string;
   readonly mode: LoginMode;
-  readonly credentials: CredentialsSource | null;
+  readonly credentials: ResolvedCredentials | null;
+  readonly saved: SaveCredentialsStatus | 'skipped';
   readonly emitError: (payload: Record<string, unknown>, human: string) => void;
-  readonly deps: LoginDeps;
 }
 
 type AttemptResult =
@@ -327,7 +706,7 @@ type AttemptResult =
   | { readonly status: 'fallback-to-interactive'; readonly message: string };
 
 async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
-  const { args, timeoutMs, endpointTimeoutMs, authorizeUrl, mode, credentials, emitError, deps } =
+  const { args, timeoutMs, endpointTimeoutMs, authorizeUrl, mode, credentials, saved, emitError } =
     opts;
   const headless = mode === 'headless';
 
@@ -360,8 +739,8 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
       'Opened a browser window — complete the sign-in there. The CLI will capture the session automatically.\n',
     );
   } else {
-    const source = credentials?.kind === 'env' ? 'env' : 'keychain';
-    process.stderr.write(`Signing in headlessly with credentials from ${source}…\n`);
+    const sourceLabel = credentials?.source ?? 'configured store';
+    process.stderr.write(`Signing in headlessly with credentials from ${sourceLabel}…\n`);
   }
 
   // Resource disposal must happen BEFORE `exitAfterFlush` is called:
@@ -535,6 +914,8 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
         capturedAt: session.capturedAt,
         cookieCount: cookies.length,
         mode,
+        credentialSource: credentials?.source ?? 'browser',
+        saved,
         stepUp,
       })}\n`,
     );
@@ -542,89 +923,34 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
     process.stdout.write(`Logged in as ${user.name} <${user.email}>\n`);
   }
 
-  // Dispose Chrome BEFORE running the onboarding prompt — the user is
-  // about to type a password into the terminal and shouldn't be
-  // distracted by a Chrome window still hanging around.
   await disposeAll();
-
-  // Onboarding only runs after a successful interactive login on the
-  // first attempt where no credentials are configured. Headless logins
-  // already have credentials by definition; --json / non-TTY callers
-  // are scripted; --skip-onboarding is the explicit opt-out.
-  if (
-    mode === 'interactive' &&
-    credentials === null &&
-    !args.json &&
-    !args.skipOnboarding &&
-    process.stdout.isTTY &&
-    process.stdin.isTTY &&
-    deps.saveCredentials
-  ) {
-    await runOnboardingPrompt(user.email, deps.saveCredentials);
-  }
-
   return { status: 'exit', code: ExitCode.Ok };
 }
 
-/**
- * Post-login prompt that offers to persist the user's email + password
- * to the OS keychain so subsequent `aitcc login` runs can take the
- * headless form-fill path. Failures are non-fatal: we already wrote a
- * valid session, so a keychain hiccup just means the next login will
- * fall back to interactive — exactly the same UX as before.
- */
-export async function runOnboardingPrompt(
-  email: string,
-  save: (email: string, password: string) => Promise<{ status: SaveCredentialsStatus }>,
-): Promise<void> {
-  process.stdout.write('\n');
-  process.stdout.write(
-    'Would you like to save your password to the OS keychain so the next ' +
-      '`aitcc login` runs headlessly?\n',
-  );
-  let agreed: boolean;
-  try {
-    agreed = await confirm({
-      message: 'Save credentials?',
-      default: true,
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === 'ExitPromptError') {
-      // User Ctrl-C'd the prompt — silent skip, the session is still good.
-      return;
-    }
-    process.stderr.write(`Onboarding prompt failed: ${(err as Error).message}\n`);
-    return;
+async function readStdinAll(): Promise<string> {
+  if (process.stdin.isTTY) {
+    // Reading from a TTY would block waiting for the user to type EOF —
+    // a CI typo (`--password-stdin` without a pipe) shouldn't hang.
+    throw new Error('--password-stdin requires stdin to be a pipe, not a TTY.');
   }
-  if (!agreed) return;
+  process.stdin.setEncoding('utf8');
+  let buf = '';
+  for await (const chunk of process.stdin) {
+    buf += chunk;
+  }
+  return buf;
+}
 
-  let password: string;
-  try {
-    password = await passwordPrompt({
-      message: 'Password:',
-      mask: true,
-      validate: (raw) => (raw.length > 0 ? true : 'password is required'),
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === 'ExitPromptError') {
-      return;
-    }
-    process.stderr.write(`Could not read password: ${(err as Error).message}\n`);
-    return;
-  }
+function stripTrailingNewline(s: string): string {
+  return s.replace(/\r?\n$/, '');
+}
 
-  try {
-    await save(email, password);
-    process.stdout.write('Saved. Next `aitcc login` will run headlessly.\n');
-  } catch (err) {
-    // Don't surface the password or stack — just the message. The
-    // session was already written, so login itself succeeded; this is a
-    // best-effort enhancement and the user can retry via `aitcc auth set`.
-    process.stderr.write(
-      `Could not save credentials: ${(err as Error).message}. ` +
-        'You can retry later with `aitcc auth set`.\n',
-    );
-  }
+// Mirrors the helper in app-init.ts / auth.ts — `@inquirer/prompts` throws an
+// `ExitPromptError` (name only, the class isn't exported from the top-level
+// package) when the user hits Ctrl-C. We don't want to surface that as a
+// stack trace.
+function isPromptCancelled(err: unknown): boolean {
+  return err instanceof Error && err.name === 'ExitPromptError';
 }
 
 export async function waitForLanding(

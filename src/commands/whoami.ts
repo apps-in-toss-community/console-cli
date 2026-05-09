@@ -1,10 +1,34 @@
 import { defineCommand } from 'citty';
 import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
+import { getActiveCredentialEmail } from '../auth/credentials.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, sessionPathForDiagnostics } from '../session.js';
 import { maybeCheckForUpdate } from '../update-check.js';
+
+// Resolve the credential source label without ever fetching the password —
+// `whoami` should never trigger a Touch ID / libsecret prompt. Returns
+// `null` when nothing is configured so the JSON shape can stay compact.
+async function describeCredentialSource(): Promise<{
+  source: 'env' | 'keychain' | 'none';
+  email: string | null;
+}> {
+  const active = await getActiveCredentialEmail().catch(() => null);
+  if (!active) return { source: 'none', email: null };
+  return { source: active.kind, email: active.email };
+}
+
+function formatCredentials(cred: {
+  source: 'env' | 'keychain' | 'none';
+  email: string | null;
+}): string {
+  if (cred.source === 'none') return 'none (run `aitcc login` to save)';
+  if (cred.source === 'env') {
+    return `env (AITCC_EMAIL${cred.email ? ` = ${cred.email}` : ''})`;
+  }
+  return `keychain${cred.email ? ` (${cred.email})` : ''}`;
+}
 
 // --json contract (consumed by agent-plugin):
 //
@@ -63,13 +87,22 @@ export const whoamiCommand = defineCommand({
   },
   async run({ args }) {
     const session = await readSession();
+    const cred = await describeCredentialSource();
 
     if (!session) {
       if (args.json) {
-        process.stdout.write(`${JSON.stringify({ ok: true, authenticated: false })}\n`);
+        process.stdout.write(
+          `${JSON.stringify({
+            ok: true,
+            authenticated: false,
+            credentialSource: cred.source,
+            ...(cred.email ? { credentialEmail: cred.email } : {}),
+          })}\n`,
+        );
       } else {
         process.stderr.write('Not logged in. Run `aitcc login` to start a session.\n');
         process.stderr.write(`Session file checked: ${sessionPathForDiagnostics()}\n`);
+        process.stderr.write(`Credentials: ${formatCredentials(cred)}\n`);
       }
       return exitAfterFlush(ExitCode.NotAuthenticated);
     }
@@ -83,6 +116,8 @@ export const whoamiCommand = defineCommand({
             source: 'cache',
             user: session.user,
             capturedAt: session.capturedAt,
+            credentialSource: cred.source,
+            ...(cred.email ? { credentialEmail: cred.email } : {}),
           })}\n`,
         );
         return exitAfterFlush(ExitCode.Ok);
@@ -91,6 +126,7 @@ export const whoamiCommand = defineCommand({
         ? `${session.user.displayName} <${session.user.email}>`
         : session.user.email;
       process.stdout.write(`Logged in as ${label} (cached)\n`);
+      process.stdout.write(`Credentials: ${formatCredentials(cred)}\n`);
       process.stdout.write(`Session captured: ${session.capturedAt}\n`);
       await runBackgroundUpdateCheck(args.json);
       return exitAfterFlush(ExitCode.Ok);
@@ -117,11 +153,14 @@ export const whoamiCommand = defineCommand({
               role: w.role,
             })),
             capturedAt: session.capturedAt,
+            credentialSource: cred.source,
+            ...(cred.email ? { credentialEmail: cred.email } : {}),
           })}\n`,
         );
         return exitAfterFlush(ExitCode.Ok);
       }
       process.stdout.write(`Logged in as ${info.name} <${info.email}> (${info.role})\n`);
+      process.stdout.write(`Credentials: ${formatCredentials(cred)}\n`);
       if (info.workspaces.length > 0) {
         process.stdout.write('Workspaces:\n');
         for (const w of info.workspaces) {
@@ -139,10 +178,13 @@ export const whoamiCommand = defineCommand({
               authenticated: false,
               reason: 'session-expired',
               errorCode: err.errorCode,
+              credentialSource: cred.source,
+              ...(cred.email ? { credentialEmail: cred.email } : {}),
             })}\n`,
           );
         } else {
           process.stderr.write('Session is no longer valid. Run `aitcc login` again.\n');
+          process.stderr.write(`Credentials: ${formatCredentials(cred)}\n`);
         }
         return exitAfterFlush(ExitCode.NotAuthenticated);
       }

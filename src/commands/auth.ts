@@ -18,6 +18,14 @@ import { authImportCommand } from './auth-import.js';
 // dispatch, and idempotent writes; this file is the thin CLI shell that
 // turns those primitives into `set` / `clear` / `status` subcommands.
 //
+// **Deprecation (0.1.25)**: the three subcommands here have been folded
+// into `aitcc login` (interactive prompt) / `aitcc logout --purge` /
+// `aitcc whoami`. Each entry point emits a one-line stderr warning
+// pointing at the new surface but otherwise keeps its existing behavior
+// and exit codes so users on the old surface aren't broken. Removal is
+// scheduled for 1.0. `auth export` / `auth import` are NOT deprecated —
+// they remain the only path for portable session blobs.
+//
 // --json contract (consumed by agent-plugin):
 //
 //   auth set:
@@ -36,6 +44,17 @@ import { authImportCommand } from './auth-import.js';
 // state pointer file (`auth-state.json`) only carries the email, and
 // the keychain backend never echoes the password to its own logs.
 
+// One-line deprecation banner — emitted to stderr regardless of --json so
+// machine consumers don't see it in their parsed payload but the human
+// running the command in a terminal sees it. Plain prefix ("warning:")
+// matches the convention used elsewhere in the CLI (session migration,
+// AITCC_SESSION fallback, ...).
+function emitDeprecation(replacement: string): void {
+  process.stderr.write(
+    `warning: this command is deprecated and will be removed in 1.0; ${replacement}\n`,
+  );
+}
+
 // --- auth set ---
 
 export interface AuthSetArgs {
@@ -50,6 +69,7 @@ export interface AuthDeps {
 }
 
 export async function runAuthSet(args: AuthSetArgs, deps: AuthDeps = {}): Promise<void> {
+  emitDeprecation('use `aitcc login` (interactive prompt offers a save option).');
   const env = deps.env ?? process.env;
 
   // Resolve email + password from (in order): explicit flags, env vars,
@@ -157,6 +177,7 @@ export interface AuthClearArgs {
 }
 
 export async function runAuthClear(args: AuthClearArgs, deps: AuthDeps = {}): Promise<void> {
+  emitDeprecation('use `aitcc logout --purge` to remove session and saved credentials together.');
   const interactive = process.stdout.isTTY && process.stdin.isTTY && !args.json;
 
   // Look up the active email up front so we can show it in the confirm
@@ -236,6 +257,7 @@ export interface AuthStatusArgs {
 }
 
 export async function runAuthStatus(args: AuthStatusArgs, deps: AuthDeps = {}): Promise<void> {
+  emitDeprecation('use `aitcc whoami` (now reports credential source).');
   // Read the email pointer without touching the keychain — `auth status`
   // shouldn't trigger a Touch ID / libsecret prompt just to answer "do I
   // have credentials configured?". Password retrieval lives in the login
@@ -309,7 +331,7 @@ function isPromptCancelled(err: unknown): boolean {
 const setCommand = defineCommand({
   meta: {
     name: 'set',
-    description: 'Save email + password to the OS keychain for future headless logins.',
+    description: '[deprecated] Use `aitcc login` instead — the prompt now offers a save option.',
   },
   args: {
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
@@ -331,7 +353,7 @@ const setCommand = defineCommand({
 const clearCommand = defineCommand({
   meta: {
     name: 'clear',
-    description: 'Delete the saved credentials and the auth-state pointer.',
+    description: '[deprecated] Use `aitcc logout --purge` instead.',
   },
   args: {
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
@@ -350,7 +372,7 @@ const clearCommand = defineCommand({
 const statusCommand = defineCommand({
   meta: {
     name: 'status',
-    description: 'Report whether credentials and a session are configured.',
+    description: '[deprecated] Use `aitcc whoami` (now reports credential source).',
   },
   args: {
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },

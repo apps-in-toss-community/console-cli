@@ -99,8 +99,13 @@ describe('aitcc --json subprocess contract', () => {
       const dir = await xdg.fresh();
       const { exitCode, stdout, stderr } = await runCli(['whoami', '--json'], dir);
       expect(exitCode).toBe(10);
-      const payload = assertSingleJsonLine(stdout);
-      expect(payload).toEqual({ ok: true, authenticated: false });
+      const payload = assertSingleJsonLine(stdout) as Record<string, unknown>;
+      // `whoami --json` no-session shape now carries `credentialSource`
+      // so consumers can tell "logged out but creds saved" apart from
+      // "fresh machine"; on an empty XDG dir the source is `'none'`.
+      expect(payload.ok).toBe(true);
+      expect(payload.authenticated).toBe(false);
+      expect(payload.credentialSource).toBe('none');
       assertStderrHasNoJson(stderr);
       expect(stderr).toBe('');
       // NO_COLOR=1 is set by the harness — guard against any future
@@ -229,16 +234,19 @@ describe('aitcc --json subprocess contract', () => {
   });
 
   describe('logout', () => {
-    // logout is the one fail path that returns ok:0 — it's idempotent:
-    // "no session to delete" is success, not an error. Locking down the
-    // shape ensures agent-plugin can call `logout` blindly.
-    it('logout --json with no session emits ok:true status:no-session (exit 0)', async () => {
+    // logout is idempotent — "no session to delete" is success, not an
+    // error. Locking down the shape ensures agent-plugin can call `logout`
+    // blindly. The new shape (sessionRemoved/credentialsPurged) replaces
+    // the old `status: 'no-session'` discriminator so the same call can
+    // also report whether `--purge` wiped keychain credentials.
+    it('logout --json with no session emits sessionRemoved:false (exit 0)', async () => {
       const dir = await xdg.fresh();
       const { exitCode, stdout, stderr } = await runCli(['logout', '--json'], dir);
       expect(exitCode).toBe(0);
       const payload = assertSingleJsonLine(stdout) as Record<string, unknown>;
       expect(payload.ok).toBe(true);
-      expect(payload.status).toBe('no-session');
+      expect(payload.sessionRemoved).toBe(false);
+      expect(payload.credentialsPurged).toBe(false);
       expect(typeof payload.path).toBe('string');
       assertStderrHasNoJson(stderr);
       expect(stderr).toBe('');
