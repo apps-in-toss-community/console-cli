@@ -85,15 +85,12 @@ interface DryRunStubOptions {
 
 function makeDryRunStub(options: DryRunStubOptions): {
   fetchImpl: FetchLike;
-  callCount: () => number;
   writeCalls: () => string[];
 } {
-  let count = 0;
   const writes: string[] = [];
   const role = options.role === undefined ? 'OWNER' : options.role;
 
   const fetchImpl: FetchLike = async (input, init) => {
-    count += 1;
     const url = typeof input === 'string' ? input : input.toString();
     const method = (init?.method ?? 'GET').toUpperCase();
 
@@ -139,7 +136,7 @@ function makeDryRunStub(options: DryRunStubOptions): {
     throw new Error(`unmocked URL in dry-run test: ${url}`);
   };
 
-  return { fetchImpl, callCount: () => count, writeCalls: () => writes };
+  return { fetchImpl, writeCalls: () => writes };
 }
 
 describe('runDeploy', () => {
@@ -430,6 +427,28 @@ describe('runDeploy', () => {
     const parsed = JSON.parse(stdout.join(''));
     expect(parsed.context.permissions).toMatchObject({ role: null, source: 'unknown' });
     expect(typeof parsed.context.permissions.error).toBe('string');
+    // wouldSucceed stays true intentionally — the bundle/terms checks
+    // (which gate live deploy) all passed, and the server is the
+    // authority on workspace membership. The plaintext rendering carries
+    // the caveat (covered by the next test).
+    expect(parsed.wouldSucceed).toBe(true);
+  });
+
+  it('--dry-run plaintext result line carries a caveat when membership is missing', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-no-member');
+    const stub = makeDryRunStub({ workspaceId: 3095, role: null });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: false }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const out = stdout.join('');
+    expect(out).toContain('permissions   unknown');
+    // Operator-facing line must NOT claim "all clear" when membership
+    // could not be confirmed — that would mask a server-side
+    // permissions failure that the live deploy would hit.
+    expect(out).not.toContain('Live deploy would clear every pre-flight check.');
+    expect(out).toContain('membership could not be confirmed');
   });
 
   it('--dry-run plaintext mode renders the structured report', async () => {

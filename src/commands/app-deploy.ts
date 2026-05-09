@@ -1,6 +1,6 @@
 import { describeApiError } from '../api/error-messages.js';
 import { type FetchLike, NetworkError, TossApiError } from '../api/http.js';
-import { fetchConsoleMemberUserInfo, fetchUserTerms, type UserTerm } from '../api/me.js';
+import { fetchConsoleMemberUserInfo, fetchUserTerms } from '../api/me.js';
 import {
   postBundleMemo,
   postBundleRelease,
@@ -12,7 +12,6 @@ import {
 import {
   fetchWorkspaceTerms,
   WORKSPACE_TERM_TYPES,
-  type WorkspaceTerm,
   type WorkspaceTermType,
 } from '../api/workspaces.js';
 import { AitBundleError, type AitBundleInfo, readAitBundle } from '../config/ait-bundle.js';
@@ -54,7 +53,7 @@ import {
 //       bundle: { path, format, deploymentId, embeddedDeploymentId|null,
 //                 deploymentIdSource: 'flag'|'bundle',
 //                 flagMatch: boolean|null, size },
-//       context: { workspaceId, appId, appName|null, sessionValid: true,
+//       context: { workspaceId, appId, sessionValid: true,
 //                  permissions: { role|null, source: 'members/me'|'unknown',
 //                                 error?: string } },
 //       terms: { blockers: [{ scope, type, errorCode, title, action }],
@@ -242,7 +241,7 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
   const { session, workspaceId } = ctx;
 
   const memo = typeof args.memo === 'string' && args.memo.length > 0 ? args.memo : undefined;
-  const steps: string[] = ['upload'];
+  const steps: DeployStep[] = ['upload'];
   if (requestReview) steps.push('review');
   if (release) steps.push('release');
 
@@ -489,6 +488,8 @@ async function emitPartialFailure(
 // promotion money) and we surface them too because (a) they share the
 // "must agree before this workspace works" character, and (b) the
 // agent-plugin can decide which subset blocks its specific flow.
+type DeployStep = 'upload' | 'review' | 'release';
+
 const WORKSPACE_TERM_ERROR_CODES: Record<WorkspaceTermType, number> = {
   TOSS_LOGIN: 4037,
   BIZ_WORKSPACE: 4040,
@@ -506,7 +507,7 @@ interface DryRunInput {
   readonly workspaceId: number;
   readonly appId: number;
   readonly session: Session;
-  readonly steps: readonly string[];
+  readonly steps: readonly DeployStep[];
   readonly memo: string | undefined;
   readonly releaseNotes: string | undefined;
   readonly confirm: boolean;
@@ -624,17 +625,23 @@ async function fetchTermsBlockers(
   // whole report into "checked: false" with a warning — partial term
   // results would mislead the wouldSucceed gate (a missing bucket
   // could hide a blocker), so we treat the surface as all-or-nothing.
+  // Split the heterogeneous fetches into two homogeneous Promise.all
+  // groups so TS can infer each tuple slot precisely (a single mixed
+  // spread collapses everything to a union and forces casts at the use
+  // sites).
   try {
-    const [userTerms, ...workspaceResults] = await Promise.all([
+    const [userTerms, workspaceResults] = await Promise.all([
       fetchUserTerms(session.cookies, apiOpts),
-      ...WORKSPACE_TERM_TYPES.map(
-        async (t) =>
-          [t, await fetchWorkspaceTerms(workspaceId, t, session.cookies, apiOpts)] as const,
+      Promise.all(
+        WORKSPACE_TERM_TYPES.map(
+          async (t) =>
+            [t, await fetchWorkspaceTerms(workspaceId, t, session.cookies, apiOpts)] as const,
+        ),
       ),
     ]);
 
     const blockers: TermsBlocker[] = [];
-    for (const t of userTerms as readonly UserTerm[]) {
+    for (const t of userTerms) {
       if (t.required && !t.isAgreed) {
         blockers.push({
           scope: 'user',
@@ -650,7 +657,7 @@ async function fetchTermsBlockers(
       }
     }
     for (const [type, terms] of workspaceResults) {
-      for (const t of terms as readonly WorkspaceTerm[]) {
+      for (const t of terms) {
         if (!t.required || t.isAgreed) continue;
         blockers.push({
           scope: 'workspace',
@@ -739,12 +746,21 @@ function renderDryRunText(
   lines.push(`  steps         ${stepsLine}\n`);
   lines.push(`  memo          ${input.memo ?? '(none)'}\n`);
 
-  // Result
+  // Result. `wouldSucceed` is the gated bundle/terms/flag-match check —
+  // it intentionally does NOT factor in `permissions.role === null` (the
+  // server is the authority on membership and the live deploy would
+  // surface a precise error). Surface that caveat in the human-readable
+  // line so an operator who skipped reading the Context block above
+  // doesn't read "all clear" and then get a server failure.
   lines.push('\nResult\n');
-  if (derived.wouldSucceed) {
-    lines.push('  Live deploy would clear every pre-flight check.\n');
-  } else {
+  if (!derived.wouldSucceed) {
     lines.push('  Live deploy would fail. Resolve the blocked items above, then re-run.\n');
+  } else if (derived.permissions.role === null) {
+    lines.push(
+      '  Live deploy would clear bundle + terms checks. Workspace membership could not be confirmed; live deploy may still fail with a permissions error.\n',
+    );
+  } else {
+    lines.push('  Live deploy would clear every pre-flight check.\n');
   }
   return lines.join('');
 }
