@@ -1,5 +1,13 @@
 # @ait-co/console-cli
 
+## 0.1.24
+
+### Patch Changes
+
+- 2de555a: `aitcc app certs ls`가 만료 임박 cert를 ⚠ 마커로 강조하고 JSON 응답의 각 cert에 `daysUntilExpiry`(`number | null`)를 추가합니다. 내부적으로 cert API를 도메인 파일(`src/api/certs.ts`)로 분리하고 `--json` 단일라인 contract를 subprocess harness로 검증합니다.
+- ef6be95: Add `aitcc app certs show <certId>` to surface a single mTLS cert's metadata in one round-trip — derives `daysUntilExpiry` (D-N or "expired N day(s) ago") so agents can verify expiry without parsing `app certs ls` output. The console has no per-cert detail endpoint, so this reuses the list fetch with client-side filter; PEM material is never on list responses. `export` is intentionally not added — the console only emits PEM at issue time and exposes no re-download path. If you lost the `--out` backup, `revoke` + `issue` to roll a new cert.
+- dd9f74d: `aitcc app deploy --dry-run`이 단순 echo에서 전체 사전 검증으로 강화됩니다. 번들 무결성, deploymentId 일치, workspace/app/session 컨텍스트, 권한, 약관 미동의 차단 항목을 한 번에 리포트해 라이브 deploy 전에 발화 가능한 실패를 모두 미리 잡습니다.
+
 ## 0.1.23
 
 ### Patch Changes
