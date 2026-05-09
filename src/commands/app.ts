@@ -1,13 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 import { defineCommand } from 'citty';
+import { fetchCerts, issueCert, revokeCert } from '../api/certs.js';
 import {
   fetchAppEventCatalogs,
   fetchAppServiceStatus,
   fetchAppTemplates,
   fetchBundles,
   fetchBundleTestLinks,
-  fetchCerts,
   fetchConversionMetrics,
   fetchDeployedBundle,
   fetchImpressionCategoryList,
@@ -18,7 +18,6 @@ import {
   fetchShareRewards,
   fetchSmartMessageCampaigns,
   fetchUserReports,
-  issueCert,
   type MetricsTimeUnit,
   postBundleMemo,
   postBundleRelease,
@@ -30,7 +29,6 @@ import {
   putBundleToUploadUrl,
   type RatingSortDirection,
   type RatingSortField,
-  revokeCert,
   TEMPLATE_CONTENT_REACH_TYPES,
   type TemplateContentReachType,
 } from '../api/mini-apps.js';
@@ -2013,13 +2011,47 @@ const bundlesCommand = defineCommand({
 // --json contract (consumed by agent-plugin):
 //
 //   app certs ls <id> [--workspace <id>]:
-//     { ok: true, workspaceId, appId, certs: [...] }   exit 0
-//     { ok: false, reason: 'invalid-id' | ... }        exit 2
+//     { ok: true, workspaceId, appId,
+//       certs: [{...passthrough, daysUntilExpiry: number | null}] }   exit 0
+//     { ok: false, reason: 'invalid-id' | ... }                       exit 2
 //
 // mTLS certs for an app. Empty array is the common case (no certs
-// generated yet). Per-record shape is passed through opaquely until
-// we observe a populated response — agent-plugin consumers should
-// treat each entry as `Record<string, unknown>`.
+// generated yet). Per-record shape is passed through opaquely with one
+// client-augmented field: `daysUntilExpiry` is computed from `expireTs`
+// (server, ms epoch) — `null` when `expireTs` is absent or unparseable.
+// agent-plugin consumers can treat all other fields as `Record<string, unknown>`.
+
+// Threshold for the ⚠ marker in text output. Const-only by design — exposing
+// it as a flag would force every dog-food caller to remember a number.
+const CERT_EXPIRY_WARN_DAYS = 30;
+const MS_PER_DAY = 86_400_000;
+
+// `expireTs` is documented as ms-since-epoch (number) but the wire has
+// surfaced strings before for adjacent fields, so accept both forms.
+// Returns `null` when the input is missing or unparseable; we never fall
+// back to a sibling field — the cert page chunk only references `expireTs`,
+// guessing from `validUntil` would be making up data.
+export function deriveDaysUntilExpiry(
+  cert: Readonly<Record<string, unknown>>,
+  now: number,
+): number | null {
+  const raw = cert.expireTs;
+  let ts: number | null = null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) ts = raw;
+  else if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed)) ts = parsed;
+  }
+  if (ts === null) return null;
+  return Math.floor((ts - now) / MS_PER_DAY);
+}
+
+function expiryMarker(days: number | null): string {
+  if (days === null) return '';
+  if (days < 0) return `\t⚠ 만료됨`;
+  if (days <= CERT_EXPIRY_WARN_DAYS) return `\t⚠ 만료 임박 (${days}일)`;
+  return '';
+}
 
 const certsLsCommand = defineCommand({
   meta: {
@@ -2052,16 +2084,23 @@ const certsLsCommand = defineCommand({
 
     try {
       const certs = await fetchCerts(workspaceId, appId, session.cookies);
+      const now = Date.now();
+      const augmented: ReadonlyArray<
+        Readonly<Record<string, unknown>> & { daysUntilExpiry: number | null }
+      > = certs.map((c) => ({
+        ...c,
+        daysUntilExpiry: deriveDaysUntilExpiry(c, now),
+      }));
       if (args.json) {
-        emitJson({ ok: true, workspaceId, appId, certs });
+        emitJson({ ok: true, workspaceId, appId, certs: augmented });
         return exitAfterFlush(ExitCode.Ok);
       }
-      if (certs.length === 0) {
+      if (augmented.length === 0) {
         process.stdout.write(`App ${appId} (ws ${workspaceId}): no mTLS certs\n`);
         return exitAfterFlush(ExitCode.Ok);
       }
-      process.stdout.write(`App ${appId} (ws ${workspaceId}): ${certs.length} cert(s)\n`);
-      for (const c of certs) {
+      process.stdout.write(`App ${appId} (ws ${workspaceId}): ${augmented.length} cert(s)\n`);
+      for (const c of augmented) {
         const id =
           typeof c.id === 'string' || typeof c.id === 'number'
             ? c.id
@@ -2076,7 +2115,9 @@ const certsLsCommand = defineCommand({
             : typeof c.validUntil === 'string'
               ? c.validUntil
               : '';
-        process.stdout.write(`${id}\t${cn}\t${createdAt}\t${expiresAt}\n`);
+        process.stdout.write(
+          `${id}\t${cn}\t${createdAt}\t${expiresAt}${expiryMarker(c.daysUntilExpiry)}\n`,
+        );
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
