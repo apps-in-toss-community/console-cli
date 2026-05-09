@@ -57,7 +57,7 @@
 
 #### mTLS cert issue / disable / list (확정)
 
-콘솔 SPA의 `index.Bw6JQUAu.js` (mTLS 인증서 페이지 chunk)를 정적 분석해 path · request · response shape를 모두 확정. CLI는 `aitcc app certs {ls,issue,revoke}`로 노출.
+콘솔 SPA의 `index.Bw6JQUAu.js` (mTLS 인증서 페이지 chunk)를 정적 분석해 path · request · response shape를 모두 확정. CLI는 `aitcc app certs {ls,show,issue,revoke}`로 노출. **`show`는 별도 endpoint가 아니라 list 재사용** — 아래 "Show / export 부재" 참고.
 
 **Path quirk** — 발급만 singular `cert`, 그 외(list/disable)는 plural `certs`. 코드 한 줄 수준에서 잘못 쓰기 쉬우므로 endpoint 상수에 주석을 박아 둔다.
 
@@ -106,6 +106,11 @@ Response body: array of cert metadata.
 cert 페이지 chunk는 `id`/`name`/`expireTs`만 사용. 다른 field가 있어도 CLI가 신경 쓸 필요 없음.
 
 `aitcc app certs ls --json` 응답의 각 cert 객체에는 추가로 `daysUntilExpiry: number | null`이 붙는다. 이 필드는 **서버 응답이 아니라 CLI가 `expireTs`(ms epoch)와 `Date.now()`로 계산하는 client-augmented 필드** — `expireTs`가 없거나 파싱 실패면 `null`, 이미 만료된 cert는 음수. 같은 임계치(≤30일)로 text 모드의 `⚠ 만료 임박` 마커도 결정한다.
+
+**Show / export 부재** — 콘솔 chunk 정적 분석 결과 cert 단일-detail endpoint도, publicKey 재다운로드 endpoint도 존재하지 않는다. 콘솔 UI 자체에 cert 클릭 시 열리는 detail 화면이 없고, "다운로드" 버튼은 issue 응답을 받는 시점에 zip을 즉시 보내는 한 군데뿐 (재발급 불가, 재다운로드 불가). 따라서 CLI도:
+
+- `aitcc app certs show <certId>`는 별도 호출 없이 **list fetch + client-side filter**로 단일 cert를 렌더한다 (`pickCertById` + `augmentCertExpiry`로 `daysUntilExpiry` derive). 사용자가 단일 cert 상태(만료 D-N 등)를 1 round-trip으로 검증할 수 있다는 가치만 제공하고, 응답에 PEM은 처음부터 없으므로 redaction 이슈 없음.
+- `aitcc app certs export`는 만들지 않는다. 서버에 publicKey를 다시 내려주는 경로가 없으므로 stub을 만들면 거짓 신호가 된다. issue 시점에 `--out` 백업을 받지 못한 사용자는 `aitcc app certs revoke <id>` + `issue` 재발급으로 해결한다.
 
 ### Reports (사용자 신고) — 유일한 plural path
 

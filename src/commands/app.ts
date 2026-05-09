@@ -2132,6 +2132,184 @@ const certsLsCommand = defineCommand({
   },
 });
 
+// `app certs show <certId>` rides on top of the same `GET .../certs` list
+// endpoint as `ls`. The console SPA's mTLS chunk (`index.Bw6JQUAu.js`)
+// defines exactly three endpoints — list, issue, disable — and there is no
+// per-cert detail call. We surface a single-cert convenience view by
+// fetching the list and filtering client-side; the round-trip cost is the
+// same one request as `ls`. Documented at docs/api/mini-app-misc.md
+// "mTLS cert issue / disable / list".
+//
+// `pickCertById` mirrors the id-resolution policy of `ls`: prefer `id`,
+// fall back to `certId`. Comparison is string-coerced because the server
+// has historically been ambivalent about whether ids are number- or
+// string-typed across endpoints.
+export function pickCertById(
+  certs: readonly Readonly<Record<string, unknown>>[],
+  certId: string,
+): Readonly<Record<string, unknown>> | null {
+  const target = certId.trim();
+  if (target.length === 0) return null;
+  for (const c of certs) {
+    const candidate =
+      typeof c.id === 'string' || typeof c.id === 'number'
+        ? c.id
+        : typeof c.certId === 'string' || typeof c.certId === 'number'
+          ? c.certId
+          : null;
+    if (candidate !== null && String(candidate) === target) return c;
+  }
+  return null;
+}
+
+// `daysUntilExpiry` is derived rather than passed through because the
+// server gives the expiry in two shapes depending on which version of the
+// console chunk last touched the field — `expireTs` (millis since epoch,
+// the chunk's canonical name) or `expiresAt`/`validUntil` (ISO 8601, seen
+// in older captures). We accept all three and bail out (undefined) when
+// the field is missing or unparseable rather than pretending zero days.
+// Negative values are preserved so callers can tell "expired 5 days ago"
+// from "expires in 5 days".
+export function augmentCertExpiry(
+  cert: Readonly<Record<string, unknown>>,
+  now: number = Date.now(),
+): { expiresAtMs?: number; daysUntilExpiry?: number } {
+  let expiresAtMs: number | undefined;
+  if (typeof cert.expireTs === 'number' && Number.isFinite(cert.expireTs)) {
+    expiresAtMs = cert.expireTs;
+  } else if (typeof cert.expiresAt === 'string') {
+    const t = Date.parse(cert.expiresAt);
+    if (Number.isFinite(t)) expiresAtMs = t;
+  } else if (typeof cert.validUntil === 'string') {
+    const t = Date.parse(cert.validUntil);
+    if (Number.isFinite(t)) expiresAtMs = t;
+  }
+  if (expiresAtMs === undefined) return {};
+  const daysUntilExpiry = Math.floor((expiresAtMs - now) / 86_400_000);
+  return { expiresAtMs, daysUntilExpiry };
+}
+
+// --json contract (consumed by agent-plugin):
+//
+//   app certs show <certId> --app <id> [--workspace <id>] [--json]:
+//     { ok: true, workspaceId, appId, cert,
+//       daysUntilExpiry?: number, expiresAtMs?: number }      exit 0
+//     { ok: false, reason: 'missing-cert-id' | 'not-found'
+//                        | 'invalid-id' | ... }               exit 2
+//
+// Single-cert detail view. There is no dedicated detail endpoint on the
+// console (see comment above `pickCertById`); this is a list fetch +
+// client-side filter. PEM material is never present on list responses —
+// the issue endpoint is the only one that ever exposes it, so there is no
+// `--print-key` here.
+
+const certsShowCommand = defineCommand({
+  meta: {
+    name: 'show',
+    description: 'Show a single mTLS certificate by id (metadata only — no PEM).',
+  },
+  args: {
+    certId: { type: 'positional', description: 'Cert ID (from `app certs ls`).', required: true },
+    app: {
+      type: 'string',
+      description: 'Mini-app ID the cert belongs to.',
+    },
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    const certId = typeof args.certId === 'string' ? args.certId.trim() : '';
+    if (certId.length === 0) {
+      if (args.json) {
+        emitJson({
+          ok: false,
+          reason: 'missing-cert-id',
+          message: 'certId positional is required',
+        });
+      } else {
+        process.stderr.write('app certs show: certId is required\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    // Same shape as `certs revoke`: positional is <certId>, mini-app id is
+    // a separate `--app` flag.
+    const ctx = await resolveAppOrFail({
+      json: args.json,
+      appIdRaw: args.app,
+      appIdField: 'app',
+      ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    });
+    if (!ctx) return;
+    const appId = await requireMiniAppId(ctx, args.json);
+    if (appId === null) return;
+    printContextHeader(ctx, { json: args.json });
+    const { session, workspaceId } = ctx;
+
+    try {
+      const certs = await fetchCerts(workspaceId, appId, session.cookies);
+      const match = pickCertById(certs, certId);
+      if (match === null) {
+        if (args.json) {
+          emitJson({
+            ok: false,
+            reason: 'not-found',
+            workspaceId,
+            appId,
+            certId,
+            message: `cert ${certId} not found on app ${appId}`,
+          });
+        } else {
+          process.stderr.write(
+            `app certs show: cert ${certId} not found on app ${appId} (ws ${workspaceId})\n`,
+          );
+        }
+        return exitAfterFlush(ExitCode.Usage);
+      }
+
+      const expiry = augmentCertExpiry(match);
+      if (args.json) {
+        emitJson({ ok: true, workspaceId, appId, cert: match, ...expiry });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      const id =
+        typeof match.id === 'string' || typeof match.id === 'number'
+          ? match.id
+          : typeof match.certId === 'string' || typeof match.certId === 'number'
+            ? match.certId
+            : '-';
+      const name = typeof match.name === 'string' ? match.name : '-';
+      const cn = typeof match.commonName === 'string' ? match.commonName : '';
+      const createdAt = typeof match.createdAt === 'string' ? match.createdAt : '';
+      const expiresAtIso =
+        expiry.expiresAtMs !== undefined ? new Date(expiry.expiresAtMs).toISOString() : '';
+      const status = typeof match.status === 'string' ? match.status : '';
+
+      const lines: string[] = [
+        `App ${appId} (ws ${workspaceId}): cert ${id}`,
+        `  name:        ${name}`,
+      ];
+      if (cn) lines.push(`  commonName:  ${cn}`);
+      if (createdAt) lines.push(`  createdAt:   ${createdAt}`);
+      if (expiresAtIso) lines.push(`  expiresAt:   ${expiresAtIso}`);
+      if (expiry.daysUntilExpiry !== undefined) {
+        const d = expiry.daysUntilExpiry;
+        const suffix = d < 0 ? ` (expired ${-d} day(s) ago)` : ` (D-${d})`;
+        lines.push(`  daysUntilExpiry: ${d}${suffix}`);
+      }
+      if (status) lines.push(`  status:      ${status}`);
+      process.stdout.write(`${lines.join('\n')}\n`);
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
 // --json contract (consumed by agent-plugin):
 //
 //   app certs issue <id> --name <name> [--workspace <id>]
@@ -2367,6 +2545,7 @@ const certsCommand = defineCommand({
   },
   subCommands: {
     ls: certsLsCommand,
+    show: certsShowCommand,
     issue: certsIssueCommand,
     revoke: certsRevokeCommand,
   },
