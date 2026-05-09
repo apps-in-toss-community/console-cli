@@ -3,13 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FetchLike } from '../api/http.js';
 import type { CdpCookie } from '../cdp.js';
 import { runDeploy } from './app-deploy.js';
 
 // Mirrors the captureExit/stdout-spy pattern used in register.test.ts.
-// We never touch the network in these tests — `fetchImpl` is forced to
-// throw so a regression that accidentally makes a call in --dry-run is
-// loud and testable.
+//
+// Dry-run intentionally hits read-only endpoints (members/me + the term
+// buckets) so the spec can report context/permissions/blockers ahead of
+// a live deploy. To keep the tests offline we wire a minimal stub fetch
+// that recognizes the URL shapes touched by `runDryRun` and returns
+// canned `SUCCESS` envelopes. Any URL outside that allowlist throws so
+// a regression that adds a new write endpoint is loud — same intent the
+// pre-enhancement `loudFetch` had, just narrowed to writes.
 
 type Exited = { code: number };
 
@@ -55,6 +61,85 @@ function writeBundleFile(dir: string, deploymentId: string): string {
   const path = join(dir, 'sample.ait');
   writeFileSync(path, zip);
   return path;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify({ resultType: 'SUCCESS', success: body }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+interface DryRunStubOptions {
+  /** Workspace id the test session points at. Must match for permissions to resolve. */
+  workspaceId: number;
+  /** Role surfaced by `members/me`. `null` removes the membership entry. */
+  role?: string | null;
+  /** Per-type workspace term overrides. Default: every bucket returns []. */
+  workspaceTerms?: Partial<Record<string, ReadonlyArray<unknown>>>;
+  /** User-terms override. Default: []. */
+  userTerms?: ReadonlyArray<unknown>;
+  /** Throw on every fetch — used for the "terms fetch failed → warning" branch. */
+  failAll?: boolean;
+}
+
+function makeDryRunStub(options: DryRunStubOptions): {
+  fetchImpl: FetchLike;
+  callCount: () => number;
+  writeCalls: () => string[];
+} {
+  let count = 0;
+  const writes: string[] = [];
+  const role = options.role === undefined ? 'OWNER' : options.role;
+
+  const fetchImpl: FetchLike = async (input, init) => {
+    count += 1;
+    const url = typeof input === 'string' ? input : input.toString();
+    const method = (init?.method ?? 'GET').toUpperCase();
+
+    if (method !== 'GET') {
+      // Dry-run must never write. Capture the offender so the failing
+      // assertion can name it.
+      writes.push(`${method} ${url}`);
+      throw new Error(`dry-run made a write call: ${method} ${url}`);
+    }
+    if (options.failAll) throw new Error('network down');
+
+    if (url.endsWith('/members/me/user-info')) {
+      const workspaces =
+        role === null
+          ? []
+          : [
+              {
+                workspaceId: options.workspaceId,
+                workspaceName: 'test-ws',
+                role,
+                isOwnerDelegationRequested: false,
+              },
+            ];
+      return jsonResponse({
+        id: 1,
+        bizUserNo: 1,
+        name: 'tester',
+        email: 'a@b.co',
+        role: 'USER',
+        workspaces,
+        isAdult: true,
+        isOverseasBusiness: false,
+      });
+    }
+    if (url.endsWith('/console-user-terms/me')) {
+      return jsonResponse(options.userTerms ?? []);
+    }
+    const wsTermsMatch = url.match(/console-workspace-terms\/([A-Z_]+)\/skip-permission/);
+    if (wsTermsMatch) {
+      const type = wsTermsMatch[1] as string;
+      return jsonResponse(options.workspaceTerms?.[type] ?? []);
+    }
+    throw new Error(`unmocked URL in dry-run test: ${url}`);
+  };
+
+  return { fetchImpl, callCount: () => count, writeCalls: () => writes };
 }
 
 describe('runDeploy', () => {
@@ -168,9 +253,10 @@ describe('runDeploy', () => {
     expect(fetchCalls).toBe(0);
   });
 
-  it('--dry-run emits the planned pipeline without firing any network call', async () => {
+  it('--dry-run reports the planned pipeline + clean pre-flight when terms agreed', async () => {
     await writeSessionAt(3095);
     const path = writeBundleFile(root, '00000000-0000-0000-0000-000000000001');
+    const stub = makeDryRunStub({ workspaceId: 3095 });
     const exit = await captureExit(() =>
       runDeploy(
         {
@@ -184,25 +270,43 @@ describe('runDeploy', () => {
           memo: 'pre-flight',
           json: true,
         },
-        { fetchImpl: loudFetch },
+        { fetchImpl: stub.fetchImpl },
       ),
     );
     expect(exit?.code).toBe(0);
-    expect(fetchCalls).toBe(0);
+    expect(stub.writeCalls()).toEqual([]);
     const out = stdout.join('');
-    expect(out).toContain('"dryRun":true');
-    expect(out).toContain('"workspaceId":3095');
-    expect(out).toContain('"appId":29397');
-    expect(out).toContain('"deploymentId":"00000000-0000-0000-0000-000000000001"');
-    expect(out).toContain('"steps":["upload","review","release"]');
-    expect(out).toContain('"memo":"pre-flight"');
-    expect(out).toContain('"releaseNotes":"initial release"');
-    expect(out).toContain('"confirmed":true');
+    // Single-line JSON contract preserved.
+    expect(out.trim().split('\n')).toHaveLength(1);
+    const parsed = JSON.parse(out);
+    expect(parsed).toMatchObject({
+      ok: true,
+      dryRun: true,
+      wouldSucceed: true,
+      workspaceId: 3095,
+      appId: 29397,
+      deploymentId: '00000000-0000-0000-0000-000000000001',
+      steps: ['upload', 'review', 'release'],
+      memo: 'pre-flight',
+      releaseNotes: 'initial release',
+      confirmed: true,
+    });
+    expect(parsed.bundle).toMatchObject({
+      path,
+      format: 'zip',
+      deploymentId: '00000000-0000-0000-0000-000000000001',
+      embeddedDeploymentId: '00000000-0000-0000-0000-000000000001',
+      deploymentIdSource: 'bundle',
+      flagMatch: null,
+    });
+    expect(parsed.context.permissions).toEqual({ role: 'OWNER', source: 'members/me' });
+    expect(parsed.terms).toEqual({ blockers: [], checked: true });
   });
 
-  it('--dry-run with explicit --deployment-id overrides the embedded one', async () => {
+  it('--dry-run reports flag-vs-embedded mismatch and flips wouldSucceed to false', async () => {
     await writeSessionAt(3095);
     const path = writeBundleFile(root, 'from-bundle');
+    const stub = makeDryRunStub({ workspaceId: 3095 });
     const exit = await captureExit(() =>
       runDeploy(
         {
@@ -212,36 +316,164 @@ describe('runDeploy', () => {
           dryRun: true,
           json: true,
         },
-        { fetchImpl: loudFetch },
+        { fetchImpl: stub.fetchImpl },
       ),
     );
     expect(exit?.code).toBe(0);
-    expect(fetchCalls).toBe(0);
-    expect(stdout.join('')).toContain('"deploymentId":"from-flag"');
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.deploymentId).toBe('from-flag');
+    expect(parsed.bundle.deploymentIdSource).toBe('flag');
+    expect(parsed.bundle.flagMatch).toBe(false);
+    expect(parsed.bundle.embeddedDeploymentId).toBe('from-bundle');
+    expect(parsed.wouldSucceed).toBe(false);
   });
 
-  it('--dry-run plaintext mode renders a human-readable plan', async () => {
+  it('--dry-run lists workspace term blockers when a required term is unagreed', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const stub = makeDryRunStub({
+      workspaceId: 3095,
+      workspaceTerms: {
+        BIZ_WORKSPACE: [
+          {
+            required: true,
+            termsId: 1,
+            revisionId: 1,
+            title: '워크스페이스 약관',
+            contentsUrl: 'https://example.com/terms',
+            actionType: 'AGREE',
+            isAgreed: false,
+            isOneTimeConsent: false,
+          },
+        ],
+      },
+    });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.wouldSucceed).toBe(false);
+    expect(parsed.terms.checked).toBe(true);
+    expect(parsed.terms.blockers).toEqual([
+      {
+        scope: 'workspace',
+        type: 'BIZ_WORKSPACE',
+        errorCode: 4040,
+        title: '워크스페이스 약관',
+        action: 'aitcc workspace terms --type BIZ_WORKSPACE',
+      },
+    ]);
+  });
+
+  it('--dry-run lists user-term blockers (4036 family)', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const stub = makeDryRunStub({
+      workspaceId: 3095,
+      userTerms: [
+        {
+          required: true,
+          termsId: 9,
+          revisionId: 1,
+          title: '개인정보 처리 방침',
+          contentsUrl: 'https://example.com/privacy',
+          actionType: 'AGREE',
+          isAgreed: false,
+          isOneTimeConsent: false,
+        },
+      ],
+    });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.wouldSucceed).toBe(false);
+    expect(parsed.terms.blockers).toEqual([
+      {
+        scope: 'user',
+        type: 'USER_TERMS',
+        errorCode: 4036,
+        title: '개인정보 처리 방침',
+        action: 'aitcc me terms',
+      },
+    ]);
+  });
+
+  it('--dry-run treats terms-fetch failure as a warning, not an exit code', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const stub = makeDryRunStub({ workspaceId: 3095, failAll: true });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    // Both probes failed: permissions falls back to 'unknown', terms
+    // marks itself as not-checked. wouldSucceed stays true because the
+    // bundle/context checks (which gate live deploy) all passed.
+    expect(parsed.context.permissions).toMatchObject({ role: null, source: 'unknown' });
+    expect(parsed.terms.checked).toBe(false);
+    expect(typeof parsed.terms.error).toBe('string');
+    expect(parsed.wouldSucceed).toBe(true);
+  });
+
+  it('--dry-run marks permissions unknown when membership is missing', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const stub = makeDryRunStub({ workspaceId: 3095, role: null });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.context.permissions).toMatchObject({ role: null, source: 'unknown' });
+    expect(typeof parsed.context.permissions.error).toBe('string');
+  });
+
+  it('--dry-run plaintext mode renders the structured report', async () => {
     await writeSessionAt(3095);
     const path = writeBundleFile(root, 'dep-abc');
+    const stub = makeDryRunStub({ workspaceId: 3095 });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: false }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const out = stdout.join('');
+    expect(out).toContain('DRY RUN — app deploy 29397');
+    expect(out).toContain('Bundle');
+    expect(out).toContain('deploymentId  dep-abc');
+    expect(out).toContain('Context');
+    expect(out).toContain('workspace     3095');
+    expect(out).toContain('permissions   OWNER');
+    expect(out).toContain('Terms');
+    expect(out).toContain('all deploy-related terms are agreed');
+    expect(out).toContain('Result');
+    expect(out).toContain('Live deploy would clear every pre-flight check.');
+  });
+
+  it('--dry-run never makes write calls (POST/PUT/DELETE)', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-no-writes');
+    const stub = makeDryRunStub({ workspaceId: 3095 });
     const exit = await captureExit(() =>
       runDeploy(
         {
           path,
           app: '29397',
           dryRun: true,
-          json: false,
+          requestReview: true,
+          releaseNotes: 'x',
+          release: true,
+          confirm: true,
+          json: true,
         },
-        { fetchImpl: loudFetch },
+        { fetchImpl: stub.fetchImpl },
       ),
     );
     expect(exit?.code).toBe(0);
-    expect(fetchCalls).toBe(0);
-    const out = stdout.join('');
-    expect(out).toContain('DRY RUN');
-    expect(out).toContain('app           29397');
-    expect(out).toContain('workspace     3095');
-    expect(out).toContain('deploymentId  dep-abc');
-    expect(out).toContain('steps         upload');
+    expect(stub.writeCalls()).toEqual([]);
   });
 
   it('emits not-authenticated + exit 10 when no session is present', async () => {
