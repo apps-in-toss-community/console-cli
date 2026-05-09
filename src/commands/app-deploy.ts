@@ -1,5 +1,6 @@
 import { describeApiError } from '../api/error-messages.js';
 import { type FetchLike, NetworkError, TossApiError } from '../api/http.js';
+import { fetchConsoleMemberUserInfo, fetchUserTerms } from '../api/me.js';
 import {
   postBundleMemo,
   postBundleRelease,
@@ -8,9 +9,15 @@ import {
   postDeploymentsInitialize,
   putBundleToUploadUrl,
 } from '../api/mini-apps.js';
+import {
+  fetchWorkspaceTerms,
+  WORKSPACE_TERM_TYPES,
+  type WorkspaceTermType,
+} from '../api/workspaces.js';
 import { AitBundleError, type AitBundleInfo, readAitBundle } from '../config/ait-bundle.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
+import type { Session } from '../session.js';
 import {
   emitFailureFromError,
   emitJson,
@@ -35,11 +42,22 @@ import {
 //       reviewResult: { ... } | null,
 //       releaseResult: { ... } | null }                            exit 0
 //
-//   dry run:
-//     { ok: true, dryRun: true, workspaceId, appId, deploymentId,
+//   dry run (always exit 0 — dry-run never returns a deploy-blocking
+//   exit code; the `wouldSucceed` boolean is how callers learn whether
+//   a live deploy would clear the same checks):
+//     { ok: true, dryRun: true, wouldSucceed,
+//       workspaceId, appId, deploymentId,
 //       bundleFormat: 'ait' | 'zip', bytes,
 //       steps: ['upload', ...], memo: string|null,
-//       releaseNotes: string|null, confirmed: boolean }            exit 0
+//       releaseNotes: string|null, confirmed: boolean,
+//       bundle: { path, format, deploymentId, embeddedDeploymentId|null,
+//                 deploymentIdSource: 'flag'|'bundle',
+//                 flagMatch: boolean|null, size },
+//       context: { workspaceId, appId, sessionValid: true,
+//                  permissions: { role|null, source: 'members/me'|'unknown',
+//                                 error?: string } },
+//       terms: { blockers: [{ scope, type, errorCode, title, action }],
+//                checked: boolean, error?: string } }              exit 0
 //
 //   usage errors:
 //     { ok: false, reason: 'missing-app-id' | 'invalid-id'
@@ -223,44 +241,26 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
   const { session, workspaceId } = ctx;
 
   const memo = typeof args.memo === 'string' && args.memo.length > 0 ? args.memo : undefined;
-  const steps: string[] = ['upload'];
+  const steps: DeployStep[] = ['upload'];
   if (requestReview) steps.push('review');
   if (release) steps.push('release');
 
   if (args.dryRun) {
-    if (args.json) {
-      emitJson({
-        ok: true,
-        dryRun: true,
-        workspaceId,
-        appId,
-        deploymentId,
-        bundleFormat: bundleInfo.format,
-        bytes: bundleInfo.bytes.byteLength,
-        steps,
-        memo: memo ?? null,
-        releaseNotes: releaseNotes ?? null,
-        confirmed: confirm,
-      });
-    } else {
-      const stepsLine = steps
-        .map((s) => {
-          if (s === 'review') return `review (releaseNotes: ${JSON.stringify(releaseNotes ?? '')})`;
-          if (s === 'release') return `release (${confirm ? 'confirmed' : 'NOT confirmed'})`;
-          return s;
-        })
-        .join(' → ');
-      process.stdout.write(
-        `DRY RUN\n` +
-          `  app           ${appId}\n` +
-          `  workspace     ${workspaceId}\n` +
-          `  bundle        ${args.path} (${bundleInfo.bytes.byteLength} bytes)\n` +
-          `  deploymentId  ${deploymentId}\n` +
-          `  memo          ${memo ?? '(none)'}\n` +
-          `  steps         ${stepsLine}\n`,
-      );
-    }
-    return exitAfterFlush(ExitCode.Ok);
+    return runDryRun({
+      json: args.json,
+      path: args.path,
+      bundleInfo,
+      deploymentId,
+      explicitDeploymentId: typeof args.deploymentId === 'string' && args.deploymentId !== '',
+      workspaceId,
+      appId,
+      session,
+      steps,
+      memo,
+      releaseNotes,
+      confirm,
+      fetchImpl: deps.fetchImpl,
+    });
   }
 
   // 5. Real execution. Each step tracks its success so a partial
@@ -463,4 +463,310 @@ async function emitPartialFailure(
     process.stderr.write(`Unexpected error: ${(err as Error).message}\n`);
   }
   return exitAfterFlush(ExitCode.ApiError);
+}
+
+// --- dry-run pre-flight ---------------------------------------------------
+//
+// `runDryRun` runs the same up-front checks a live `app deploy` does
+// (bundle parse + workspace/app/session resolve), then layers on
+// read-only network probes (`members/me`, `console-user-terms/me`, the
+// five `console-workspace-terms/<type>/skip-permission` buckets) so the
+// caller sees every failure that a live deploy would surface — without
+// any write happening.
+//
+// Always exits 0. The `wouldSucceed` boolean tells the caller whether a
+// live run would clear the same checks; agent-plugin reads that field
+// and reads `terms.blockers` to derive a remediation step. Failure modes
+// like "terms fetch errored" are reported as warnings on top of the
+// payload, not as exit codes — dry-run is meant to be informational.
+
+// Workspace-term types whose missing-required entries map to a
+// terms-family errorCode the live deploy would emit. Mapping is from
+// docs/api/_error-codes.md "Auth / 약관 family". `BIZ_WORKSPACE` is the
+// one that explicitly gates `app deploy` per docs/api workspaces.md;
+// the other types gate adjacent surfaces (login scopes, IAP, IAA,
+// promotion money) and we surface them too because (a) they share the
+// "must agree before this workspace works" character, and (b) the
+// agent-plugin can decide which subset blocks its specific flow.
+type DeployStep = 'upload' | 'review' | 'release';
+
+const WORKSPACE_TERM_ERROR_CODES: Record<WorkspaceTermType, number> = {
+  TOSS_LOGIN: 4037,
+  BIZ_WORKSPACE: 4040,
+  TOSS_PROMOTION_MONEY: 4039,
+  IAA: 4099,
+  IAP: 5001,
+};
+
+interface DryRunInput {
+  readonly json: boolean;
+  readonly path: string;
+  readonly bundleInfo: AitBundleInfo;
+  readonly deploymentId: string;
+  readonly explicitDeploymentId: boolean;
+  readonly workspaceId: number;
+  readonly appId: number;
+  readonly session: Session;
+  readonly steps: readonly DeployStep[];
+  readonly memo: string | undefined;
+  readonly releaseNotes: string | undefined;
+  readonly confirm: boolean;
+  readonly fetchImpl: FetchLike | undefined;
+}
+
+interface PermissionsReport {
+  readonly role: string | null;
+  readonly source: 'members/me' | 'unknown';
+  readonly error?: string;
+}
+
+interface TermsBlocker {
+  readonly scope: 'user' | 'workspace';
+  readonly type: string;
+  readonly errorCode: number;
+  readonly title: string;
+  readonly action: string;
+}
+
+interface TermsReport {
+  readonly blockers: readonly TermsBlocker[];
+  readonly checked: boolean;
+  readonly error?: string;
+}
+
+async function runDryRun(input: DryRunInput): Promise<void> {
+  const apiOpts = input.fetchImpl ? { fetchImpl: input.fetchImpl } : {};
+  const embedded = input.bundleInfo.deploymentId;
+  const flagMatch = input.explicitDeploymentId ? input.deploymentId === embedded : null;
+
+  const [permissions, terms] = await Promise.all([
+    fetchPermissions(input.workspaceId, input.session, apiOpts),
+    fetchTermsBlockers(input.workspaceId, input.session, apiOpts),
+  ]);
+
+  const wouldSucceed = (flagMatch === null || flagMatch === true) && terms.blockers.length === 0;
+
+  if (input.json) {
+    emitJson({
+      ok: true,
+      dryRun: true,
+      wouldSucceed,
+      // Top-level fields kept for backwards compatibility with the
+      // pre-enhancement --json shape (agent-plugin and existing
+      // consumers reach for `workspaceId`/`appId`/`deploymentId`/etc
+      // directly, not the nested `context`/`bundle` blocks).
+      workspaceId: input.workspaceId,
+      appId: input.appId,
+      deploymentId: input.deploymentId,
+      bundleFormat: input.bundleInfo.format,
+      bytes: input.bundleInfo.bytes.byteLength,
+      steps: input.steps,
+      memo: input.memo ?? null,
+      releaseNotes: input.releaseNotes ?? null,
+      confirmed: input.confirm,
+      bundle: {
+        path: input.path,
+        format: input.bundleInfo.format,
+        deploymentId: input.deploymentId,
+        embeddedDeploymentId: embedded,
+        deploymentIdSource: input.explicitDeploymentId ? 'flag' : 'bundle',
+        flagMatch,
+        size: input.bundleInfo.bytes.byteLength,
+      },
+      context: {
+        workspaceId: input.workspaceId,
+        appId: input.appId,
+        sessionValid: true,
+        permissions,
+      },
+      terms,
+    });
+    return exitAfterFlush(ExitCode.Ok);
+  }
+
+  process.stdout.write(
+    renderDryRunText(input, { embedded, flagMatch, permissions, terms, wouldSucceed }),
+  );
+  return exitAfterFlush(ExitCode.Ok);
+}
+
+async function fetchPermissions(
+  workspaceId: number,
+  session: Session,
+  apiOpts: { fetchImpl?: FetchLike },
+): Promise<PermissionsReport> {
+  // Best-effort: a non-fatal failure here just means we render
+  // `permissions: unknown` and live deploy would still try. We do NOT
+  // map a 401 here to a session-expired exit — it would mask the rest
+  // of the dry-run report. The user runs `aitcc whoami` to investigate.
+  try {
+    const info = await fetchConsoleMemberUserInfo(session.cookies, apiOpts);
+    const ws = info.workspaces.find((w) => w.workspaceId === workspaceId);
+    if (!ws) {
+      return {
+        role: null,
+        source: 'unknown',
+        error: `current user has no membership in workspace ${workspaceId}`,
+      };
+    }
+    return { role: ws.role, source: 'members/me' };
+  } catch (err) {
+    return { role: null, source: 'unknown', error: (err as Error).message };
+  }
+}
+
+async function fetchTermsBlockers(
+  workspaceId: number,
+  session: Session,
+  apiOpts: { fetchImpl?: FetchLike },
+): Promise<TermsReport> {
+  // We fetch user-terms (account-level — 4032/4036 family) and every
+  // workspace-terms bucket in parallel. Any single failure flips the
+  // whole report into "checked: false" with a warning — partial term
+  // results would mislead the wouldSucceed gate (a missing bucket
+  // could hide a blocker), so we treat the surface as all-or-nothing.
+  // Split the heterogeneous fetches into two homogeneous Promise.all
+  // groups so TS can infer each tuple slot precisely (a single mixed
+  // spread collapses everything to a union and forces casts at the use
+  // sites).
+  try {
+    const [userTerms, workspaceResults] = await Promise.all([
+      fetchUserTerms(session.cookies, apiOpts),
+      Promise.all(
+        WORKSPACE_TERM_TYPES.map(
+          async (t) =>
+            [t, await fetchWorkspaceTerms(workspaceId, t, session.cookies, apiOpts)] as const,
+        ),
+      ),
+    ]);
+
+    const blockers: TermsBlocker[] = [];
+    for (const t of userTerms) {
+      if (t.required && !t.isAgreed) {
+        blockers.push({
+          scope: 'user',
+          type: 'USER_TERMS',
+          // 4036 (유저_약관_미동의) is the consistent code; 4032
+          // (앱인토스_미가입) only fires when the account itself is
+          // unregistered, which we'd hit at session capture rather
+          // than in this surface.
+          errorCode: 4036,
+          title: t.title,
+          action: 'aitcc me terms',
+        });
+      }
+    }
+    for (const [type, terms] of workspaceResults) {
+      for (const t of terms) {
+        if (!t.required || t.isAgreed) continue;
+        blockers.push({
+          scope: 'workspace',
+          type,
+          errorCode: WORKSPACE_TERM_ERROR_CODES[type],
+          title: t.title,
+          action: `aitcc workspace terms --type ${type}`,
+        });
+      }
+    }
+    return { blockers, checked: true };
+  } catch (err) {
+    return { blockers: [], checked: false, error: (err as Error).message };
+  }
+}
+
+function renderDryRunText(
+  input: DryRunInput,
+  derived: {
+    embedded: string;
+    flagMatch: boolean | null;
+    permissions: PermissionsReport;
+    terms: TermsReport;
+    wouldSucceed: boolean;
+  },
+): string {
+  const lines: string[] = [];
+  lines.push(`DRY RUN — app deploy ${input.appId}\n`);
+
+  // Bundle section
+  lines.push('\nBundle\n');
+  lines.push(`  path          ${input.path}\n`);
+  lines.push(`  format        ${input.bundleInfo.format.toUpperCase()}\n`);
+  lines.push(`  deploymentId  ${input.deploymentId}\n`);
+  if (derived.flagMatch === false) {
+    lines.push(`  flag match    MISMATCH (bundle embeds ${derived.embedded})\n`);
+  } else if (derived.flagMatch === true) {
+    lines.push(`  flag match    ok (matches embedded)\n`);
+  }
+  lines.push(`  size          ${formatBytes(input.bundleInfo.bytes.byteLength)}\n`);
+
+  // Context section
+  lines.push('\nContext\n');
+  lines.push(`  workspace     ${input.workspaceId}\n`);
+  lines.push(`  app           ${input.appId}\n`);
+  lines.push(`  session       valid\n`);
+  if (derived.permissions.role !== null) {
+    lines.push(`  permissions   ${derived.permissions.role}\n`);
+  } else {
+    lines.push(
+      `  permissions   unknown${derived.permissions.error ? ` (${derived.permissions.error})` : ''}\n`,
+    );
+  }
+
+  // Terms section
+  lines.push('\nTerms\n');
+  if (!derived.terms.checked) {
+    lines.push(
+      `  warning: could not check terms status (${derived.terms.error ?? 'unknown error'}).\n`,
+    );
+    lines.push(
+      '  live deploy may still fail with a 4032/4036/4037/4039/4040/4099/5001 errorCode.\n',
+    );
+  } else if (derived.terms.blockers.length === 0) {
+    lines.push('  all deploy-related terms are agreed\n');
+  } else {
+    for (const b of derived.terms.blockers) {
+      lines.push(
+        `  blocked: ${b.scope}/${b.type} — ${b.title} (errorCode ${b.errorCode})\n` +
+          `    action: ${b.action}\n`,
+      );
+    }
+  }
+
+  // Steps + memo (kept from the pre-enhancement output so existing
+  // operators reading the dry-run still see the planned pipeline).
+  lines.push('\nPlan\n');
+  const stepsLine = input.steps
+    .map((s) => {
+      if (s === 'review')
+        return `review (releaseNotes: ${JSON.stringify(input.releaseNotes ?? '')})`;
+      if (s === 'release') return `release (${input.confirm ? 'confirmed' : 'NOT confirmed'})`;
+      return s;
+    })
+    .join(' → ');
+  lines.push(`  steps         ${stepsLine}\n`);
+  lines.push(`  memo          ${input.memo ?? '(none)'}\n`);
+
+  // Result. `wouldSucceed` is the gated bundle/terms/flag-match check —
+  // it intentionally does NOT factor in `permissions.role === null` (the
+  // server is the authority on membership and the live deploy would
+  // surface a precise error). Surface that caveat in the human-readable
+  // line so an operator who skipped reading the Context block above
+  // doesn't read "all clear" and then get a server failure.
+  lines.push('\nResult\n');
+  if (!derived.wouldSucceed) {
+    lines.push('  Live deploy would fail. Resolve the blocked items above, then re-run.\n');
+  } else if (derived.permissions.role === null) {
+    lines.push(
+      '  Live deploy would clear bundle + terms checks. Workspace membership could not be confirmed; live deploy may still fail with a permissions error.\n',
+    );
+  } else {
+    lines.push('  Live deploy would clear every pre-flight check.\n');
+  }
+  return lines.join('');
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
