@@ -45,6 +45,21 @@ class InMemoryBackend implements CredentialBackend {
 }
 
 describe('credentials — env source', () => {
+  // Isolate XDG_CONFIG_HOME so a developer's real ~/.config/aitcc/auth-state.json
+  // doesn't make `loadCredentials` probe the keychain on fall-through.
+  const originalXdg = process.env.XDG_CONFIG_HOME;
+  let root: string;
+
+  beforeEach(() => {
+    root = freshConfigRoot();
+    process.env.XDG_CONFIG_HOME = root;
+  });
+
+  afterEach(() => {
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdg;
+  });
+
   // We poke `opts.env` directly so these tests don't pollute process.env.
   it('returns kind=env when both AITCC_EMAIL and AITCC_PASSWORD are set', async () => {
     const backend = new InMemoryBackend();
