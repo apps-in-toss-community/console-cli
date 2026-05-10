@@ -1,5 +1,12 @@
 # @ait-co/console-cli
 
+## 0.1.26
+
+### Patch Changes
+
+- 79df75d: chore(deps): bump @biomejs/biome 2.4.15, tsdown 0.22.0, yaml 2.8.4
+- c08ef21: chore(deps): bump vitest to 4.1.5 (patch); isolate XDG_CONFIG_HOME in credentials env-source tests so a developer's real `~/.config/aitcc/auth-state.json` doesn't leak into the suite
+
 ## 0.1.25
 
 ### Patch Changes
