@@ -4,7 +4,7 @@
 
 미니앱 번들(빌드 결과 zip/AIT)의 업로드, 검토, 배포 endpoint 묶음. 자세한 번들 포맷(AIT vs legacy zip)은 console-cli `CLAUDE.md`의 "App deploy" 섹션 참고.
 
-> **Capture status note**: GET 엔드포인트 두 개(`bundles` 목록 / `bundles/deployed`)와 `bundles/test-links`는 2026-05-11 31146 + 잔여 dog-food 앱(29349/29405)에서 실호출 envelope을 직접 캡처해 ✅로 승급했다. write 경로(initialize/complete/reviews/release/memos/test-push/withdrawal)는 **여전히 라이브 캡처 미보유** — 31146가 운영팀 검수 lock(errorCode 4046)에 묶여 있고 이전 4개 앱도 동일 큐에 들어가 있어 destructive write 없이는 실호출 본문을 받을 수 없다. 본문 shape은 [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)의 inferred 모델 + 콘솔 번들 정적 분석(`bootstrap.*.js` grep, [`.playwright-mcp/ENDPOINTS-CATALOG.md`](https://github.com/apps-in-toss-community/.playwright-mcp/) 참고) 기준으로 유지.
+> **Capture status note**: GET 엔드포인트 두 개(`bundles` 목록 / `bundles/deployed`)는 2026-05-11 31146 + 잔여 dog-food 앱(29349/29405)에서 실호출 envelope을 직접 캡처해 ✅로 승급했다. `bundles/test-links`는 같은 라운드에서 사전 번들 부재 시의 4000 error path만 확인 — success shape은 미보유라 ⚠️ 유지. write 경로(initialize/complete/reviews/release/memos/test-push/withdrawal)도 **여전히 라이브 캡처 미보유** — 31146가 운영팀 검수 lock(errorCode 4046)에 묶여 있고 이전 4개 앱도 동일 큐에 들어가 있어 destructive write 없이는 실호출 본문을 받을 수 없다. 본문 shape은 [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)의 inferred 모델 + 콘솔 번들 정적 분석(`bootstrap.*.js` grep, [`.playwright-mcp/ENDPOINTS-CATALOG.md`](https://github.com/apps-in-toss-community/.playwright-mcp/) 참고) 기준으로 유지.
 
 ## 색인
 
@@ -178,9 +178,9 @@ Exit code 17 (`api-error`).
 }
 ```
 
-`steps: ["upload"]` 만 들어가 있는 건 `--request-review` / `--release` 없이 호출했기 때문 — 둘 다 추가하면 `["upload", "review", "release"]` 순서로 채워진다 (확인됨). `releaseNotes`, `confirmed`, `memo`도 동일 호출에서 같이 echo된다.
+`steps: ["upload"]` 만 들어가 있는 건 `--request-review` / `--release` 없이 호출했기 때문 — 둘 다 추가하면 `["upload", "review", "release"]` 순서로 채워진다 (`--request-review --release-notes`만 추가한 두 번째 dry-run에서 `["upload", "review"]`까지는 라이브로 확인; `release` 추가는 [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)의 `steps` 빌드에서 확인). `releaseNotes`, `confirmed`, `memo`도 동일 호출에서 같이 echo된다.
 
-`terms.blockers`의 `errorCode` 매핑은 [`_error-codes.md`](./_error-codes.md) "Auth / 약관 family" 표와 1:1 — 라이브 deploy는 첫 번째 blocker가 가리키는 errorCode 그대로 fail한다. blocker 목록은 [`fetchUserTerms`](../../src/api/me.ts) + 5개 워크스페이스 약관 family([`fetchWorkspaceTerms`](../../src/api/workspaces.ts)) 병렬 fetch 결과 — 한 fetch라도 실패하면 `checked: false`로 떨어지고 `terms.blockers`는 빈 배열이 된다.
+`terms.blockers`의 `errorCode` 매핑은 [`_error-codes.md`](./_error-codes.md) "Auth / 약관 family" 표와 1:1 — 라이브 deploy는 첫 번째 blocker가 가리키는 errorCode 그대로 fail한다. blocker 목록은 [`fetchUserTerms`](../../src/api/me.ts) + 5개 워크스페이스 약관 family(`TOSS_LOGIN`, `BIZ_WORKSPACE`, `TOSS_PROMOTION_MONEY`, `IAA`, `IAP` — [`fetchWorkspaceTerms`](../../src/api/workspaces.ts)) 병렬 fetch 결과 — 한 fetch라도 실패하면 `checked: false`로 떨어지고 `terms.blockers`는 빈 배열이 된다. 위 캡처에서 `TOSS_PROMOTION_MONEY`(errorCode 4039)가 빠진 건 이 워크스페이스에 그 family의 required-unagreed 항목이 없어서이지, 누락이 아니다 (해당 fetch는 정상 응답했고 비어 있었다).
 
 `permissions.role`은 `members/me`의 워크스페이스 멤버십에서 derive ([`fetchConsoleMemberUserInfo`](../../src/api/me.ts)). best-effort 체크라 fetch 실패 시 `role: null` + `error` 필드만 채우고 dry-run 자체는 진행한다.
 
