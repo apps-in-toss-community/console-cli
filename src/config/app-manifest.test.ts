@@ -455,4 +455,39 @@ horizontalScreenshots:
     expect((err as ManifestError).kind).toBe('invalid-config');
     expect((err as ManifestError).message).toContain('miniApp.InvalidTitleEn');
   });
+
+  it('parses miniAppId when present as a positive integer (update mode)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aitcc-manifest-'));
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `miniAppId: 31146\ntitleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const m = await loadAppManifest(path);
+    expect(m.miniAppId).toBe(31146);
+  });
+
+  it('rejects non-positive or non-integer miniAppId', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aitcc-manifest-'));
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `miniAppId: -1\ntitleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('miniAppId');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('treats miniAppId: null as create mode (undefined)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aitcc-manifest-'));
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `miniAppId: null\ntitleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const m = await loadAppManifest(path);
+    expect(m.miniAppId).toBeUndefined();
+  });
 });

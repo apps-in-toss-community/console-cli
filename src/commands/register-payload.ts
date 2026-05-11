@@ -44,6 +44,7 @@ export function buildSubmitPayload(
     description: manifest.subtitle,
     detailDescription: manifest.description,
     images,
+    ...(manifest.miniAppId !== undefined ? { miniAppId: manifest.miniAppId } : {}),
     ...(urls.logoDarkMode !== undefined ? { darkModeIconUri: urls.logoDarkMode } : {}),
     ...(manifest.homePageUri !== undefined ? { homePageUri: manifest.homePageUri } : {}),
   };
