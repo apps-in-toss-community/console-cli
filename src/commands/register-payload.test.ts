@@ -8,6 +8,7 @@ import { buildSubmitPayload, type UploadedImageUrls } from './register-payload.j
 // the diff will be confined here.
 
 const baseManifest: AppManifest = {
+  miniAppId: undefined,
   titleKo: '테스트 앱',
   titleEn: 'Test App',
   appName: 'test-app',
@@ -58,6 +59,16 @@ describe('buildSubmitPayload', () => {
     const payload = buildSubmitPayload(baseManifest, baseUrls);
     expect('darkModeIconUri' in payload.miniApp).toBe(false);
     expect('homePageUri' in payload.miniApp).toBe(false);
+  });
+
+  it('omits miniAppId from payload when manifest has none (create mode)', () => {
+    const payload = buildSubmitPayload(baseManifest, baseUrls);
+    expect('miniAppId' in payload.miniApp).toBe(false);
+  });
+
+  it('threads miniAppId into payload when manifest provides it (update mode)', () => {
+    const payload = buildSubmitPayload({ ...baseManifest, miniAppId: 31146 }, baseUrls);
+    expect(payload.miniApp.miniAppId).toBe(31146);
   });
 
   it('includes darkModeIconUri / homePageUri when set', () => {

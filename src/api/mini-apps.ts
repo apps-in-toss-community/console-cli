@@ -1162,6 +1162,10 @@ export interface MiniAppImageEntry {
 
 export interface MiniAppSubmitPayload {
   readonly miniApp: {
+    // Optional miniAppId triggers dual-mode behavior on the server-side
+    // `POST /mini-app/review` endpoint: absent → create, present → update
+    // existing draft and re-enter the review queue. See docs/api/mini-apps.md.
+    readonly miniAppId?: number;
     readonly title: string;
     readonly titleEn: string;
     readonly appName: string;

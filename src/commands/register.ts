@@ -107,6 +107,12 @@ export async function runRegister(args: RegisterArgs, deps: RegisterDeps = {}): 
   const manifest = await loadAndValidateManifest(args, deps);
   if (!manifest) return;
 
+  if (manifest.miniAppId !== undefined && !args.json) {
+    process.stderr.write(
+      `[mode: update · miniAppId ${manifest.miniAppId}] existing app draft will be overwritten and re-enter the review queue.\n`,
+    );
+  }
+
   // --accept-terms gate: required for real submits only. --dry-run
   // skips it so users can iterate on their manifest without being
   // forced to attest to the legal-agreement checkboxes each time.

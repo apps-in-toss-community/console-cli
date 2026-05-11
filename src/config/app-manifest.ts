@@ -34,6 +34,10 @@ export class ManifestError extends Error {
 }
 
 export interface AppManifest {
+  // Present → server-side dual-mode endpoint runs as update against this
+  // miniAppId. Absent → create a new mini-app and write the assigned id back
+  // to the manifest via writeProjectMiniAppId. See docs/api/mini-apps.md.
+  readonly miniAppId: number | undefined;
   readonly titleKo: string;
   readonly titleEn: string;
   readonly appName: string;
@@ -319,6 +323,21 @@ function isValidHttpUrl(v: string): boolean {
 }
 
 function validateManifest(raw: Record<string, unknown>, configDir: string): AppManifest {
+  let miniAppId: number | undefined;
+  if (raw.miniAppId !== undefined && raw.miniAppId !== null) {
+    if (
+      typeof raw.miniAppId !== 'number' ||
+      !Number.isInteger(raw.miniAppId) ||
+      raw.miniAppId <= 0
+    ) {
+      throw new ManifestError(
+        'invalid-config',
+        `miniAppId must be a positive integer (got ${JSON.stringify(raw.miniAppId)})`,
+        'miniAppId',
+      );
+    }
+    miniAppId = raw.miniAppId;
+  }
   const titleKo = requireString(raw, 'titleKo');
   if (!TITLE_KO_REGEX.test(titleKo)) {
     throw new ManifestError(
@@ -405,6 +424,7 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
   const horizontalScreenshots = optionalPathArray(raw, 'horizontalScreenshots', configDir);
 
   return {
+    miniAppId,
     titleKo,
     titleEn,
     appName,
