@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.28
+
+### Patch Changes
+
+- 503609e: Add `aitcc members invite <email>` and `aitcc members remove <bizUserNo>` subcommands.
+
 ## 0.1.27
 
 ### Patch Changes
