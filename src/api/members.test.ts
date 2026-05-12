@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import type { FetchLike } from './http.js';
-import { fetchWorkspaceMembers } from './members.js';
+import { fetchWorkspaceMembers, inviteMember, removeMember } from './members.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -76,5 +76,59 @@ describe('fetchWorkspaceMembers', () => {
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     await expect(fetchWorkspaceMembers(1, cookies, { fetchImpl })).rejects.toThrow(/missing name/);
+  });
+});
+
+describe('inviteMember', () => {
+  it('POSTs to /workspaces/:id/invites/send/by-email with email body', async () => {
+    let calledUrl = '';
+    let calledBody: unknown;
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const result = await inviteMember(36577, 'bob@example.com', undefined, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/36577/invites/send/by-email',
+    );
+    expect(calledBody).toEqual({ email: 'bob@example.com' });
+    expect(result.raw).toBeNull();
+  });
+
+  it('includes role in the body when provided', async () => {
+    let calledBody: unknown;
+    const fetchImpl: FetchLike = async (_input, init) => {
+      calledBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: { invited: true } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await inviteMember(36577, 'bob@example.com', 'MEMBER', cookies, { fetchImpl });
+    expect(calledBody).toEqual({ email: 'bob@example.com', role: 'MEMBER' });
+  });
+});
+
+describe('removeMember', () => {
+  it('DELETEs /workspaces/:id/members/:bizUserNo', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = init?.method ?? 'GET';
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await removeMember(36577, 248610, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/36577/members/248610',
+    );
+    expect(calledMethod).toBe('DELETE');
   });
 });

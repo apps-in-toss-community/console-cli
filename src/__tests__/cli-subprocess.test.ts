@@ -181,6 +181,51 @@ describe('aitcc --json subprocess contract', () => {
     }, 30_000);
   });
 
+  describe('members', () => {
+    it('members ls --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(['members', 'ls', '--json'], dir);
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+
+    // `members invite` loads the session before validating the email, so a
+    // no-session run collapses to the auth-gate. The `invalid-email` shape
+    // (exit 2) is tested in-process via the command unit tests since faking
+    // a session in the subprocess harness isn't worth the wiring.
+    it('members invite bob@example.com --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(
+        ['members', 'invite', 'bob@example.com', '--json'],
+        dir,
+      );
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+
+    // `members remove` loads the session before validating the bizUserNo,
+    // so a no-session run collapses to the auth-gate. The `invalid-id`
+    // shape (exit 2) is exercised in the in-process unit tests.
+    it('members remove 248610 --json with no session emits authenticated:false (exit 10)', async () => {
+      const dir = await xdg.fresh();
+      const { exitCode, stdout, stderr } = await runCli(
+        ['members', 'remove', '248610', '--json'],
+        dir,
+      );
+      expect(exitCode).toBe(10);
+      const payload = assertSingleJsonLine(stdout);
+      expect(payload).toEqual({ ok: true, authenticated: false });
+      assertStderrHasNoJson(stderr);
+      expect(stderr).toBe('');
+    }, 30_000);
+  });
+
   describe('keys', () => {
     it('keys ls --json with no session emits authenticated:false (exit 10)', async () => {
       const dir = await xdg.fresh();
