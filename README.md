@@ -174,4 +174,4 @@ This is a developer convenience for fast feedback before push. CI runs the same 
 
 ---
 
-Community project. Not affiliated with Toss.
+Community open-source project.
