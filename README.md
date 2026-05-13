@@ -1,74 +1,73 @@
 # console-cli
 
-> 🚧 **Pre-1.0 (`0.1.x`)** — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next on [TODO.md](./TODO.md).
-> 1.0 이전 단계입니다. 일부 명령(`whoami`/`login`/`logout`/`upgrade`)만 동작하고, `deploy`/`logs`/`status`는 진행 중입니다.
+**한국어** · [English](./README.en.md)
 
-`aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
+> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있지만 표면은 아직 작습니다. 현재 `whoami` / `login` / `logout` / `upgrade`가 동작하고, `deploy` / `logs` / `status`는 [TODO.md](./TODO.md)에 다음 작업으로 추적 중입니다.
 
-앱인토스 콘솔을 CLI로 자동화하는 커뮤니티 도구. 최초 로그인만 브라우저로 하고, 이후 작업은 headless 브라우저로 처리한다. (MCP 모드는 후순위 — [TODO.md](./TODO.md) 참고.)
+`aitcc`는 앱인토스 개발자 콘솔을 자동화하는 커뮤니티 CLI입니다 — 브라우저로 한 번만 로그인하면 이후 작업은 셸이나 AI 코딩 에이전트가 headless 브라우저로 처리합니다.
 
-## Install
+## 설치
 
-### Platform binary (primary)
+### 플랫폼 바이너리 (권장)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | sh
 ```
 
-The installer detects OS (`uname -s`) and arch (`uname -m`), downloads the matching binary from the latest GitHub Release, verifies it against `SHA256SUMS`, and installs it to `$HOME/.local/bin/aitcc`. Node is **not** required.
+installer가 OS(`uname -s`)와 아키텍처(`uname -m`)를 자동 감지해 최신 GitHub Release에서 알맞은 바이너리를 받고, `SHA256SUMS`로 검증한 뒤 `$HOME/.local/bin/aitcc`에 설치합니다. Node는 **필요 없습니다**.
 
-Pin a specific version:
+특정 버전 고정:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.1 sh
 ```
 
-Override the install directory with `AITCC_INSTALL_DIR=/custom/path` (default `$HOME/.local/bin`).
+설치 경로를 바꾸려면 `AITCC_INSTALL_DIR=/custom/path` (기본 `$HOME/.local/bin`).
 
-### npm (fallback)
+### npm (대체 경로)
 
-If you already have Node 24+ on your PATH:
+PATH에 Node 24+가 이미 있다면:
 
 ```sh
 npm i -g @ait-co/console-cli
-# or: pnpm add -g @ait-co/console-cli
+# 또는: pnpm add -g @ait-co/console-cli
 ```
 
-This is the path that `agent-plugin` uses when a project already has Node installed.
+`agent-plugin`은 프로젝트에 Node가 이미 설치돼 있을 때 이 경로를 사용합니다.
 
-## Quick usage
+## 빠른 사용법
 
 ```sh
-aitcc --version          # print the embedded version
-aitcc login              # interactive: prompts email/password/save target, then signs in
-aitcc login --interactive   # force the visible-browser flow (skip headless)
-aitcc logout             # delete the local session file
-aitcc logout --purge     # also delete saved keychain credentials (replaces `auth clear`)
-aitcc whoami             # show the currently logged-in user + credential source
-aitcc whoami --offline   # use the cached identity without hitting the API
-aitcc whoami --json      # machine-readable output for scripts and agents
-aitcc upgrade            # self-update to the latest GitHub Release (binary installs only)
-aitcc upgrade --dry-run  # check for an update without downloading or replacing
-aitcc upgrade --force    # reinstall the latest release even if versions match
+aitcc --version          # 임베드된 버전 출력
+aitcc login              # 인터랙티브: 이메일/비밀번호/저장 위치를 묻고 로그인
+aitcc login --interactive   # headless 대신 visible-browser 강제
+aitcc logout             # 로컬 세션 파일 삭제
+aitcc logout --purge     # 저장된 키체인 자격증명도 함께 삭제 (`auth clear` 대체)
+aitcc whoami             # 현재 로그인된 사용자 + 자격증명 출처 표시
+aitcc whoami --offline   # API 호출 없이 캐시된 identity 사용
+aitcc whoami --json      # 스크립트·에이전트용 machine-readable 출력
+aitcc upgrade            # 최신 GitHub Release로 self-update (바이너리 설치만)
+aitcc upgrade --dry-run  # 다운로드·교체 없이 업데이트 확인만
+aitcc upgrade --force    # 버전이 같아도 최신 release 재설치
 ```
 
-For non-interactive use (CI, scripts), pipe the password instead of typing it:
+비대화 환경(CI, 스크립트)에서는 비밀번호를 직접 타이핑하지 말고 pipe로:
 
 ```sh
 printf '%s' "$AITCC_PASSWORD" | aitcc login --email you@example.com --password-stdin --json
-# or simply export both env vars and let the CLI pick them up:
+# 또는 환경 변수만 export하면 CLI가 알아서 읽습니다:
 AITCC_EMAIL=you@example.com AITCC_PASSWORD=… aitcc login --json
 ```
 
-Add `--save keychain` to persist the credentials so the next `aitcc login` runs without prompting.
+`--save keychain`을 붙이면 자격증명이 저장돼 다음 `aitcc login`이 prompt 없이 실행됩니다.
 
-`aitcc upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
+`aitcc upgrade`는 GitHub API anonymous rate limit을 피하려고 `GITHUB_TOKEN`을 존중합니다.
 
-Planned commands — `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
+예정 명령(`deploy`, `logs`, `status`)은 [TODO.md](./TODO.md)에서 추적합니다.
 
-### Project context (`aitcc.yaml`)
+### 프로젝트 컨텍스트 (`aitcc.yaml`)
 
-App- and workspace-scoped commands (`app status`, `app deploy`, `app certs ls`, `keys ls`, …) accept an explicit `--workspace <id>` and positional `<appId>`, but you can also drop an `aitcc.yaml` (or `aitcc.json`) at the root of your project and let the CLI find it by walking up from the current directory:
+app·workspace 범위 명령(`app status`, `app deploy`, `app certs ls`, `keys ls` 등)은 `--workspace <id>` 플래그와 positional `<appId>`를 받지만, 프로젝트 루트에 `aitcc.yaml`(또는 `aitcc.json`)을 두면 CLI가 cwd부터 상위로 올라가며 찾아 자동 적용합니다.
 
 ```yaml
 # aitcc.yaml
@@ -76,102 +75,100 @@ workspaceId: 3095
 miniAppId: 31146
 ```
 
-Resolution priority (highest first):
+해상도 우선순위 (높은 것부터):
 
-- **workspace**: `--workspace` flag → `AITCC_WORKSPACE` env → yaml `workspaceId` → session selection (`aitcc workspace use`)
-- **mini-app**: positional/flag `<appId>` → `AITCC_APP` env → yaml `miniAppId`
+- **workspace**: `--workspace` 플래그 → `AITCC_WORKSPACE` env → yaml `workspaceId` → 세션 선택값 (`aitcc workspace use`)
+- **mini-app**: positional/플래그 `<appId>` → `AITCC_APP` env → yaml `miniAppId`
 
-Each command prints a one-line context header to stderr so you always see what was resolved (suppressed under `--json` so machine-readable output is unaffected):
+각 명령은 어떤 값이 resolve됐는지 stderr에 한 줄 헤더로 출력합니다 (`--json` 모드에선 machine-readable 출력에 영향 없도록 생략):
 
 ```
 [workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]
 ```
 
-The walk stops at the nearest `.git` directory and never crosses `$HOME`. Passing `--workspace` overrides any yaml `miniAppId` (it may belong to a different workspace), but `AITCC_WORKSPACE` keeps it.
+탐색은 가장 가까운 `.git` 디렉토리에서 멈추고 `$HOME` 위로는 절대 안 갑니다. `--workspace`로 workspace를 명시하면 yaml의 `miniAppId`는 무시되지만(다른 workspace 소속일 수 있음) `AITCC_WORKSPACE` env는 yaml miniApp을 유지합니다.
 
-When `aitcc app register` succeeds, the returned `miniAppId` is written back into the resolved `aitcc.yaml`/`aitcc.json` (comments and key order in YAML are preserved). Subsequent commands can then run without `--app`. The write-back is skipped under `--dry-run` and silently no-ops when the file already pins the same id; if no project file exists in the tree, the CLI prints a one-line stderr hint instead of creating one.
+`aitcc app register`가 성공하면 응답의 `miniAppId`가 resolve된 `aitcc.yaml`/`aitcc.json`에 write-back됩니다 (YAML 주석·키 순서 보존). 이후 명령은 `--app` 없이 동작합니다. `--dry-run`에선 write-back을 건너뛰고, 같은 id가 이미 박혀 있으면 silently no-op. 프로젝트 파일 자체가 없으면 새로 만들지 않고 stderr에 한 줄 hint만 띄웁니다.
 
-To bootstrap an `aitcc.yaml` from scratch, run `aitcc app init`. The command asks for the required manifest fields interactively (workspace is picked from the live API list), validates each value against the same constraints that `register` enforces, and lays the optional fields (`homePageUri`, `logoDarkMode`, `keywords`, `horizontalScreenshots`) as commented-out lines for later edits. Image paths (`./assets/logo.png`, `./assets/thumbnail.png`, `./assets/screenshot-{1,2,3}.png`) are written as placeholders — drop the actual files into `./assets/` before running `aitcc app register`. `init` requires an interactive TTY and refuses `--json` / non-TTY runs with `interactive-required` (exit 2).
+처음 매니페스트를 만들 땐 `aitcc app init`으로 시작합니다. 필수 필드를 인터랙티브 prompt로 받고(workspace는 live API에서 가져온 목록에서 선택), 각 값을 `register`와 동일한 제약으로 검증합니다. optional 필드(`homePageUri`, `logoDarkMode`, `keywords`, `horizontalScreenshots`)는 주석 처리된 줄로 미리 깔립니다. 이미지 경로(`./assets/logo.png`, `./assets/thumbnail.png`, `./assets/screenshot-{1,2,3}.png`)는 placeholder로 적히니 `aitcc app register` 전에 `./assets/`에 실제 파일을 넣어둡니다. `init`은 인터랙티브 TTY를 요구하고, `--json`/non-TTY 실행은 `interactive-required` (exit 2)로 거부합니다.
 
 ```sh
 mkdir my-app && cd my-app
-aitcc app init           # interactive prompt → ./aitcc.yaml
-# (drop logo/thumbnail/screenshots into ./assets/)
-aitcc app register       # creates the mini-app and writes miniAppId back
-aitcc app status         # works with no flags — context comes from aitcc.yaml
+aitcc app init           # 인터랙티브 prompt → ./aitcc.yaml
+# (logo/thumbnail/screenshots를 ./assets/에 넣음)
+aitcc app register       # 미니앱 생성 + miniAppId write-back
+aitcc app status         # 플래그 없이 동작 — aitcc.yaml에서 컨텍스트 읽음
 ```
 
-### Login details
+### 로그인 동작
 
-`aitcc login` resolves credentials from (in order) explicit `--email` + `--password` / `--password-stdin` flags, the `AITCC_EMAIL` + `AITCC_PASSWORD` environment, the OS keychain (saved by a prior `--save keychain`), or — on a TTY — an interactive prompt that asks for both fields plus where to save them. It then launches a Chrome-family browser via the Chrome DevTools Protocol, drives the sign-in headlessly when credentials are available, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
+`aitcc login`은 자격증명을 다음 순서로 찾습니다: `--email` + `--password` / `--password-stdin` 플래그 → `AITCC_EMAIL` + `AITCC_PASSWORD` 환경 변수 → OS 키체인(이전 `--save keychain`으로 저장) → (TTY 환경에서만) 인터랙티브 prompt. 자격증명을 확보하면 Chrome DevTools Protocol로 Chrome 계열 브라우저를 띄워 가능하면 headless로 로그인을 진행하고, main frame이 로그인 후 workspace 페이지에 도달할 때까지 기다립니다. 도달하면 CDP로 모든 쿠키(JS로는 못 보는 `HttpOnly` 인증 쿠키 포함)를 덤프해 로컬 세션 파일에 저장합니다. 브라우저는 종료 시 삭제되는 임시 `--user-data-dir`에서 실행되므로 일상 브라우저 프로필은 절대 건드리지 않습니다.
 
-Pass `--interactive` to force the visible-browser flow even when credentials are configured (useful for switching accounts or working around step-up auth). The legacy `aitcc auth set` / `auth clear` / `auth status` commands still work but emit a deprecation warning — prefer `aitcc login` (interactive prompt offers a save option), `aitcc logout --purge`, and `aitcc whoami` instead. They will be removed in 1.0.
+자격증명이 설정돼 있어도 visible-browser flow를 강제하려면 `--interactive`를 사용합니다 (계정 전환, step-up 인증 우회). 레거시 `aitcc auth set` / `auth clear` / `auth status`는 여전히 동작하지만 deprecation 경고를 emit합니다 — `aitcc login`(인터랙티브 prompt가 저장 옵션 제공), `aitcc logout --purge`, `aitcc whoami`를 사용하세요. 1.0에서 제거됩니다.
 
-The CLI looks for Chrome in the standard OS install locations (Google Chrome, Chromium, Microsoft Edge). Override the executable with `AITCC_BROWSER=/path/to/chrome` if your install is elsewhere; override the sign-in URL with `AITCC_OAUTH_URL` if you need to point at a staging environment. `--timeout <seconds>` controls how long the CLI will wait for sign-in to finish (default 300s).
+CLI는 OS 표준 위치(Google Chrome, Chromium, Microsoft Edge)에서 Chrome을 찾습니다. 다른 곳에 설치돼 있으면 `AITCC_BROWSER=/path/to/chrome`으로 실행 파일을 지정하고, 스테이징 환경을 가리키려면 `AITCC_OAUTH_URL`로 로그인 URL을 override합니다. `--timeout <초>`로 로그인 대기 시간을 조절합니다 (기본 300초).
 
-## Session storage
+## 세션 저장
 
-The local session lives at an XDG-compliant path with file mode `0600`:
+로컬 세션은 XDG 규약 경로에 mode `0600`으로 저장됩니다:
 
 - Linux/macOS: `$XDG_CONFIG_HOME/aitcc/session.json` (fallback `~/.config/aitcc/session.json`)
 - Windows: `%APPDATA%\aitcc\session.json`
 
-The containing directory is created with mode `0700`. Cookies captured during login are **never** printed, logged, or attached to `--verbose` output — only `user.email`, `name`, and workspace summary surface through `whoami`.
+상위 디렉토리는 mode `0700`으로 생성됩니다. 로그인 중 캡처된 쿠키는 **절대** 출력·로깅되지 않으며 `--verbose`에도 노출되지 않습니다 — `whoami`로 노출되는 건 `user.email`, `name`, workspace 요약뿐입니다.
 
-See [CLAUDE.md](./CLAUDE.md) for the rationale behind using a plain `0600` file instead of an OS keychain.
+OS 키체인 대신 plain `0600` 파일을 쓰는 이유는 [CLAUDE.md](./CLAUDE.md) 참조.
 
-## Continuous integration
+## CI/CD 통합
 
-For one-shot CI runs (e.g. `aitcc app deploy` from a workflow), seed the runner with a session captured on a desktop machine:
+워크플로의 한 번성 실행(`aitcc app deploy` 등)을 위해 desktop에서 캡처한 세션을 runner에 주입합니다:
 
 ```sh
-# Desktop (already logged in):
-aitcc auth export --format env >> $GITHUB_ENV       # or: aitcc auth export --format env  → store as a secret
-# CI (with the secret exposed as $AITCC_SESSION):
+# Desktop (이미 로그인된 상태):
+aitcc auth export --format env >> $GITHUB_ENV       # 또는 secret으로 저장
+# CI ($AITCC_SESSION으로 secret 노출):
 aitcc app deploy --bundle ./dist/app.zip --json
 ```
 
-When `AITCC_SESSION` is set, every command reads the session from that env var instead of the local file. `logout` / `workspace use` / other write paths are silenced under env mode so a CI host never materialises a session file. Use `aitcc auth import --from-env` if you actually want the blob persisted to disk (mainly for restoring a desktop after a wipe).
+`AITCC_SESSION`이 설정되면 모든 명령은 로컬 파일 대신 이 env var에서 세션을 읽습니다. env 모드에선 `logout` / `workspace use` 등의 write 경로가 비활성화돼 CI 호스트가 세션 파일을 절대 디스크에 떨어뜨리지 않습니다. blob을 disk에 영구 저장하고 싶다면 `aitcc auth import --from-env`를 쓰세요 (주로 desktop wipe 후 복구).
 
-> **KR-only**: console session cookies are bound to KR residential IPs. The same `AITCC_SESSION` blob succeeds from a Korean machine but **fails with `401` / `errorCode: 4010`** from non-KR egress, including GitHub-hosted runners (Azure US/EU). Use a KR self-hosted runner or run the command yourself. See [`docs/api/auth-session.md`](./docs/api/auth-session.md).
+> **KR 전용**: 콘솔 세션 쿠키는 KR residential IP에 바인딩됩니다. 같은 `AITCC_SESSION` blob이 한국 머신에선 동작하지만 비KR egress(GitHub-hosted runner — Azure US/EU 포함)에선 `401` / `errorCode: 4010`으로 실패합니다. KR self-hosted runner를 쓰거나 직접 실행하세요. 자세한 내용은 [`docs/api/auth-session.md`](./docs/api/auth-session.md) 참조.
 
-## Update notifications
+## 업데이트 알림
 
-When running interactively, `aitcc` occasionally checks for a newer release and prints a one-line notice on stderr if one exists. The check is rate-limit friendly:
+인터랙티브 실행 시 `aitcc`는 가끔 최신 release를 확인해 새 버전이 있으면 stderr에 한 줄 알림을 출력합니다. rate-limit 친화적:
 
-- At most one network call every 24 hours, no matter how often you run commands.
-- Even a failed check updates the throttle window, so a broken network or a 403 from GitHub does not loop back within minutes.
-- Conditional GET (`If-None-Match`) — a 304 response does not consume the anonymous GitHub rate-limit bucket.
-- The check is skipped entirely when stdout is not a TTY, when `--json` is passed, or when `AITCC_NO_UPDATE_CHECK=1` is set.
+- 명령을 아무리 자주 실행해도 24시간에 한 번만 네트워크 호출.
+- 실패한 체크도 throttle 윈도우를 갱신하므로 네트워크 단절이나 GitHub 403이 분 단위로 루프되지 않음.
+- Conditional GET (`If-None-Match`) — 304 응답은 anonymous rate-limit bucket을 소모하지 않음.
+- stdout이 TTY가 아니거나, `--json`이 설정돼 있거나, `AITCC_NO_UPDATE_CHECK=1`이면 체크 자체를 건너뜀.
 
-Cached state lives at `$XDG_CACHE_HOME/aitcc/upgrade-check.json` (fallback `~/.cache/aitcc/upgrade-check.json`).
+캐시 상태는 `$XDG_CACHE_HOME/aitcc/upgrade-check.json` (fallback `~/.cache/aitcc/upgrade-check.json`)에 저장됩니다.
 
-## Machine-readable output (`--json`)
+## 기계 가독 출력 (`--json`)
 
-Every command accepts `--json`. When set:
+모든 명령이 `--json`을 받습니다. 설정 시:
 
-- All normal output goes to stdout as a single JSON document on one line.
-- All diagnostics go to stderr as plain text.
-- Exit codes are meaningful and documented per command (see `src/exit.ts`).
+- 정상 출력은 stdout에 한 줄짜리 JSON document로.
+- 모든 진단은 stderr에 plain text로.
+- exit code는 명령별로 의미가 있고 문서화돼 있습니다 (`src/exit.ts` 참조).
 
-`agent-plugin` skills shell out with `--json` exclusively and parse stdout.
+`agent-plugin` skill은 항상 `--json`으로 shell out하고 stdout을 파싱합니다.
 
-## Status
+## 진행 상황
 
-`login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.
+`login`, `logout`, `whoami`, `upgrade`는 end-to-end 동작 — `login`은 CDP로 실제 브라우저를 띄우고 `whoami`는 live console member API를 호출합니다. `deploy`, `logs`, `status`가 다음 작업 — [TODO.md](./TODO.md) 참고. 전체 로드맵은 [organization landing page](https://apps-in-toss-community.github.io/) 참조.
 
 ## Pre-commit hook
 
-Optional but recommended. After cloning, activate the standard pre-commit hook (runs `biome check` on staged files):
+선택 사항이지만 권장합니다. clone 후 표준 pre-commit hook을 활성화하면 staged 파일에 `biome check`가 자동으로 돕니다 (push 전 빠른 피드백):
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
-This is a developer convenience for fast feedback before push. CI runs the same checks as the enforcement layer, so contributors who don't activate the hook will still see lint failures in their PR.
-
-선택 사항이지만 권장합니다. clone 후 표준 pre-commit hook을 활성화하면 staged 파일에 `biome check`가 자동으로 돕니다 (push 전에 빠른 피드백). 활성화하지 않아도 동일한 검사가 CI에서 실행되므로 PR 단계에서 lint 실패를 볼 수 있습니다.
+활성화하지 않아도 동일한 검사가 CI에서 강제 계층으로 실행되므로 PR 단계에서 lint 실패를 볼 수 있습니다.
 
 ---
 
-Community open-source project.
+커뮤니티 오픈소스 프로젝트입니다.
