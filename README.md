@@ -7,10 +7,6 @@
 
 앱인토스 콘솔을 CLI로 자동화하는 커뮤니티 도구. 최초 로그인만 브라우저로 하고, 이후 작업은 headless 브라우저로 처리한다. (MCP 모드는 후순위 — [TODO.md](./TODO.md) 참고.)
 
-> This is an **unofficial, community-maintained** project. Not affiliated with or endorsed by Toss or the Apps in Toss team. It drives the public developer console from a user's authenticated browser session — it is **not** a client for a blessed, documented API, and behavior may break whenever the console UI changes.
->
-> 이 프로젝트는 **비공식 커뮤니티 프로젝트**입니다. 토스/앱인토스 팀과 제휴 관계가 아닙니다. 공식 API를 호출하지 않고 브라우저 세션을 통해 콘솔을 자동화하므로, 콘솔 UI가 바뀌면 동작이 깨질 수 있습니다.
-
 ## Install
 
 ### Platform binary (primary)
@@ -175,3 +171,7 @@ git config core.hooksPath .githooks
 This is a developer convenience for fast feedback before push. CI runs the same checks as the enforcement layer, so contributors who don't activate the hook will still see lint failures in their PR.
 
 선택 사항이지만 권장합니다. clone 후 표준 pre-commit hook을 활성화하면 staged 파일에 `biome check`가 자동으로 돕니다 (push 전에 빠른 피드백). 활성화하지 않아도 동일한 검사가 CI에서 실행되므로 PR 단계에서 lint 실패를 볼 수 있습니다.
+
+---
+
+Community open-source project.
