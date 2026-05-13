@@ -2,6 +2,9 @@
 
 [한국어](./README.md) · **English**
 
+[![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
+[![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
+
 > Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next on [TODO.md](./TODO.md).
 
 `aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
