@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next on [TODO.md](./TODO.md).
+> Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next.
 
 `aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
 
@@ -66,7 +66,7 @@ Add `--save keychain` to persist the credentials so the next `aitcc login` runs 
 
 `aitcc upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
-Planned commands — `deploy`, `logs`, `status` — are tracked in [TODO.md](./TODO.md).
+Planned commands: `deploy`, `logs`, `status`.
 
 ### Project context (`aitcc.yaml`)
 
@@ -160,7 +160,7 @@ Every command accepts `--json`. When set:
 
 ## Status
 
-`login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next — see [TODO.md](./TODO.md). See the [organization landing page](https://apps-in-toss-community.github.io/) for the full roadmap.
+`login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next. See the [organization landing page](https://aitc.dev/) for the full roadmap.
 
 ## Pre-commit hook
 
