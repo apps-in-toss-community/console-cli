@@ -158,6 +158,23 @@ Every command accepts `--json`. When set:
 
 `agent-plugin` skills shell out with `--json` exclusively and parse stdout.
 
+## Telemetry
+
+`aitcc` can collect optional anonymous usage statistics. **Opt-in only by default** — on first run the CLI prompts for consent in a TTY, and silently defaults to deny in CI/pipe environments.
+
+Collected: command name, version, platform, random anonymous ID. No personally identifiable information (email, session, user ID, etc.) is ever sent. See the [privacy page](https://docs.aitc.dev/privacy) for details.
+
+```sh
+aitcc telemetry status   # show current consent state + anon ID
+aitcc telemetry enable   # enable usage statistics
+aitcc telemetry disable  # disable
+aitcc telemetry delete   # request deletion of server-side data + rotate local anon ID
+```
+
+State file: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/telemetry.json`, mode `0600`).
+
+> **Note**: events will be rejected server-side until the metrics-ingest `source` allowlist is updated to include `console-cli`. The client-side code is ready.
+
 ## Status
 
 `login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next. See the [organization landing page](https://aitc.dev/) for the full roadmap.
