@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있지만 표면은 아직 작습니다. 현재 `whoami` / `login` / `logout` / `upgrade`가 동작하고, `deploy` / `logs` / `status`는 [TODO.md](./TODO.md)에 다음 작업으로 추적 중입니다.
+> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있지만 표면은 아직 작습니다. 현재 `whoami` / `login` / `logout` / `upgrade`가 동작하고, `deploy` / `logs` / `status`는 다음 작업으로 진행됩니다.
 
 `aitcc`는 앱인토스 개발자 콘솔을 자동화하는 커뮤니티 CLI입니다 — 브라우저로 한 번만 로그인하면 이후 작업은 셸이나 AI 코딩 에이전트가 headless 브라우저로 처리합니다.
 
@@ -66,7 +66,7 @@ AITCC_EMAIL=you@example.com AITCC_PASSWORD=… aitcc login --json
 
 `aitcc upgrade`는 GitHub API anonymous rate limit을 피하려고 `GITHUB_TOKEN`을 존중합니다.
 
-예정 명령(`deploy`, `logs`, `status`)은 [TODO.md](./TODO.md)에서 추적합니다.
+예정 명령은 `deploy`, `logs`, `status` 입니다.
 
 ### 프로젝트 컨텍스트 (`aitcc.yaml`)
 
@@ -160,7 +160,7 @@ aitcc app deploy --bundle ./dist/app.zip --json
 
 ## 진행 상황
 
-`login`, `logout`, `whoami`, `upgrade`는 end-to-end 동작 — `login`은 CDP로 실제 브라우저를 띄우고 `whoami`는 live console member API를 호출합니다. `deploy`, `logs`, `status`가 다음 작업 — [TODO.md](./TODO.md) 참고. 전체 로드맵은 [organization landing page](https://apps-in-toss-community.github.io/) 참조.
+`login`, `logout`, `whoami`, `upgrade`는 end-to-end 동작 — `login`은 CDP로 실제 브라우저를 띄우고 `whoami`는 live console member API를 호출합니다. `deploy`, `logs`, `status`가 다음 작업입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
 
 ## Pre-commit hook
 
