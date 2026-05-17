@@ -158,6 +158,23 @@ aitcc app deploy --bundle ./dist/app.zip --json
 
 `agent-plugin` skill은 항상 `--json`으로 shell out하고 stdout을 파싱합니다.
 
+## 텔레메트리
+
+`aitcc`는 선택적 익명 사용 통계를 수집할 수 있습니다. **기본값은 비활성(opt-in)** — 처음 실행 시 TTY 환경에서만 동의를 묻고, CI/파이프 환경에선 자동으로 비활성화됩니다.
+
+수집하는 정보: 실행된 명령 이름, 버전, 플랫폼, 임의 익명 ID. 개인 식별 정보(이메일, 세션, 사용자 ID 등)는 절대 전송하지 않습니다. 자세한 내용은 [privacy 페이지](https://docs.aitc.dev/privacy) 참조.
+
+```sh
+aitcc telemetry status   # 현재 동의 상태 + 익명 ID 확인
+aitcc telemetry enable   # 통계 수집 활성화
+aitcc telemetry disable  # 비활성화
+aitcc telemetry delete   # 서버에 저장된 데이터 삭제 요청 + 로컬 익명 ID 교체
+```
+
+상태 파일: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/telemetry.json`, mode `0600`).
+
+> **참고**: metrics-ingest 서버의 `source` allowlist가 `console-cli`를 포함하도록 업데이트되기 전까지는 이벤트가 서버에서 거부될 수 있습니다. 클라이언트 측 코드는 이미 준비돼 있습니다.
+
 ## 진행 상황
 
 `login`, `logout`, `whoami`, `upgrade`는 end-to-end 동작 — `login`은 CDP로 실제 브라우저를 띄우고 `whoami`는 live console member API를 호출합니다. `deploy`, `logs`, `status`가 다음 작업입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
