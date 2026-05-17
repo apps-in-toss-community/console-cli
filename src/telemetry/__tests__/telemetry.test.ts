@@ -210,3 +210,139 @@ describe('deleteMyData', () => {
     expect(newId).not.toBe(originalId);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tier 1 payload includes tier: 1
+// ---------------------------------------------------------------------------
+
+describe('send tier field', () => {
+  it('includes tier: 1 in the Tier 1 payload', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { acceptConsent } = await import('../state.js');
+    await acceptConsent();
+    const { send } = await import('../send.js');
+    await send('https://t.aitc.dev', 'cli_invoked', '0.1.29', { command: 'status' });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.tier).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tier 0 ping tests
+// ---------------------------------------------------------------------------
+
+describe('sendTier0Ping', () => {
+  it('sends tier:0 payload without anon_id', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { sendTier0Ping } = await import('../send.js');
+    await sendTier0Ping('https://t.aitc.dev', '0.1.29');
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://t.aitc.dev/e');
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.tier).toBe(0);
+    expect(body.source).toBe('console-cli');
+    expect(body.version).toBe('0.1.29');
+    expect(body.anon_id).toBeUndefined();
+  });
+
+  it('does not throw on network failure (fire-and-forget)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+    const { sendTier0Ping } = await import('../send.js');
+    // Should not throw
+    await expect(sendTier0Ping('https://t.aitc.dev', '0.1.29')).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trackTier0Ping (index.ts) tests
+// ---------------------------------------------------------------------------
+
+describe('trackTier0Ping', () => {
+  it('sends ping on first call (no last sent)', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { trackTier0Ping } = await import('../index.js');
+    await trackTier0Ping(false);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.tier).toBe(0);
+  });
+
+  it('skips when AITC_TELEMETRY=off', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    process.env.AITC_TELEMETRY = 'off';
+    const { trackTier0Ping } = await import('../index.js');
+    await trackTier0Ping(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    delete process.env.AITC_TELEMETRY;
+  });
+
+  it('skips when --no-telemetry flag is true', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { trackTier0Ping } = await import('../index.js');
+    await trackTier0Ping(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('skips when tier0OptOut is true', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { setTier0OptOut } = await import('../state.js');
+    await setTier0OptOut(true);
+    const { trackTier0Ping } = await import('../index.js');
+    await trackTier0Ping(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('daily dedupe: skips second call on same day', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('', { status: 200 }));
+    const { trackTier0Ping } = await import('../index.js');
+    // First call
+    await trackTier0Ping(false);
+    // Second call on same day
+    await trackTier0Ping(false);
+    // Should only have fetched once
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// policy_version bump: granted → undecided
+// ---------------------------------------------------------------------------
+
+describe('policy version bump', () => {
+  it('reverts granted to undecided when policy version bumped to 2026-05-18', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const dir = join(root, 'aitcc');
+    await mkdir(dir, { recursive: true });
+    // Write old policy version (pre-bump)
+    const oldState = JSON.stringify({
+      schemaVersion: 1,
+      consent: 'granted',
+      policyVersion: '2026-05-12',
+      anonId: 'aaaaaaaa-0000-4000-8000-000000000000',
+    });
+    await writeFile(join(dir, 'telemetry.json'), oldState);
+
+    const { resolveEffectiveConsent, CURRENT_POLICY_VERSION } = await import('../state.js');
+    expect(CURRENT_POLICY_VERSION).toBe('2026-05-18');
+    expect(await resolveEffectiveConsent()).toBe('undecided');
+  });
+});

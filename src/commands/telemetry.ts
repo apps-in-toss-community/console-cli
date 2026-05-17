@@ -7,8 +7,11 @@ import {
   deleteMyData,
   denyConsent,
   getOrCreateAnonId,
+  getTier0LastSent,
+  isTier0OptedOut,
   readConsentState,
   resolveEffectiveConsent,
+  setTier0OptOut,
   TELEMETRY_ENDPOINT,
   telemetryFilePath,
 } from '../telemetry/index.js';
@@ -16,34 +19,52 @@ import {
 const statusCommand = defineCommand({
   meta: {
     name: 'status',
-    description: 'Show current telemetry consent state and anon_id.',
+    description: 'Show current telemetry status for both Tier 0 and Tier 1.',
   },
   args: {
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
-    const consent = await resolveEffectiveConsent();
-    const anonId = consent === 'granted' ? await getOrCreateAnonId() : null;
+    const [tier1Consent, tier0OptOut, tier0LastSent, anonId] = await Promise.all([
+      resolveEffectiveConsent(),
+      isTier0OptedOut(),
+      getTier0LastSent(),
+      resolveEffectiveConsent().then((c) => (c === 'granted' ? getOrCreateAnonId() : null)),
+    ]);
     const filePath = telemetryFilePath();
+
+    const tier0Status = tier0OptOut ? 'off (opted out)' : 'on';
+    const tier0Display = tier0LastSent
+      ? `${tier0Status}  (last sent: ${tier0LastSent})`
+      : tier0Status;
 
     if (args.json) {
       process.stdout.write(
         `${JSON.stringify({
           ok: true,
-          consent,
-          policyVersion: CURRENT_POLICY_VERSION,
+          tier0: {
+            status: tier0OptOut ? 'opted-out' : 'on',
+            lastSent: tier0LastSent ?? null,
+          },
+          tier1: {
+            consent: tier1Consent,
+            policyVersion: CURRENT_POLICY_VERSION,
+            ...(anonId ? { anonId } : {}),
+          },
           endpoint: TELEMETRY_ENDPOINT,
-          ...(anonId ? { anonId } : {}),
           filePath,
         })}\n`,
       );
       return exitAfterFlush(ExitCode.Ok);
     }
 
-    process.stdout.write(`Telemetry: ${consent}\n`);
-    process.stdout.write(`Policy version: ${CURRENT_POLICY_VERSION}\n`);
-    process.stdout.write(`Endpoint: ${TELEMETRY_ENDPOINT}\n`);
-    if (anonId) process.stdout.write(`Anon ID: ${anonId}\n`);
+    process.stdout.write('Telemetry status\n');
+    process.stdout.write(`  Tier 0 (anonymous daily ping): ${tier0Display}\n`);
+    process.stdout.write(
+      `  Tier 1 (opt-in events):        ${tier1Consent}  (policyVersion: ${CURRENT_POLICY_VERSION})\n`,
+    );
+    process.stdout.write(`\nEndpoint:   ${TELEMETRY_ENDPOINT}\n`);
+    if (anonId) process.stdout.write(`Anon ID:    ${anonId}\n`);
     process.stdout.write(`State file: ${filePath}\n`);
     return exitAfterFlush(ExitCode.Ok);
   },
@@ -127,15 +148,55 @@ const deleteCommand = defineCommand({
   },
 });
 
+const tier0OffCommand = defineCommand({
+  meta: {
+    name: 'tier0-off',
+    description: 'Permanently opt out of the Tier 0 anonymous daily ping.',
+  },
+  args: {
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    await setTier0OptOut(true);
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, tier0: { status: 'opted-out' } })}\n`);
+    } else {
+      process.stdout.write('Tier 0 anonymous ping disabled. No daily pings will be sent.\n');
+    }
+    return exitAfterFlush(ExitCode.Ok);
+  },
+});
+
+const tier0OnCommand = defineCommand({
+  meta: {
+    name: 'tier0-on',
+    description: 'Re-enable the Tier 0 anonymous daily ping after a previous tier0-off.',
+  },
+  args: {
+    json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
+  },
+  async run({ args }) {
+    await setTier0OptOut(false);
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, tier0: { status: 'on' } })}\n`);
+    } else {
+      process.stdout.write('Tier 0 anonymous ping re-enabled.\n');
+    }
+    return exitAfterFlush(ExitCode.Ok);
+  },
+});
+
 export const telemetryCommand = defineCommand({
   meta: {
     name: 'telemetry',
-    description: 'Manage anonymous usage telemetry (opt-in).',
+    description: 'Manage anonymous usage telemetry.',
   },
   subCommands: {
     status: statusCommand,
     enable: enableCommand,
     disable: disableCommand,
     delete: deleteCommand,
+    'tier0-off': tier0OffCommand,
+    'tier0-on': tier0OnCommand,
   },
 });
