@@ -12,7 +12,7 @@ import { configDir } from '../paths.js';
 export type ConsentState = 'granted' | 'denied' | 'undecided';
 
 /** Current policy version. Bump whenever the privacy policy changes. */
-export const CURRENT_POLICY_VERSION = '2026-05-12';
+export const CURRENT_POLICY_VERSION = '2026-05-18';
 
 // ---------------------------------------------------------------------------
 // File path
@@ -31,6 +31,10 @@ interface TelemetryState {
   readonly consent: ConsentState;
   readonly policyVersion: string;
   readonly anonId?: string;
+  /** ISO date (YYYY-MM-DD) of the last successfully sent Tier 0 ping. */
+  readonly tier0LastSent?: string;
+  /** When true, the user has permanently opted out of Tier 0 pings. */
+  readonly tier0OptOut?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +65,8 @@ export async function readStateFile(): Promise<TelemetryState | null> {
     consent: obj.consent as ConsentState,
     policyVersion: obj.policyVersion,
     ...(typeof obj.anonId === 'string' ? { anonId: obj.anonId } : {}),
+    ...(typeof obj.tier0LastSent === 'string' ? { tier0LastSent: obj.tier0LastSent } : {}),
+    ...(obj.tier0OptOut === true ? { tier0OptOut: true } : {}),
   };
 }
 
@@ -142,6 +148,58 @@ export async function denyConsent(): Promise<void> {
     ...(s?.anonId ? { anonId: s.anonId } : {}),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Tier 0 opt-out
+// ---------------------------------------------------------------------------
+
+/** Returns true if Tier 0 pings are permanently opted out. */
+export async function isTier0OptedOut(): Promise<boolean> {
+  const s = await readStateFile();
+  return s?.tier0OptOut === true;
+}
+
+/** Permanently opt out of Tier 0 pings (sets tier0OptOut: true). */
+export async function setTier0OptOut(optOut: boolean): Promise<void> {
+  const s = await readStateFile();
+  const current: TelemetryState = s ?? {
+    schemaVersion: 1,
+    consent: 'undecided',
+    policyVersion: CURRENT_POLICY_VERSION,
+  };
+  if (optOut) {
+    await writeStateFile({ ...current, tier0OptOut: true });
+  } else {
+    // Remove tier0OptOut by rebuilding without it
+    const { tier0OptOut: _removed, ...rest } = current;
+    await writeStateFile(rest as TelemetryState);
+  }
+}
+
+/**
+ * Returns the ISO date (YYYY-MM-DD) of the last sent Tier 0 ping, or null.
+ */
+export async function getTier0LastSent(): Promise<string | null> {
+  const s = await readStateFile();
+  return s?.tier0LastSent ?? null;
+}
+
+/**
+ * Record that a Tier 0 ping was sent today (ISO date marker).
+ */
+export async function markTier0Sent(date: string): Promise<void> {
+  const s = await readStateFile();
+  const current: TelemetryState = s ?? {
+    schemaVersion: 1,
+    consent: 'undecided',
+    policyVersion: CURRENT_POLICY_VERSION,
+  };
+  await writeStateFile({ ...current, tier0LastSent: date });
+}
+
+// ---------------------------------------------------------------------------
+// Data deletion
+// ---------------------------------------------------------------------------
 
 /**
  * Delete data: send DELETE /e?anon_id=... to the server (if we have an id),

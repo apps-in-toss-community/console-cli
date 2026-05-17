@@ -1,10 +1,14 @@
 /**
  * Telemetry client — internal to @ait-co/console-cli.
  *
- * Usage: import { trackInvocation, trackInstall } from './telemetry/index.js'
+ * Usage: import { trackInvocation, trackTier0Ping } from './telemetry/index.js'
  *
- * Events are fire-and-forget (non-blocking). Consent is opt-in only.
- * First invocation on a TTY prompts the user; non-TTY (CI) defaults to deny.
+ * Tier 0 (opt-out): anonymous daily ping. Fires on every invocation; client-side
+ *   daily dedupe via tier0LastSent. Respects AITC_TELEMETRY=off, --no-telemetry,
+ *   and permanent tier0OptOut flag.
+ *
+ * Tier 1 (opt-in): detailed events. First invocation on a TTY prompts the user;
+ *   non-TTY (CI) defaults to deny.
  *
  * Endpoint override for staging: AITCC_TELEMETRY_ENV=staging
  * (or automatically when VERSION contains '-dev').
@@ -14,8 +18,16 @@ import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { VERSION } from '../version.js';
-import { send } from './send.js';
-import { acceptConsent, denyConsent, resolveEffectiveConsent, telemetryFilePath } from './state.js';
+import { send, sendTier0Ping } from './send.js';
+import {
+  acceptConsent,
+  denyConsent,
+  getTier0LastSent,
+  isTier0OptedOut,
+  markTier0Sent,
+  resolveEffectiveConsent,
+  telemetryFilePath,
+} from './state.js';
 
 // ---------------------------------------------------------------------------
 // Endpoint selection
@@ -77,6 +89,50 @@ async function promptConsent(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Tier 0 daily ping
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether telemetry is globally disabled via environment or CLI flag.
+ * Accepts the parsed --no-telemetry flag value from argv.
+ */
+export function isTelemetryGloballyDisabled(noTelemetryFlag: boolean): boolean {
+  if (noTelemetryFlag) return true;
+  const env = process.env.AITC_TELEMETRY;
+  if (env !== undefined && env.toLowerCase() === 'off') return true;
+  return false;
+}
+
+/**
+ * Send a Tier 0 anonymous daily ping (fire-and-forget).
+ *
+ * Skips if:
+ *   - AITC_TELEMETRY=off or --no-telemetry flag
+ *   - tier0OptOut === true in the state file
+ *   - already sent today (tier0LastSent === today's ISO date)
+ *
+ * On success, records today's date in tier0LastSent for client-side daily dedupe.
+ * The server also deduplicates server-side via KV, so this is an extra client guard.
+ */
+export async function trackTier0Ping(noTelemetryFlag = false): Promise<void> {
+  try {
+    if (isTelemetryGloballyDisabled(noTelemetryFlag)) return;
+    if (await isTier0OptedOut()) return;
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const lastSent = await getTier0LastSent();
+    if (lastSent === today) return; // already sent today
+
+    // Fire-and-forget: do not await
+    void sendTier0Ping(TELEMETRY_ENDPOINT, VERSION);
+    // Record immediately (optimistic — even if network fails, don't retry today)
+    await markTier0Sent(today);
+  } catch {
+    // Never let telemetry crash the CLI
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Install-once marker
 // ---------------------------------------------------------------------------
 
@@ -98,12 +154,17 @@ async function isNewInstall(): Promise<boolean> {
 
 /**
  * Called at CLI entry point with the resolved top-level command name.
- * Handles first-run consent prompt, install detection, and event send.
+ * Handles first-run Tier 1 consent prompt, install detection, and Tier 1 event send.
  * Fire-and-forget: do NOT await this.
+ *
+ * Note: Tier 0 ping is sent separately via trackTier0Ping() before this call.
  */
-export async function trackInvocation(command: string): Promise<void> {
+export async function trackInvocation(command: string, noTelemetryFlag = false): Promise<void> {
   try {
-    // First run: prompt for consent (TTY), default deny (non-TTY)
+    // If globally disabled, skip Tier 1 entirely
+    if (isTelemetryGloballyDisabled(noTelemetryFlag)) return;
+
+    // First run: prompt for Tier 1 consent (TTY), default deny (non-TTY)
     if (isFirstRun()) {
       await promptConsent();
     }
@@ -134,7 +195,10 @@ export {
   deleteMyData,
   denyConsent,
   getOrCreateAnonId,
+  getTier0LastSent,
+  isTier0OptedOut,
   readConsentState,
   resolveEffectiveConsent,
+  setTier0OptOut,
   telemetryFilePath,
 } from './state.js';
