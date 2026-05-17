@@ -160,20 +160,33 @@ aitcc app deploy --bundle ./dist/app.zip --json
 
 ## 텔레메트리
 
-`aitcc`는 선택적 익명 사용 통계를 수집할 수 있습니다. **기본값은 비활성(opt-in)** — 처음 실행 시 TTY 환경에서만 동의를 묻고, CI/파이프 환경에선 자동으로 비활성화됩니다.
+`aitcc`는 두 단계로 분리된 익명 사용 통계를 수집합니다. 자세한 내용은 [privacy 페이지](https://docs.aitc.dev/privacy) 참조.
 
-수집하는 정보: 실행된 명령 이름, 버전, 플랫폼, 임의 익명 ID. 개인 식별 정보(이메일, 세션, 사용자 ID 등)는 절대 전송하지 않습니다. 자세한 내용은 [privacy 페이지](https://docs.aitc.dev/privacy) 참조.
+### Tier 0 — 일별 익명 핑 (기본 ON, opt-out)
+
+매 실행 시 하루 한 번 익명 핑을 보냅니다. 수집 항목: `{source, version, platform}`. 개인 식별 정보 없음. `anon_id`도 없음 — 서버가 일별 salt로 IP+UA 해시를 계산해 저장하며, 그 외 정보는 저장하지 않습니다. "이 버전을 실제로 쓰는 사람이 있는가"를 파악하기 위한 최소 신호입니다.
+
+opt-out 방법 (세 가지):
+
+- `AITC_TELEMETRY=off` 환경 변수 — 이 쉘 세션 전체 비활성
+- `--no-telemetry` 플래그 — 이 invocation만 비활성 (영구 X)
+- `aitcc telemetry tier0-off` — 영구 opt-out (state file에 저장)
+
+### Tier 1 — 세부 이벤트 (기본 OFF, opt-in)
+
+처음 실행 시 TTY 환경에서만 동의를 묻습니다. CI/파이프 환경에선 자동으로 비활성화됩니다. 수집 항목: 실행된 명령 이름, 버전, 플랫폼, 임의 익명 ID (`anon_id`). 개인 식별 정보(이메일, 세션, 사용자 ID 등)는 절대 전송하지 않습니다.
 
 ```sh
-aitcc telemetry status   # 현재 동의 상태 + 익명 ID 확인
-aitcc telemetry enable   # 통계 수집 활성화
-aitcc telemetry disable  # 비활성화
-aitcc telemetry delete   # 서버에 저장된 데이터 삭제 요청 + 로컬 익명 ID 교체
+aitcc telemetry status          # 두 tier 상태 + 익명 ID 확인
+aitcc telemetry status --json   # machine-readable 출력
+aitcc telemetry enable          # Tier 1 활성화
+aitcc telemetry disable         # Tier 1 비활성화
+aitcc telemetry delete          # 서버에 저장된 Tier 1 데이터 삭제 요청 + 로컬 익명 ID 교체
+aitcc telemetry tier0-off       # Tier 0 익명 핑 영구 비활성화
+aitcc telemetry tier0-on        # Tier 0 다시 활성화
 ```
 
 상태 파일: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/telemetry.json`, mode `0600`).
-
-> **참고**: metrics-ingest 서버의 `source` allowlist가 `console-cli`를 포함하도록 업데이트되기 전까지는 이벤트가 서버에서 거부될 수 있습니다. 클라이언트 측 코드는 이미 준비돼 있습니다.
 
 ## 진행 상황
 
