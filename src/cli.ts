@@ -20,8 +20,7 @@ const main = defineCommand({
   meta: {
     name: 'aitcc',
     version: VERSION,
-    description:
-      'aitcc — Apps in Toss Community Console CLI. Unofficial, not affiliated with Toss.',
+    description: 'aitcc — Apps in Toss Community Console CLI. Community open-source project.',
   },
   subCommands: {
     whoami: whoamiCommand,
