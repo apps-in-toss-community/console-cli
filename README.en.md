@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `whoami` / `login` / `logout` / `upgrade` are usable today; `deploy` / `logs` / `status` are next.
+> Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `login` / `logout` / `whoami` / `upgrade` / `app status` / `app deploy` and more are working today; `app logs` is deferred until the backend endpoint is available.
 
 `aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
 
@@ -66,7 +66,7 @@ Add `--save keychain` to persist the credentials so the next `aitcc login` runs 
 
 `aitcc upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
-Planned commands: `deploy`, `logs`, `status`.
+Planned: `app logs` (pending backend endpoint availability).
 
 ### Project context (`aitcc.yaml`)
 
@@ -168,7 +168,7 @@ Once per day per machine, a minimal anonymous ping is sent on every invocation. 
 
 Three ways to opt out:
 
-- `AITC_TELEMETRY=off` environment variable — disables all telemetry for this shell session
+- `AITCC_TELEMETRY=off` environment variable — disables all telemetry for this shell session
 - `--no-telemetry` flag — disables for this single invocation only (not permanent)
 - `aitcc telemetry tier0-off` — permanently opts out (persisted to the state file)
 
@@ -190,7 +190,7 @@ State file: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/t
 
 ## Status
 
-`login`, `logout`, `whoami`, and `upgrade` are implemented end-to-end — `login` drives a real browser over CDP and `whoami` reads the live console member API. `deploy`, `logs`, `status` are next. See the [organization landing page](https://aitc.dev/) for the full roadmap.
+`login`, `logout`, `whoami`, `upgrade`, `app status`, and `app deploy` are implemented end-to-end. `app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
 
 ## Pre-commit hook
 

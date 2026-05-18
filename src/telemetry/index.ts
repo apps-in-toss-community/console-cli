@@ -4,7 +4,7 @@
  * Usage: import { trackInvocation, trackTier0Ping } from './telemetry/index.js'
  *
  * Tier 0 (opt-out): anonymous daily ping. Fires on every invocation; client-side
- *   daily dedupe via tier0LastSent. Respects AITC_TELEMETRY=off, --no-telemetry,
+ *   daily dedupe via tier0LastSent. Respects AITCC_TELEMETRY=off, --no-telemetry,
  *   and permanent tier0OptOut flag.
  *
  * Tier 1 (opt-in): detailed events. First invocation on a TTY prompts the user;
@@ -98,7 +98,7 @@ async function promptConsent(): Promise<void> {
  */
 export function isTelemetryGloballyDisabled(noTelemetryFlag: boolean): boolean {
   if (noTelemetryFlag) return true;
-  const env = process.env.AITC_TELEMETRY;
+  const env = process.env.AITCC_TELEMETRY;
   if (env !== undefined && env.toLowerCase() === 'off') return true;
   return false;
 }
@@ -107,7 +107,7 @@ export function isTelemetryGloballyDisabled(noTelemetryFlag: boolean): boolean {
  * Send a Tier 0 anonymous daily ping (fire-and-forget).
  *
  * Skips if:
- *   - AITC_TELEMETRY=off or --no-telemetry flag
+ *   - AITCC_TELEMETRY=off or --no-telemetry flag
  *   - tier0OptOut === true in the state file
  *   - already sent today (tier0LastSent === today's ISO date)
  *
