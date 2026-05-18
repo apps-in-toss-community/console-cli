@@ -107,15 +107,27 @@ const STEP_UP_POLL_MS = 1000;
 // onChange handler picks it up. The same trick worked in the spike.
 //
 // Selectors are intentionally robust to id changes (Radix ids look like
-// `radix-:r0:` and aren't stable):
-//   - email input matched by name (`email`/`loginId`/`username`),
-//     then by `type=email` (which is semantically unambiguous). We do
-//     NOT fall back to `type=text` — a search box or other unrelated
-//     text input rendered above the form would otherwise receive the
-//     credentials in plaintext.
-//   - password input matched by name then by `type=password`.
-//   - submit button matched by `type=submit` first, then by visible text
-//     containing "로그인" / "sign in" / "login".
+// `radix-:r0:` and aren't stable) and to attribute renames. The Toss
+// Business sign-in page (as of 2026-05) renders Radix UI inputs with no
+// `name` attribute and email as `type="text"` (Korean IDs are also
+// allowed), so neither `name`-based nor `type=email` selectors hit. To
+// avoid filling credentials into an unrelated text input (e.g. a search
+// box) we anchor the email lookup to the password input's containing
+// `<form>`: the first text/email input above the password input inside
+// the same form is the username field by construction.
+//
+// Lookup order (each falls back to the next):
+//   1. `name` attribute (`email`/`loginId`/`username` or `password`).
+//   2. `type` (`email` for email; `password` for password).
+//   3. `aria-label`/`placeholder` containing "이메일" / "ID" / "Email" /
+//      "비밀번호" / "password" — accessible labels the page exposes to
+//      assistive tech, stable across Radix id reshuffles.
+//   4. (email only) text input that appears before the password input
+//      inside the same form. Anchoring on the password input means a
+//      stray search box outside the form can't capture the email.
+//
+// Submit button matched by `type=submit` first, then by visible text
+// containing "로그인" / "sign in" / "login".
 const FILL_AND_SUBMIT_FN = `
   async (email, password) => {
     function pickByName(names) {
@@ -133,6 +145,29 @@ const FILL_AND_SUBMIT_FN = `
       }
       return null;
     }
+    function pickByAccessibleLabel(textInputOnly, patterns) {
+      const inputs = Array.from(document.querySelectorAll('input'));
+      return inputs.find(i => {
+        const type = (i.type || '').toLowerCase();
+        if (textInputOnly && type !== 'text' && type !== 'email') return false;
+        if (!textInputOnly && type !== 'password') return false;
+        const label = (i.getAttribute('aria-label') || '') + ' ' + (i.placeholder || '');
+        return patterns.some(p => p.test(label));
+      }) || null;
+    }
+    function pickEmailFromPasswordForm(passwordInput) {
+      const form = passwordInput && passwordInput.closest('form');
+      if (!form) return null;
+      const inputs = Array.from(form.querySelectorAll('input'));
+      const passwordIdx = inputs.indexOf(passwordInput);
+      if (passwordIdx < 0) return null;
+      for (let i = 0; i < passwordIdx; i++) {
+        const el = inputs[i];
+        const type = (el.type || '').toLowerCase();
+        if (type === 'text' || type === 'email') return el;
+      }
+      return null;
+    }
     function setNative(input, value) {
       const proto = Object.getPrototypeOf(input);
       const desc = Object.getOwnPropertyDescriptor(proto, 'value');
@@ -141,12 +176,15 @@ const FILL_AND_SUBMIT_FN = `
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    const emailInput =
-      pickByName(['email', 'loginId', 'username']) ||
-      pickInputByType(['email']);
     const passwordInput =
       pickByName(['password', 'loginPassword']) ||
-      pickInputByType(['password']);
+      pickInputByType(['password']) ||
+      pickByAccessibleLabel(false, [/비밀번호/, /password/i]);
+    const emailInput =
+      pickByName(['email', 'loginId', 'username']) ||
+      pickInputByType(['email']) ||
+      pickByAccessibleLabel(true, [/이메일/, /\\bID\\b/, /email/i, /로그인.{0,5}(아이디|ID)/i]) ||
+      pickEmailFromPasswordForm(passwordInput);
     if (!emailInput) return { ok: false, stage: 'find-email' };
     if (!passwordInput) return { ok: false, stage: 'find-password' };
     setNative(emailInput, email);
@@ -175,7 +213,8 @@ const FILL_AND_SUBMIT_FN = `
 
 // Probe the page to see whether the email + password inputs have
 // rendered. The form arrives async (React boot), so we have to poll
-// before we can fill.
+// before we can fill. Heuristics mirror FILL_AND_SUBMIT_FN so we don't
+// signal "ready" when the picker would actually fail.
 const FORM_READY_PROBE_FN = `
   () => {
     const inputs = Array.from(document.querySelectorAll('input'));
@@ -184,9 +223,13 @@ const FORM_READY_PROBE_FN = `
       const type = (i.type || '').toLowerCase();
       const placeholder = (i.placeholder || '').toLowerCase();
       const id = (i.id || '').toLowerCase();
+      const aria = (i.getAttribute('aria-label') || '').toLowerCase();
       if (name === 'email' || name === 'loginid' || name === 'username') return true;
       if (type === 'email') return true;
-      if (type === 'text' && /id|email|username/.test(name + ' ' + id + ' ' + placeholder)) return true;
+      if (type === 'text') {
+        const blob = name + ' ' + id + ' ' + placeholder + ' ' + aria;
+        if (/id|email|username|이메일|아이디/.test(blob)) return true;
+      }
       return false;
     });
     const hasPassword = inputs.some(i =>

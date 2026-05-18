@@ -152,14 +152,30 @@ describe('FILL_AND_SUBMIT_FN is robust to selector drift', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain("'email'");
     expect(__test.FILL_AND_SUBMIT_FN).toContain("'password'");
   });
-  it("does NOT fall back to type='text' for the email input", () => {
-    // A `type=text` fallback would let an unrelated text input (search
-    // box, etc.) rendered above the form silently receive the
+  it("does NOT fall back to a bare type='text' input outside the password form", () => {
+    // A bare `type=text` fallback would let an unrelated text input
+    // (search box, etc.) rendered above the form silently receive the
     // credentials in plaintext. Pin the absence so a future cleanup
     // can't reintroduce it without tripping this test.
     expect(__test.FILL_AND_SUBMIT_FN).not.toMatch(
       /pickInputByType\(\[\s*'email'\s*,\s*'text'\s*\]\)/,
     );
+  });
+  it('falls back to accessible labels (aria-label / placeholder) for the new Radix form', () => {
+    // The Toss Business sign-in page renders Radix UI inputs with no
+    // `name` attribute and email as `type="text"`, so name- and
+    // type-based selectors miss. Match by aria-label / placeholder
+    // containing "이메일" / "Email" / "ID" instead.
+    expect(__test.FILL_AND_SUBMIT_FN).toContain('pickByAccessibleLabel');
+    expect(__test.FILL_AND_SUBMIT_FN).toContain('이메일');
+    expect(__test.FILL_AND_SUBMIT_FN).toContain('비밀번호');
+  });
+  it('anchors the email lookup to the password input form (no stray text input capture)', () => {
+    // The last-resort fallback is the first text/email input that
+    // appears BEFORE the password input inside the same <form>. This
+    // can't capture a search box rendered outside the sign-in form.
+    expect(__test.FILL_AND_SUBMIT_FN).toContain('pickEmailFromPasswordForm');
+    expect(__test.FILL_AND_SUBMIT_FN).toContain("passwordInput.closest('form')");
   });
   it('uses the native value setter (React controlled-component fix)', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain('getOwnPropertyDescriptor');
