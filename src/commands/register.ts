@@ -354,7 +354,7 @@ function emitTermsNotAccepted(json: boolean): void {
   const message =
     'The console requires several legal-agreement checkboxes before submitting a mini-app for review. ' +
     'Re-run with --accept-terms to attest that you have read and agree to each of them ' +
-    '(see VALIDATION-RULES.md or the console UI), or use --dry-run to preview the payload without submitting.';
+    '(see the console UI for the current list), or use --dry-run to preview the payload without submitting.';
   if (json) {
     emitJson({ ok: false, reason: 'terms-not-accepted', message });
   } else {

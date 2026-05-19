@@ -3374,7 +3374,7 @@ const registerCommand = defineCommand({
     'accept-terms': {
       type: 'boolean',
       description:
-        'Attest to the required console legal-agreement checkboxes (see VALIDATION-RULES.md). Required for real submits.',
+        'Attest to the required console legal-agreement checkboxes. Required for real submits.',
       default: false,
     },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },

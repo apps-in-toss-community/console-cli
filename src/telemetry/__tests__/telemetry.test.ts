@@ -277,15 +277,15 @@ describe('trackTier0Ping', () => {
     expect(body.tier).toBe(0);
   });
 
-  it('skips when AITC_TELEMETRY=off', async () => {
+  it('skips when AITCC_TELEMETRY=off', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('', { status: 200 }));
-    process.env.AITC_TELEMETRY = 'off';
+    process.env.AITCC_TELEMETRY = 'off';
     const { trackTier0Ping } = await import('../index.js');
     await trackTier0Ping(false);
     expect(fetchSpy).not.toHaveBeenCalled();
-    delete process.env.AITC_TELEMETRY;
+    delete process.env.AITCC_TELEMETRY;
   });
 
   it('skips when --no-telemetry flag is true', async () => {
