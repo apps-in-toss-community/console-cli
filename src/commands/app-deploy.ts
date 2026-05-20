@@ -664,7 +664,7 @@ async function fetchTermsBlockers(
           type,
           errorCode: WORKSPACE_TERM_ERROR_CODES[type],
           title: t.title,
-          action: `aitcc workspace terms --type ${type}`,
+          action: `aitcc workspace terms agree ${type}`,
         });
       }
     }
