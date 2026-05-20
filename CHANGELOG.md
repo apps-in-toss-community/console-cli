@@ -1,5 +1,12 @@
 # @ait-co/console-cli
 
+## 0.1.32
+
+### Patch Changes
+
+- ab73930: Fix dry-run workspace terms blocker action to use `terms agree` instead of `terms --type`
+- 394d6a0: Use "Deploy Key" in `keys` subcommand help text and runtime output (was "API key")
+
 ## 0.1.31
 
 ### Patch Changes
