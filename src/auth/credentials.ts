@@ -47,9 +47,8 @@ export interface Credentials {
 export type CredentialsSource =
   | { readonly kind: 'env'; readonly email: string; readonly password: string }
   | { readonly kind: 'keychain'; readonly email: string; readonly password: string };
-// 'file' fallback (~/.config/aitcc/credentials.json) — TODO follow-up; not
-// implemented in PR α. Add a third variant when wired so callers can
-// distinguish at the type level.
+// A future `'file'` source (~/.config/aitcc/credentials.json) would add a
+// third variant here so callers can distinguish at the type level.
 
 // --- Backend dispatch ---
 
@@ -135,7 +134,7 @@ export interface LoadCredentialsOptions extends ResolveBackendOptions {
  *   2. OS keychain entry whose email is recorded in `auth-state.json`.
  *
  * Returns `null` when no source is configured. The discriminated `kind`
- * lets callers (e.g. PR β's login flow) tell why a credential was found
+ * lets callers (e.g. the login flow) tell why a credential was found
  * without having to peek at process env themselves — useful for
  * "auto-login from CI" diagnostics.
  *

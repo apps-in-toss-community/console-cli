@@ -1,9 +1,10 @@
 import type { CdpCookie } from '../cdp.js';
 import { type FetchLike, requestConsoleApi } from './http.js';
 
-// Console API keys: workspace-scoped credentials used for deploy automation
-// (see docs/api/api-keys.md). Three endpoints, all confirmed against the
-// console UI bundle (`static/index.ZsA5htf8.js`):
+// Deploy Keys (the console UI labels them "API key"): workspace-scoped
+// credentials used for deploy automation (see docs/api/api-keys.md). Three
+// endpoints, all confirmed against the console UI bundle
+// (`static/index.ZsA5htf8.js`):
 //
 //   GET  /workspaces/:wid/api-keys                  → list (`{id, name, expireTs}`)
 //   POST /workspaces/:wid/api-keys                  → issue (returns `{apiKey, ...}`)

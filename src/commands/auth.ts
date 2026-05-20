@@ -13,10 +13,10 @@ import { emitJson } from './_shared.js';
 import { authExportCommand } from './auth-export.js';
 import { authImportCommand } from './auth-import.js';
 
-// `aitcc auth` — user-facing surface over the credentials library
-// introduced in PR α. The library handles env precedence, OS keychain
-// dispatch, and idempotent writes; this file is the thin CLI shell that
-// turns those primitives into `set` / `clear` / `status` subcommands.
+// `aitcc auth` — user-facing surface over the credentials library. The
+// library handles env precedence, OS keychain dispatch, and idempotent
+// writes; this file is the thin CLI shell that turns those primitives into
+// `set` / `clear` / `status` subcommands.
 //
 // **Deprecation (0.1.25)**: the three subcommands here have been folded
 // into `aitcc login` (interactive prompt) / `aitcc logout --purge` /
