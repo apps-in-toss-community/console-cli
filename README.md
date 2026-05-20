@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있지만 표면은 아직 작습니다. `login` / `logout` / `whoami` / `upgrade` / `app status` / `app deploy` 등이 동작하고, `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다.
+> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있습니다. 인증·워크스페이스·미니앱 명령(번들 배포, 인증서 관리 포함)이 end-to-end로 동작하며, `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 명령 표면은 [진행 상황](#진행-상황) 참조.
 
 `aitcc`는 앱인토스 개발자 콘솔을 자동화하는 커뮤니티 CLI입니다 — 브라우저로 한 번만 로그인하면 이후 작업은 셸이나 AI 코딩 에이전트가 headless 브라우저로 처리합니다.
 
@@ -190,7 +190,14 @@ aitcc telemetry tier0-on        # Tier 0 다시 활성화
 
 ## 진행 상황
 
-`login`, `logout`, `whoami`, `upgrade`, `app status`, `app deploy`는 end-to-end 동작합니다. `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
+다음 명령군이 end-to-end로 동작합니다:
+
+- 인증·세션: `login` / `logout` / `whoami` / `auth` (export/import)
+- 워크스페이스: `workspace` / `members` / `me` / `notices`
+- 미니앱: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
+- 그 외: Deploy Key 발급(`keys`), `telemetry`, `upgrade`(self-update), `completion`(셸 자동완성)
+
+`app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
 
 ## Pre-commit hook
 

@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> Pre-1.0 (`0.1.x`) — published to npm but the surface is still small. `login` / `logout` / `whoami` / `upgrade` / `app status` / `app deploy` and more are working today; `app logs` is deferred until the backend endpoint is available.
+> Pre-1.0 (`0.1.x`) — published to npm. Auth, workspace, and mini-app commands (including bundle deploy and cert management) work end-to-end today; `app logs` is deferred until the backend endpoint is available. See [Status](#status) for the full command surface.
 
 `aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
 
@@ -190,7 +190,14 @@ State file: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/t
 
 ## Status
 
-`login`, `logout`, `whoami`, `upgrade`, `app status`, and `app deploy` are implemented end-to-end. `app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
+The following command groups are implemented end-to-end:
+
+- Auth & session: `login` / `logout` / `whoami` / `auth` (export/import)
+- Workspace: `workspace` / `members` / `me` / `notices`
+- Mini-app: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
+- Misc: Deploy Key issuance (`keys`), `telemetry`, `upgrade` (self-update), `completion` (shell completion)
+
+`app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
 
 ## Pre-commit hook
 
