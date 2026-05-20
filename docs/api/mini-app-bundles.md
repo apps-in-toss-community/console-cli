@@ -165,13 +165,13 @@ Exit code 17 (`api-error`).
   },
   "terms": {
     "blockers": [
-      { "scope": "workspace", "type": "TOSS_LOGIN", "errorCode": 4037, "title": "[제휴용] 개인(신용)정보 보안관리 약정서", "action": "aitcc workspace terms --type TOSS_LOGIN" },
-      { "scope": "workspace", "type": "TOSS_LOGIN", "errorCode": 4037, "title": "토스 로그인 약관", "action": "aitcc workspace terms --type TOSS_LOGIN" },
-      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "앱인토스 제휴 서비스 이용약관(제휴사용)", "action": "aitcc workspace terms --type BIZ_WORKSPACE" },
-      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "[위탁용] 개인(신용)정보 보안관리 약정서", "action": "aitcc workspace terms --type BIZ_WORKSPACE" },
-      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "앱인토스 보안점검 약관", "action": "aitcc workspace terms --type BIZ_WORKSPACE" },
-      { "scope": "workspace", "type": "IAA", "errorCode": 4099, "title": "TOSS 광고대행 서비스 이용약관", "action": "aitcc workspace terms --type IAA" },
-      { "scope": "workspace", "type": "IAP", "errorCode": 5001, "title": "앱인토스 디지털콘텐츠 위탁매매 약관", "action": "aitcc workspace terms --type IAP" }
+      { "scope": "workspace", "type": "TOSS_LOGIN", "errorCode": 4037, "title": "[제휴용] 개인(신용)정보 보안관리 약정서", "action": "aitcc workspace terms agree TOSS_LOGIN" },
+      { "scope": "workspace", "type": "TOSS_LOGIN", "errorCode": 4037, "title": "토스 로그인 약관", "action": "aitcc workspace terms agree TOSS_LOGIN" },
+      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "앱인토스 제휴 서비스 이용약관(제휴사용)", "action": "aitcc workspace terms agree BIZ_WORKSPACE" },
+      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "[위탁용] 개인(신용)정보 보안관리 약정서", "action": "aitcc workspace terms agree BIZ_WORKSPACE" },
+      { "scope": "workspace", "type": "BIZ_WORKSPACE", "errorCode": 4040, "title": "앱인토스 보안점검 약관", "action": "aitcc workspace terms agree BIZ_WORKSPACE" },
+      { "scope": "workspace", "type": "IAA", "errorCode": 4099, "title": "TOSS 광고대행 서비스 이용약관", "action": "aitcc workspace terms agree IAA" },
+      { "scope": "workspace", "type": "IAP", "errorCode": 5001, "title": "앱인토스 디지털콘텐츠 위탁매매 약관", "action": "aitcc workspace terms agree IAP" }
     ],
     "checked": true
   }

@@ -130,7 +130,7 @@ OS 키체인 대신 plain `0600` 파일을 쓰는 이유는 [CLAUDE.md](./CLAUDE
 # Desktop (이미 로그인된 상태):
 aitcc auth export --format env >> $GITHUB_ENV       # 또는 secret으로 저장
 # CI ($AITCC_SESSION으로 secret 노출):
-aitcc app deploy --bundle ./dist/app.zip --json
+aitcc app deploy ./aitc-sdk-example.ait --json
 ```
 
 `AITCC_SESSION`이 설정되면 모든 명령은 로컬 파일 대신 이 env var에서 세션을 읽습니다. env 모드에선 `logout` / `workspace use` 등의 write 경로가 비활성화돼 CI 호스트가 세션 파일을 절대 디스크에 떨어뜨리지 않습니다. blob을 disk에 영구 저장하고 싶다면 `aitcc auth import --from-env`를 쓰세요 (주로 desktop wipe 후 복구).
