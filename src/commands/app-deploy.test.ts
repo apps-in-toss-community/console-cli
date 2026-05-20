@@ -358,7 +358,7 @@ describe('runDeploy', () => {
         type: 'BIZ_WORKSPACE',
         errorCode: 4040,
         title: '워크스페이스 약관',
-        action: 'aitcc workspace terms --type BIZ_WORKSPACE',
+        action: 'aitcc workspace terms agree BIZ_WORKSPACE',
       },
     ]);
   });
