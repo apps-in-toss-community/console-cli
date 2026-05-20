@@ -130,7 +130,7 @@ For one-shot CI runs (e.g. `aitcc app deploy` from a workflow), seed the runner 
 # Desktop (already logged in):
 aitcc auth export --format env >> $GITHUB_ENV       # or: aitcc auth export --format env  → store as a secret
 # CI (with the secret exposed as $AITCC_SESSION):
-aitcc app deploy --bundle ./dist/app.zip --json
+aitcc app deploy ./aitc-sdk-example.ait --json
 ```
 
 When `AITCC_SESSION` is set, every command reads the session from that env var instead of the local file. `logout` / `workspace use` / other write paths are silenced under env mode so a CI host never materialises a session file. Use `aitcc auth import --from-env` if you actually want the blob persisted to disk (mainly for restoring a desktop after a wipe).
