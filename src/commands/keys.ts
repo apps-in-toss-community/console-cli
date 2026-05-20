@@ -89,7 +89,7 @@ export function parseAppsFlag(raw: string): AppsParseResult {
 const lsCommand = defineCommand({
   meta: {
     name: 'ls',
-    description: 'List console API keys in the selected workspace.',
+    description: 'List Deploy Keys in the selected workspace.',
   },
   args: {
     workspace: {
@@ -121,13 +121,13 @@ const lsCommand = defineCommand({
         return exitAfterFlush(ExitCode.Ok);
       }
       if (keys.length === 0) {
-        process.stdout.write(`No API keys in workspace ${workspaceId}.\n`);
+        process.stdout.write(`No Deploy Keys in workspace ${workspaceId}.\n`);
         process.stderr.write(
-          'Hint: `aitcc keys create --name <label>` to issue one (deploy automation requires a key).\n',
+          'Hint: `aitcc keys create --name <label>` to issue one (deploy automation requires a Deploy Key).\n',
         );
         return exitAfterFlush(ExitCode.Ok);
       }
-      process.stdout.write(`${keys.length} API key(s) in workspace ${workspaceId}:\n`);
+      process.stdout.write(`${keys.length} Deploy Key(s) in workspace ${workspaceId}:\n`);
       const now = Date.now();
       for (const k of keys) {
         const name = k.name ?? '(unnamed)';
@@ -144,7 +144,7 @@ const lsCommand = defineCommand({
 const createCommand = defineCommand({
   meta: {
     name: 'create',
-    description: 'Issue a new console API key. Plaintext is shown once.',
+    description: 'Issue a new Deploy Key. Plaintext is shown once.',
   },
   args: {
     name: {
@@ -232,13 +232,13 @@ const createCommand = defineCommand({
 const revokeCommand = defineCommand({
   meta: {
     name: 'revoke',
-    description: 'Disable a console API key by id.',
+    description: 'Disable a Deploy Key by id.',
   },
   args: {
     id: {
       type: 'positional',
       required: true,
-      description: 'API key id (from `aitcc keys ls`).',
+      description: 'Deploy Key id (from `aitcc keys ls`).',
     },
     workspace: {
       type: 'string',
@@ -262,7 +262,7 @@ const revokeCommand = defineCommand({
         emitJson({ ok: true, workspaceId, apiKeyId: rawId });
         return exitAfterFlush(ExitCode.Ok);
       }
-      process.stdout.write(`Revoked API key ${rawId} in workspace ${workspaceId}.\n`);
+      process.stdout.write(`Revoked Deploy Key ${rawId} in workspace ${workspaceId}.\n`);
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
       return emitFailureFromError(args.json, err);
@@ -281,7 +281,7 @@ export function formatExpiry(expireTs: number | undefined, now: number): string 
 export const keysCommand = defineCommand({
   meta: {
     name: 'keys',
-    description: 'Manage console API keys used for deploy automation.',
+    description: 'Manage Deploy Keys used for deploy automation.',
   },
   subCommands: {
     ls: lsCommand,

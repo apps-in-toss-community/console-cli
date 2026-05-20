@@ -4,7 +4,7 @@
 
 코드(`src/api/*.ts`, `src/commands/*.ts`)의 짝 문서. 콘솔 UI 변경으로 인한 drift를 추적하고, 새 명령을 추가할 때 추측 없이 첫 시도를 정확히 만드는 것이 목표.
 
-> ⚠️ **공식 API가 아니다.** 토스가 공개·문서화한 API가 아니라, 공개 개발자 콘솔 SPA(`apps-in-toss.toss.im/console`)가 사용자 인증 세션 안에서 호출하는 내부 endpoint들의 **관찰된 동작**이다. 콘솔 UI 변경 시 깨질 수 있다. 자세히는 `console-cli` repo 루트 `CLAUDE.md` 참고.
+이 문서가 다루는 API는 토스가 공개·문서화한 endpoint가 아니라, 콘솔 SPA(`apps-in-toss.toss.im/console`)가 사용자 인증 세션 안에서 호출하는 내부 endpoint들의 관찰된 동작이다. 콘솔 UI 업데이트로 shape가 변경되거나 endpoint가 사라질 수 있다. 상세 경위는 `console-cli` repo 루트 `CLAUDE.md` 참고.
 
 ## 색인
 
