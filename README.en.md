@@ -74,8 +74,8 @@ App- and workspace-scoped commands (`app status`, `app deploy`, `app certs ls`, 
 
 ```yaml
 # aitcc.yaml
-workspaceId: 3095
-miniAppId: 31146
+workspaceId: 12345
+miniAppId: 67890
 ```
 
 Resolution priority (highest first):
@@ -86,7 +86,7 @@ Resolution priority (highest first):
 Each command prints a one-line context header to stderr so you always see what was resolved (suppressed under `--json` so machine-readable output is unaffected):
 
 ```
-[workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]
+[workspace: 12345 (from aitcc.yaml) · app: 67890 (from aitcc.yaml)]
 ```
 
 The walk stops at the nearest `.git` directory and never crosses `$HOME`. Passing `--workspace` overrides any yaml `miniAppId` (it may belong to a different workspace), but `AITCC_WORKSPACE` keeps it.
