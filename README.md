@@ -74,8 +74,8 @@ app·workspace 범위 명령(`app status`, `app deploy`, `app certs ls`, `keys l
 
 ```yaml
 # aitcc.yaml
-workspaceId: 3095
-miniAppId: 31146
+workspaceId: 12345
+miniAppId: 67890
 ```
 
 해상도 우선순위 (높은 것부터):
@@ -86,7 +86,7 @@ miniAppId: 31146
 각 명령은 어떤 값이 resolve됐는지 stderr에 한 줄 헤더로 출력합니다 (`--json` 모드에선 machine-readable 출력에 영향 없도록 생략):
 
 ```
-[workspace: 3095 (from aitcc.yaml) · app: 31146 (from aitcc.yaml)]
+[workspace: 12345 (from aitcc.yaml) · app: 67890 (from aitcc.yaml)]
 ```
 
 탐색은 가장 가까운 `.git` 디렉토리에서 멈추고 `$HOME` 위로는 절대 안 갑니다. `--workspace`로 workspace를 명시하면 yaml의 `miniAppId`는 무시되지만(다른 workspace 소속일 수 있음) `AITCC_WORKSPACE` env는 yaml miniApp을 유지합니다.
