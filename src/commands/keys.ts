@@ -47,7 +47,7 @@ import {
 //
 //   Auth/network/api failures follow the shared contract (exit 10/11/17).
 //
-// "Console API key" in upstream terminology — used to authenticate
+// Deploy Key (the console UI labels it "API key") — used to authenticate
 // automated deploys. Endpoints + payload shapes confirmed from the console
 // management-page chunk; full capture in docs/api/api-keys.md.
 
