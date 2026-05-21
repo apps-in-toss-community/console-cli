@@ -397,11 +397,14 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
     );
   }
   const subtitle = requireString(raw, 'subtitle');
-  // subtitle ≤ 20 chars (F(20) in VALIDATION-RULES).
-  if (subtitle.length > MANIFEST_LIMITS.subtitleMaxChars) {
+  const subtitleCodepoints = [...subtitle].length;
+  // subtitle ≤ 20 codepoints (F(20) in VALIDATION-RULES). Count codepoints
+  // (not UTF-16 code units) so emoji/surrogate pairs are measured correctly —
+  // same approach as the description check below.
+  if (subtitleCodepoints > MANIFEST_LIMITS.subtitleMaxChars) {
     throw new ManifestError(
       'invalid-config',
-      `subtitle must be ${MANIFEST_LIMITS.subtitleMaxChars} characters or fewer (got ${subtitle.length})`,
+      `subtitle must be ${MANIFEST_LIMITS.subtitleMaxChars} characters or fewer (got ${subtitleCodepoints})`,
       'subtitle',
     );
   }

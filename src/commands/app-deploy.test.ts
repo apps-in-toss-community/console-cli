@@ -5,6 +5,7 @@ import { zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FetchLike } from '../api/http.js';
 import type { CdpCookie } from '../cdp.js';
+import type { AitBundleInfo } from '../config/ait-bundle.js';
 import { runDeploy } from './app-deploy.js';
 
 // Mirrors the captureExit/stdout-spy pattern used in register.test.ts.
@@ -533,5 +534,85 @@ describe('runDeploy', () => {
     expect(exit?.code).toBe(10);
     expect(stdout.join('')).toContain('"authenticated":false');
     expect(fetchCalls).toBe(0);
+  });
+
+  it('partial-failure: emits ok:false (not ok:true) when session expires after upload succeeds', async () => {
+    // Regression test for the session-expired partial-failure shape fix.
+    // The upload step succeeds; `--request-review` then hits a 401 → the
+    // emitter must emit `ok: false` (not `ok: true`) so consumers can
+    // distinguish a failed partial deploy from a fully-succeeded one.
+    await writeSessionAt(3095);
+
+    const fakeBundle: AitBundleInfo = {
+      format: 'ait',
+      deploymentId: 'test-dep-id',
+      bytes: new Uint8Array(4),
+    };
+
+    const stubFetch: FetchLike = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      // Initialize deploy → succeed (deployment.reviewStatus must be 'PREPARE')
+      if (url.includes('/deployments/initialize')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'SUCCESS',
+            success: {
+              uploadUrl: 'https://upload.example.com/put',
+              deployment: { reviewStatus: 'PREPARE' },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      // S3-style PUT upload → succeed
+      if (url.includes('upload.example.com')) {
+        return new Response(null, { status: 200 });
+      }
+      // deployments/complete → succeed
+      if (url.includes('/deployments/complete')) {
+        return new Response(
+          JSON.stringify({ resultType: 'SUCCESS', success: { deploymentId: 'test-dep-id' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      // bundles/reviews → 401 auth error (session expired mid-flight after upload).
+      // Must be a Toss envelope FAILURE (not a thrown error) so the http layer
+      // converts it to a TossApiError with isAuthError === true.
+      if (url.includes('/bundles/reviews')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'FAILURE',
+            error: { errorCode: '4010', reason: 'Unauthorized', errorType: 0 },
+          }),
+          { status: 401, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unmocked URL: ${url}`);
+    };
+
+    const exit = await captureExit(() =>
+      runDeploy(
+        {
+          path: '/fake/bundle.ait',
+          app: '29397',
+          requestReview: true,
+          releaseNotes: 'v1',
+          json: true,
+        },
+        {
+          fetchImpl: stubFetch,
+          readBundleImpl: async () => fakeBundle,
+        },
+      ),
+    );
+
+    expect(exit?.code).toBe(10);
+    const parsed = JSON.parse(stdout.join(''));
+    // Must be false — uploading succeeded but the review step did NOT.
+    expect(parsed.ok).toBe(false);
+    expect(parsed.authenticated).toBe(false);
+    expect(parsed.reason).toBe('session-expired');
+    expect(parsed.uploaded).toBe(true);
+    expect(parsed.reviewed).toBe(false);
   });
 });

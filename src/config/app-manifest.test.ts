@@ -231,6 +231,34 @@ horizontalScreenshots:
     expect((err as ManifestError).field).toBe('subtitle');
   });
 
+  it('accepts a subtitle with exactly 20 emoji codepoints (UTF-16 length > 20 due to surrogate pairs)', async () => {
+    const dir = makeTempDir();
+    // Each '🎉' is 1 codepoint but 2 UTF-16 code units (surrogate pair).
+    // 20 × '🎉' = 20 codepoints, 40 UTF-16 units.
+    // The old `.length`-based check would have wrongly rejected this as > 20.
+    const twentyEmoji = '🎉'.repeat(20);
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: "${twentyEmoji}"\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const manifest = await loadAppManifest(path);
+    expect(manifest.subtitle).toBe(twentyEmoji);
+  });
+
+  it('rejects a subtitle with 21 emoji codepoints', async () => {
+    const dir = makeTempDir();
+    const twentyOneEmoji = '🎉'.repeat(21);
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: E\nappName: s\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: "${twentyOneEmoji}"\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('subtitle');
+  });
+
   it('requires at least 3 vertical screenshots', async () => {
     const dir = makeTempDir();
     const path = writeManifest(
