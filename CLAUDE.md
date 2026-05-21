@@ -105,7 +105,7 @@ OS keychain은 native dependency라 `bun build --compile`이 플랫폼별로 깔
 
 ### Credential storage (`src/auth/credentials.ts`)
 
-세션 쿠키와는 **분리된 layer**. 쿠키는 휘발성 (재로그인 한 번이면 새로 받음), email + password는 durable이므로 다음 `aitcc login`이 form을 headlessly 채울 수 있도록 유지된다. PR α에서 라이브러리만 들어옴 — CLI 사용자 surface(`auth set/clear`) 와 form-fill 결합은 후속 PR.
+세션 쿠키와는 **분리된 layer**. 쿠키는 휘발성 (재로그인 한 번이면 새로 받음), email + password는 durable이므로 `aitcc login`이 저장된 credential로 form을 headlessly 채운다 (`src/commands/login.ts`가 `loadCredentials` 소비). CLI 사용자 surface도 `auth set` / `auth clear` / `auth status`로 들어와 있다 — 단 0.1.25부터 `aitcc login` / `aitcc logout --purge` / `aitcc whoami`로 folded되어 deprecation 경고를 띄우며, 제거는 1.0 예정 (`auth export` / `auth import`은 portable session blob 전용이라 deprecate 안 함).
 
 - **Email**: `auth-state.json` (`$XDG_CONFIG_HOME/aitcc/auth-state.json`, `0600`, schema v1, just `{ schemaVersion, activeEmail }`). 비밀이 아니라 keychain entry를 찾기 위한 포인터일 뿐이다. 분리 이유: keychain 백엔드 (`security` / `secret-tool` / CredRead)는 lookup에 account 이름이 필요한데 그게 곧 email이다. cookie 세션 파일과 별도로 둠 — 쿠키 wipe 후에도 credential은 살아남아야 한다.
 - **Password**: OS keychain. service = `aitcc.credentials`, account = `<email>`. **stock CLI 도구만 호출**해서 native peer 의존이 없고, `bun build --compile`이 깔끔하게 번들된다 (검증: `scripts/credentials-smoke.ts`로 darwin-arm64 round-trip).
