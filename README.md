@@ -124,7 +124,7 @@ OS 키체인 대신 plain `0600` 파일을 쓰는 이유는 [CLAUDE.md](./CLAUDE
 
 ## CI/CD 통합
 
-워크플로의 한 번성 실행(`aitcc app deploy` 등)을 위해 desktop에서 캡처한 세션을 runner에 주입합니다:
+워크플로의 일회성 실행(`aitcc app deploy` 등)을 위해 desktop에서 캡처한 세션을 runner에 주입합니다:
 
 ```sh
 # Desktop (이미 로그인된 상태):
