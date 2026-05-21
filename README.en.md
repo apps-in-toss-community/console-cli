@@ -128,7 +128,7 @@ For one-shot CI runs (e.g. `aitcc app deploy` from a workflow), seed the runner 
 
 ```sh
 # Desktop (already logged in):
-aitcc auth export --format env >> $GITHUB_ENV       # or: aitcc auth export --format env  → store as a secret
+aitcc auth export --format env >> $GITHUB_ENV       # or store as a secret
 # CI (with the secret exposed as $AITCC_SESSION):
 aitcc app deploy ./aitc-sdk-example.ait --json
 ```
