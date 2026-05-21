@@ -222,6 +222,36 @@ describe('runDeploy', () => {
     expect(fetchCalls).toBe(0);
   });
 
+  // Fix #3: an empty or whitespace-only --release-notes used to bypass the
+  // "release notes required" guard because the check was `=== undefined`.
+  it('emits missing-release-notes + exit 2 when --release-notes is an empty string', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const exit = await captureExit(() =>
+      runDeploy(
+        { path, app: '29397', requestReview: true, releaseNotes: '', json: true },
+        { fetchImpl: loudFetch },
+      ),
+    );
+    expect(exit?.code).toBe(2);
+    expect(stdout.join('')).toContain('"reason":"missing-release-notes"');
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('emits missing-release-notes + exit 2 when --release-notes is whitespace only', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-123');
+    const exit = await captureExit(() =>
+      runDeploy(
+        { path, app: '29397', requestReview: true, releaseNotes: '   ', json: true },
+        { fetchImpl: loudFetch },
+      ),
+    );
+    expect(exit?.code).toBe(2);
+    expect(stdout.join('')).toContain('"reason":"missing-release-notes"');
+    expect(fetchCalls).toBe(0);
+  });
+
   it('emits not-confirmed + exit 2 when --release is set without --confirm', async () => {
     await writeSessionAt(3095);
     const path = writeBundleFile(root, 'dep-123');

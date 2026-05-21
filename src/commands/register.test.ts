@@ -649,6 +649,34 @@ describe('runRegister', () => {
     }
   });
 
+  // Fix #1: when the API returns miniAppId as a string the write-back was
+  // previously skipped because the guard only accepted `typeof number`.
+  it('writes miniAppId back to aitcc.yaml when the server returns it as a string', async () => {
+    await writeSessionAt(3095);
+    const projectPath = await writeProjectFile('aitcc.yaml', 'workspaceId: 3095\n');
+    const manifestPath = writeManifest(dir, validManifestBody(dir), 'manifest.json');
+    const exit = await captureExit(() =>
+      runRegister(
+        { json: false, acceptTerms: true, config: manifestPath },
+        depsWith({
+          uploadImpl: async () => 'https://cdn.example/x.png',
+          // API returns miniAppId as a string — the guard must coerce and persist it.
+          submitImpl: async () => ({
+            miniAppId: '31146' as string | number,
+            reviewState: 'PENDING',
+            extra: {},
+          }),
+        }),
+      ),
+    );
+    expect(exit?.code).toBe(0);
+    const updated = await readFileUtf8(projectPath);
+    // The persisted value must be a number (31146) not the string "31146".
+    expect(updated).toMatch(/miniAppId:\s+31146/);
+    expect(updated).not.toContain('"31146"');
+    expect(stderr.join('')).toContain(`Updated ${projectPath} with miniAppId: 31146.`);
+  });
+
   it('is a no-op when aitcc.yaml already pins the same miniAppId', async () => {
     await writeSessionAt(3095);
     const original = '# header\nworkspaceId: 3095\nminiAppId: 31146\n';

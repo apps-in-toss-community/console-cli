@@ -429,9 +429,15 @@ async function persistMiniAppIdToProject(
   miniAppId: string | number | undefined,
   cwd: string,
 ): Promise<void> {
-  if (typeof miniAppId !== 'number' || !Number.isInteger(miniAppId) || miniAppId <= 0) {
+  // Normalise: the API may return miniAppId as a string (e.g. `"31146"`)
+  // even though the yaml schema wants a number. Coerce early so both
+  // representations trigger the write-back.
+  const coerced =
+    typeof miniAppId === 'string' && /^\d+$/.test(miniAppId) ? Number(miniAppId) : miniAppId;
+  if (typeof coerced !== 'number' || !Number.isInteger(coerced) || coerced <= 0) {
     return;
   }
+  const numericId: number = coerced;
   let ctx: Awaited<ReturnType<typeof findProjectContext>>;
   try {
     ctx = await findProjectContext(cwd);
@@ -447,15 +453,15 @@ async function persistMiniAppIdToProject(
   if (ctx === null) {
     if (!json) {
       process.stderr.write(
-        `tip: drop an aitcc.yaml with \`miniAppId: ${miniAppId}\` in your project root to skip --app on later commands.\n`,
+        `tip: drop an aitcc.yaml with \`miniAppId: ${numericId}\` in your project root to skip --app on later commands.\n`,
       );
     }
     return;
   }
   try {
-    const outcome = await writeProjectMiniAppId(ctx.source, miniAppId);
+    const outcome = await writeProjectMiniAppId(ctx.source, numericId);
     if (!json && outcome.status === 'written') {
-      process.stderr.write(`Updated ${ctx.source} with miniAppId: ${miniAppId}.\n`);
+      process.stderr.write(`Updated ${ctx.source} with miniAppId: ${numericId}.\n`);
     }
   } catch (err) {
     if (!json) {
