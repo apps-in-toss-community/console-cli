@@ -73,8 +73,13 @@ import {
 //     { ok: false, uploaded: true, reviewed: true, released: false,
 //       reason: 'api-error', ... }                                  exit 17
 //
+//   partial-success auth failure (upload succeeded, downstream step did NOT
+//   complete because the session expired mid-flight):
+//     { ok: false, authenticated: false, reason: 'session-expired',
+//       uploaded, reviewed, released, workspaceId, appId, deploymentId }  exit 10
+//
 //   Standard auth/network follow the shared contract from _shared.ts
-//   (ok:true authenticated:false exit 10, network-error exit 11,
+//   (ok:false authenticated:false exit 10, network-error exit 11,
 //    api-error exit 17).
 //
 // --release note: the server requires the bundle to be in APPROVED state
@@ -409,7 +414,7 @@ async function emitPartialFailure(
   if (err instanceof TossApiError && err.isAuthError) {
     if (json) {
       emitJson({
-        ok: true,
+        ok: false,
         authenticated: false,
         reason: 'session-expired',
         ...progress,

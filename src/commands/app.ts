@@ -203,7 +203,9 @@ const lsCommand = defineCommand({
 //       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt }   exit 0
 //     { ok: false, reason: 'no-workspace-selected' }                    exit 2
 //     { ok: false, reason: 'invalid-id', message }                      exit 2
-//     { ok: false, reason: 'app-not-found', appId }                     exit 2
+//     missing/inaccessible app: { ok: false, reason: 'api-error', ... } exit 17
+//       (fetchMiniAppWithDraft throws TossApiError — surfaces via the
+//        shared api-error handler, not a dedicated app-not-found shape)
 //
 //   app show <id> --diff:
 //     { ok: true, workspaceId, appId, diffMode: true,
