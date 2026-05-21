@@ -381,6 +381,13 @@ function validateManifest(raw: Record<string, unknown>, configDir: string): AppM
     }
   }
   const appName = requireString(raw, 'appName');
+  if (!APP_NAME_REGEX.test(appName)) {
+    throw new ManifestError(
+      'invalid-config',
+      `appName must be a kebab-case slug starting with a lowercase letter (got "${appName}"; server-side rule)`,
+      'appName',
+    );
+  }
   const csEmail = requireString(raw, 'csEmail');
   if (!isValidEmail(csEmail)) {
     throw new ManifestError(

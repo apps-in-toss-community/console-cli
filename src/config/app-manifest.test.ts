@@ -490,4 +490,42 @@ horizontalScreenshots:
     const m = await loadAppManifest(path);
     expect(m.miniAppId).toBeUndefined();
   });
+
+  // Fix #2: appName was not validated against APP_NAME_REGEX before this fix.
+  it('rejects appName that does not match APP_NAME_REGEX (uppercase)', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: E\nappName: MyApp\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('appName');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('rejects appName starting with a digit', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: E\nappName: 1badslug\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const err = await loadAppManifest(path).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestError);
+    expect((err as ManifestError).field).toBe('appName');
+    expect((err as ManifestError).kind).toBe('invalid-config');
+  });
+
+  it('accepts a valid kebab-case appName', async () => {
+    const dir = makeTempDir();
+    const path = writeManifest(
+      dir,
+      'aitcc.yaml',
+      `titleKo: k\ntitleEn: E\nappName: my-valid-app\ncsEmail: a@b.co\nlogo: l.png\nhorizontalThumbnail: t.png\ncategoryIds: [1]\nsubtitle: s\ndescription: d\nverticalScreenshots: [v1, v2, v3]\n`,
+    );
+    const m = await loadAppManifest(path);
+    expect(m.appName).toBe('my-valid-app');
+  });
 });

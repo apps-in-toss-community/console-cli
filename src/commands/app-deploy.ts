@@ -140,7 +140,7 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
   const confirm = Boolean(args.confirm);
   const releaseNotes = typeof args.releaseNotes === 'string' ? args.releaseNotes : undefined;
 
-  if (requestReview && releaseNotes === undefined) {
+  if (requestReview && (releaseNotes === undefined || releaseNotes.trim() === '')) {
     if (args.json) {
       emitJson({
         ok: false,
