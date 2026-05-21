@@ -22,7 +22,7 @@ The installer detects OS (`uname -s`) and arch (`uname -m`), downloads the match
 Pin a specific version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.34 sh
 ```
 
 Override the install directory with `AITCC_INSTALL_DIR=/custom/path` (default `$HOME/.local/bin`).

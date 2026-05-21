@@ -22,7 +22,7 @@ installer가 OS(`uname -s`)와 아키텍처(`uname -m`)를 자동 감지해 최�
 특정 버전 고정:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.34 sh
 ```
 
 설치 경로를 바꾸려면 `AITCC_INSTALL_DIR=/custom/path` (기본 `$HOME/.local/bin`).
