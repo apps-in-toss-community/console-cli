@@ -324,6 +324,19 @@ describe('deriveLsStatus', () => {
     expect(deriveLsStatus(base, 'RUNNING').status).toBe('in-service');
   });
 
+  it('promotes approved → in-service when serviceStatus === "OPENED" (documented live value)', () => {
+    // `OPENED` is the documented live value (release --confirm → OPENED);
+    // `RUNNING` is a tolerated alias. Both must promote, else a published
+    // app returning OPENED would show as bare `approved`.
+    expect(deriveLsStatus(base, 'OPENED').status).toBe('in-service');
+  });
+
+  it('does not promote approved when serviceStatus is PREPARE or unknown', () => {
+    expect(deriveLsStatus(base, 'PREPARE').status).toBe('approved');
+    expect(deriveLsStatus(base, undefined).status).toBe('approved');
+    expect(deriveLsStatus(base, 'SOMETHING_ELSE').status).toBe('approved');
+  });
+
   it('does not promote non-approved states even when RUNNING is reported', () => {
     // A workspace entry that reports RUNNING for an app whose with-draft
     // says under-review is internally inconsistent — trust with-draft.

@@ -401,8 +401,15 @@ function formatDiffValue(v: unknown): string {
 
 // Service-status string → human label. Unknown values pass through verbatim
 // (we'd rather show a raw enum we don't recognise than swallow it).
+//
+// Wire values: only `PREPARE` is empirically confirmed (every dog-food app is
+// PREPARE-state). The live value is documented as `OPENED` (docs/api/mini-apps.md
+// "sdk-example dog-food 앱 상태" + umbrella CLAUDE.md §3.2: `release --confirm`
+// → serviceStatus OPENED). `RUNNING` is an earlier inference kept as a tolerated
+// alias until a published app's serviceStatus is captured (#163/#164).
 function describeServiceStatus(s: string): string {
-  if (s === 'PREPARE') return 'PREPARE (출시 전 — release 토글 미사용)';
+  if (s === 'PREPARE') return 'PREPARE (출시 전 — 번들 출시 검수 미통과)';
+  if (s === 'OPENED') return 'OPENED (출시 중)';
   if (s === 'RUNNING') return 'RUNNING (출시 중)';
   if (s === 'STOPPED') return 'STOPPED (운영 중지)';
   return s;
@@ -758,6 +765,16 @@ export interface AppLsStatusRow {
   readonly lockReason: 'review-pending' | null;
 }
 
+// Whether a `serviceStatus` wire value means the app is live to users.
+// `OPENED` is the documented live value (docs/api/mini-apps.md "sdk-example
+// dog-food 앱 상태"); `RUNNING` is an earlier inference kept as a tolerated
+// alias. Neither is empirically confirmed yet — every dog-food app is PREPARE
+// — so we accept both rather than gate on one and risk showing a published
+// app as bare `approved` (#163/#164 will confirm the live wire value).
+function isInServiceStatus(serviceStatus: string | undefined): boolean {
+  return serviceStatus === 'OPENED' || serviceStatus === 'RUNNING';
+}
+
 export function deriveLsStatus(
   derived: DerivedStatus | null,
   serviceStatus: string | undefined,
@@ -768,7 +785,7 @@ export function deriveLsStatus(
   const locked = derived.approvalType === 'REVIEW';
   const lockReason = locked ? 'review-pending' : null;
   let status: AppLsStatus = derived.state;
-  if (status === 'approved' && serviceStatus === 'RUNNING') {
+  if (status === 'approved' && isInServiceStatus(serviceStatus)) {
     status = 'in-service';
   }
   return { status, locked, lockReason };
@@ -846,7 +863,7 @@ const statusCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
-    // `serviceStatus` is a server-side string (PREPARE / RUNNING / …) that
+    // `serviceStatus` is a server-side string (PREPARE / OPENED / …) that
     // is orthogonal to the client-derived review `state`. We surface both
     // so operators see the review stage and the runtime stage at once —
     // important because an app can be `approved` (review done) yet still
