@@ -39,6 +39,50 @@ CLI [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)가 묶는 �
 5. (옵션) **`POST .../bundles/reviews`** with `--request-review --release-notes <text>`.
 6. (옵션) **`POST .../bundles/release`** with `--release --confirm` — bundle이 APPROVED 상태일 때만 동작.
 
+## 번들 출시 상태머신
+
+번들 출시 검수는 *앱 등록 검수*([`mini-apps.md`](./mini-apps.md) "동작 (`approvalType` 별)")와 **별개의 상태머신**이다 — 둘은 독립적으로 진행된다. 앱 등록이 `approved`여도 번들이 출시 검수를 통과하지 못하면 `serviceStatus`는 `PREPARE`에 머문다. 두 층의 관계는 [`mini-apps.md`](./mini-apps.md) "sdk-example dog-food 앱 상태" 참조.
+
+번들의 `reviewStatus`(개별 deployment 단위)와 앱의 `serviceStatus`(앱 전체 단위)가 맞물려 전이한다:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "bundle reviewStatus" as B {
+        [*] --> CREATED: upload<br/>(deployments/<br/>initialize+complete)
+        CREATED --> REVIEWING: bundles/reviews<br/>(--request-review)
+        REVIEWING --> APPROVED: ops review<br/>(통과)
+        REVIEWING --> REJECTED: ops review<br/>(반려)
+        REJECTED --> REVIEWING: re-submit
+        APPROVED --> RELEASED: bundles/release<br/>(--release --confirm)
+    }
+    state "app serviceStatus" as S {
+        [*] --> PREPARE
+        PREPARE --> OPENED: 첫 RELEASED 번들
+    }
+    note right of B
+        실측: CREATED만 확정
+        (dog-food 18개 번들 전부 CREATED).
+        REVIEWING/APPROVED/REJECTED/RELEASED
+        + PREPARE→OPENED 전이는 추정 —
+        라이브 캡처는 #163/#164에서 승급.
+    end note
+```
+
+상태별 의미:
+
+| reviewStatus | 의미 | 트리거 | serviceStatus 영향 |
+|---|---|---|---|
+| `CREATED` | 업로드만 됨, 출시 검수 미제출 | `deployments/initialize` + `complete` (= `app deploy` 기본) | 없음 — `PREPARE` 유지 |
+| `REVIEWING` | 출시 검수 큐 진입 (추정 라벨) | `bundles/reviews` (`--request-review`) | 없음 |
+| `APPROVED` | 출시 검수 통과 — release 가능 | 운영팀 검수 | 없음 (release 전) |
+| `REJECTED` | 출시 검수 반려 | 운영팀 검수 | 없음 |
+| `RELEASED` | 실제 배포 — 사용자 노출 | `bundles/release` (`--release --confirm`) | 첫 RELEASED → `serviceStatus: OPENED` |
+
+> `reviewStatus`의 enum 라벨(REVIEWING/APPROVED/REJECTED/RELEASED)과 `serviceStatus: OPENED` 전이는 **추정**이다. dog-food 18개 번들이 전부 `CREATED`(출시 검수 미제출)에 머물러 있어 라이브 전이 캡처가 없다. `initialize` 응답의 `reviewStatus`만 `PREPARE`로 실측됐다([`app-deploy.ts`](../../src/commands/app-deploy.ts) `init.reviewStatus !== 'PREPARE'` 게이트). 첫 출시 검수 제출(#164)·release 캡처(#163) 후 이 다이어그램의 추정 라벨을 실측으로 승급한다.
+
+`serviceStatus`의 라이브 값을 `OPENED`로 보는 근거는 [`mini-apps.md`](./mini-apps.md) "sdk-example dog-food 앱 상태" + umbrella `CLAUDE.md` §3.2 — CLI의 `describeServiceStatus`/`deriveLsStatus`는 `OPENED`와 `RUNNING`을 둘 다 in-service로 처리한다([`app.ts`](../../src/commands/app.ts), 실측 미확인 주석 참조).
+
 ## `GET /workspaces/<wid>/mini-app/<mini_app_id>/bundles` — 번들 목록
 
 - **Used by**: [`src/api/mini-apps.ts#fetchBundles`](../../src/api/mini-apps.ts), CLI `aitcc app bundles ls`
