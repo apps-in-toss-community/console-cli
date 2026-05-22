@@ -4,7 +4,7 @@
 
 미니앱 번들(빌드 결과 zip/AIT)의 업로드, 검토, 배포 endpoint 묶음. 자세한 번들 포맷(AIT vs legacy zip)은 console-cli `CLAUDE.md`의 "App deploy" 섹션 참고.
 
-> **Capture status note**: GET 엔드포인트 두 개(`bundles` 목록 / `bundles/deployed`)는 2026-05-11 31146 + 잔여 dog-food 앱(29349/29405)에서 실호출 envelope을 직접 캡처해 ✅로 승급했다. `bundles/test-links`는 같은 라운드에서 사전 번들 부재 시의 4000 error path만 확인 — success shape은 미보유라 ⚠️ 유지. write 경로(initialize/complete/reviews/release/memos/test-push/withdrawal)도 **여전히 라이브 캡처 미보유** — 31146가 운영팀 검수 lock(errorCode 4046)에 묶여 있고 이전 4개 앱도 동일 큐에 들어가 있어 destructive write 없이는 실호출 본문을 받을 수 없다. 본문 shape은 [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)의 inferred 모델 + 콘솔 번들 정적 분석(`bootstrap.*.js` grep, [`.playwright-mcp/ENDPOINTS-CATALOG.md`](https://github.com/apps-in-toss-community/.playwright-mcp/) 참고) 기준으로 유지.
+> **Capture status note**: GET 엔드포인트 두 개(`bundles` 목록 / `bundles/deployed`)는 2026-05-11 31146 + 잔여 dog-food 앱(29349/29405)에서 실호출 envelope을 직접 캡처해 ✅로 승급했다. `bundles/test-links`는 같은 라운드에서 사전 번들 부재 시의 4000 error path만 확인 — success shape은 미보유라 ⚠️ 유지. deploy write 경로(`deployments/initialize` + `complete`, = `app deploy` 기본)는 2026-05-22 31146에서 ✅로 승급했다 — 31146의 등록 검수 lock이 풀려(`aitcc app status` → `state: approved`, `locked: false`) 번들 18개가 실트래픽으로 deploy됐고, `bundles ls`가 그 record를 반환한다(아래 "31146 deploy 캡처 결과" + record shape). 나머지 write 경로(`reviews`/`release`/`reviews/withdrawal`/`memos`/`test-push`)는 여전히 라이브 캡처 미보유 — 18개 번들이 전부 `reviewStatus: CREATED`(출시 검수 미제출)에 머물러 있어 출시 검수 제출(#164)이 들어가야 본문이 잡힌다. 미캡처 항목의 본문 shape은 [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/app-deploy.ts`](../../src/commands/app-deploy.ts)의 inferred 모델 + 콘솔 번들 정적 분석(`bootstrap.*.js` grep, [`.playwright-mcp/ENDPOINTS-CATALOG.md`](https://github.com/apps-in-toss-community/.playwright-mcp/) 참고) 기준으로 유지.
 
 ## 색인
 
@@ -25,8 +25,8 @@
 
 | Method | Path | 용도 | 상태 |
 |---|---|---|---|
-| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/deployments/initialize` | 배포 초기화 (업로드 URL 발급) | ⚠️ |
-| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/deployments/complete` | 배포 완료 (uploaded 검증) | ⚠️ |
+| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/deployments/initialize` | 배포 초기화 (업로드 URL 발급) | ✅ |
+| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/deployments/complete` | 배포 완료 (uploaded 검증) | ✅ |
 
 ## 흐름 (CLI `app deploy` 기준)
 
@@ -79,7 +79,7 @@ stateDiagram-v2
 | `REJECTED` | 출시 검수 반려 | 운영팀 검수 | 없음 |
 | `RELEASED` | 실제 배포 — 사용자 노출 | `bundles/release` (`--release --confirm`) | 첫 RELEASED → `serviceStatus: OPENED` |
 
-> `reviewStatus`의 enum 라벨(REVIEWING/APPROVED/REJECTED/RELEASED)과 `serviceStatus: OPENED` 전이는 **추정**이다. dog-food 18개 번들이 전부 `CREATED`(출시 검수 미제출)에 머물러 있어 라이브 전이 캡처가 없다. `initialize` 응답의 `reviewStatus`만 `PREPARE`로 실측됐다([`app-deploy.ts`](../../src/commands/app-deploy.ts) `init.reviewStatus !== 'PREPARE'` 게이트). 첫 출시 검수 제출(#164)·release 캡처(#163) 후 이 다이어그램의 추정 라벨을 실측으로 승급한다.
+> `CREATED`는 실측 라이브 값이다 — 2026-05-22 `bundles ls`가 dog-food 18개 번들의 `reviewStatus`를 전부 `CREATED`(출시 검수 미제출)로 반환했다. 나머지 enum 라벨(REVIEWING/APPROVED/REJECTED/RELEASED)과 `serviceStatus: OPENED` 전이는 아직 **추정** — 18개가 전부 `CREATED`에 머물러 있어 전이 자체의 라이브 캡처가 없다. `initialize` 응답의 `reviewStatus`는 `PREPARE`로 실측됐다([`app-deploy.ts`](../../src/commands/app-deploy.ts) `init.reviewStatus !== 'PREPARE'` 게이트). 첫 출시 검수 제출(#164) 후 이 다이어그램의 추정 라벨을 실측으로 승급한다.
 
 `serviceStatus`의 라이브 값을 `OPENED`로 보는 근거는 [`mini-apps.md`](./mini-apps.md) "sdk-example dog-food 앱 상태" + umbrella `CLAUDE.md` §3.2 — CLI의 `describeServiceStatus`/`deriveLsStatus`는 `OPENED`와 `RUNNING`을 둘 다 in-service로 처리한다([`app.ts`](../../src/commands/app.ts), 실측 미확인 주석 참조).
 
@@ -228,28 +228,60 @@ Exit code 17 (`api-error`).
 
 `permissions.role`은 `members/me`의 워크스페이스 멤버십에서 derive ([`fetchConsoleMemberUserInfo`](../../src/api/me.ts)). best-effort 체크라 fetch 실패 시 `role: null` + `error` 필드만 채우고 dry-run 자체는 진행한다.
 
-## 31146 deploy 캡처 결과 (2026-05-11)
+## 31146 deploy 캡처 결과
+
+### 2026-05-11 (GET 경로 + dry-run)
 
 | Endpoint | 시도 | 결과 |
 |---|---|---|
-| `GET /bundles` | `aitcc app bundles ls 31146` (no filter, `tested=true`, `deployStatus=DEPLOYED` 모두) | `{contents: [], totalPage: 0, currentPage: 0}` ✅ envelope 확정 |
+| `GET /bundles` | `aitcc app bundles ls 31146` (no filter, `tested=true`, `deployStatus=DEPLOYED` 모두) | `{contents: [], totalPage: 0, currentPage: 0}` ✅ envelope 확정 (당시엔 빈 케이스) |
 | `GET /bundles/deployed` | `aitcc app bundles deployed 31146` | `success: null` ✅ envelope 확정 |
 | `GET /bundles/test-links` | `aitcc app bundles test-links 31146` | HTTP 400 / errorCode 4000 (사전 번들 없음). 성공 shape 미보유 |
-| `POST /deployments/initialize` ~ `bundles/release` | (write 경로 — 미실행) | 31146 / 잔여 4개 앱 모두 운영팀 lock 상태(4046). destructive write 없이 캡처 불가 — 이전 dog-food 4앱이 lock에 걸린 원인이 "lock 풀려고 새 앱 만들기" 반패턴이라 새 앱 등록 우회도 금지 (umbrella `CLAUDE.md` "sdk-example dog-food 앱"). |
 | CLI `app deploy --dry-run --json` | 외부 .ait + 31146 | `wouldSucceed: false`, terms blockers 7개 (TOSS_LOGIN×2, BIZ_WORKSPACE×3, IAA, IAP) 캡처. 위 "Captured output" 섹션. |
 
 29349/29405도 동일 envelope (둘 다 빈 contents + null deployed) — list/deployed 두 GET은 lock 상태와 무관하게 작동한다.
 
-write 경로 캡처는 **(a) 실 사용자 미니앱이 등록된 다른 워크스페이스의 협조** 또는 **(b) 31146의 lock이 운영팀 손에 풀린 뒤 single update + delete-after** 둘 중 하나가 가능해질 때까지 deferred. 그 시점에 이 섹션을 successful deploy 본문 캡처로 갱신.
+### 2026-05-22 (deploy write 경로 — lock 풀린 뒤 실증)
+
+이전 라운드는 "31146가 등록 검수 lock(4046)에 묶여 destructive write 불가"를 전제로 write 경로를 전부 deferred했다. 그 전제는 더 이상 사실이 아니다 — `aitcc app status 31146`이 `state: approved` · `locked: false` · `lockReason: null`을 보고하고, 그 사이 번들 18개가 `app deploy`로 실트래픽 deploy됐다.
+
+| Endpoint | 시도 | 결과 |
+|---|---|---|
+| `POST /deployments/initialize` + `complete` | `app deploy` (= 기본 흐름) | ✅ 실증 — 18개 번들이 `CREATED`로 deploy됨 (가장 최근 `versionName: 20260522-18`, `memo: "Release v0.1.9 (dogfood)"`). |
+| `GET /bundles` | `aitcc app bundles ls 31146 --json` | ✅ populated record 18건. envelope `{ok, workspaceId, appId, page, totalPage, currentPage, bundles}`. record 필드는 아래. |
+| `GET /bundles/deployed` | `aitcc app bundles deployed 31146 --json` | `bundle: null` — `hasCurrent: true`인데도 null. `serviceStatus: PREPARE`라 candidate가 슬롯엔 있지만 출시 검수 통과 전이라 deployed view엔 안 잡힌다 (umbrella `CLAUDE.md` §3.2와 일치). |
+
+**`GET /bundles` record shape** (실측, 18건 동형):
+
+```jsonc
+{
+  "miniAppId": 31146,
+  "appName": "aitc-sdk-example",
+  "deploymentId": "019e4bc9-2c68-7c3f-bd77-b170e42e5912",
+  "versionName": "20260522-18",
+  "lastDeployedAt": null,        // serviceStatus PREPARE → 실제 RELEASED 없음
+  "memo": "Release v0.1.9 (dogfood)",
+  "releaseNote": null,
+  "reviewStatus": "CREATED",     // 18건 전부 CREATED (출시 검수 미제출)
+  "reviewReason": null,
+  "failureReason": null,
+  "isTested": false,             // test-push 0회
+  "deployed": false,
+  "sdkVersion": "2.5.0",
+  "regTs": "2026-05-22T03:25:44",
+  "rejectMessages": []
+}
+```
+
+남은 write 경로(`reviews`/`release`/`reviews/withdrawal`/`memos`/`test-push`)는 lock이 아니라 **아직 안 쳤기 때문에** 미캡처다 — `CREATED → REVIEWING` 전이를 한 번도 트리거하지 않았다. 이 전이는 출시 검수 큐 진입(되돌리기 어려움)이라 #164에서 명시 진행한다.
 
 ## TODO: 본문 캡처 필요
 
-write 경로 ⚠️ 항목들의 신뢰도를 ✅로 올리려면 다음 캡처가 필요하다:
+deploy write 경로(`initialize`/`complete`)는 위에서 ✅로 승급됐다. 나머지 ⚠️ 항목의 신뢰도를 ✅로 올리려면:
 
-- 실제 번들 업로드 흐름(initialize → S3-style upload → complete) 전체 XHR 시퀀스. `initialize` 응답의 `uploadUrl` shape, `deployment.reviewStatus` 외 필드, `complete` 응답의 bundle record.
-- 검토 요청 시 `reviews` POST의 request body shape (`releaseNotes` 외 `featureList`/`screenshotImagePaths`가 실제 어느 상황에서 채워지는지).
-- 릴리즈 시 `release` POST의 request body / 응답 본문, `contentImages` 필드 사용 사례.
-- `test-push` 응답 shape, `test-links` populated success shape (사전 number 1+ 번들 + 1+ 테스트 device 필요).
-- `bundles/memos` 단독 호출 응답 (현재 deploy wrapper에서 묶여서만 호출됨).
+- 검토 요청 시 `reviews` POST의 request body shape (`releaseNotes` 외 `featureList`/`screenshotImagePaths`가 실제 어느 상황에서 채워지는지) + `CREATED → REVIEWING` 전이 응답. (#164)
+- 릴리즈 시 `release` POST의 request body / 응답 본문, `contentImages` 필드 사용 사례, 첫 `RELEASED → serviceStatus: OPENED` 전이. (#164)
+- `test-push` 응답 shape, `test-links` populated success shape (사전 번들은 이미 18건 있으니 1+ 테스트 device만 추가하면 됨).
+- `bundles/memos` 단독 호출 응답 (현재 deploy wrapper에서 묶여서만 호출됨 — `memo` echo는 record에 실측됨).
 
-각 endpoint를 캡처하면 위 "Bundles" / "Deployments" 색인의 ⚠️를 ✅로 승급하고, 본 파일을 endpoint별 항목으로 분해해 [`mini-apps.md`](./mini-apps.md)와 같은 형태로 `Request body` / `Server raw response` / `CLI --json output` 섹션을 채울 것.
+각 endpoint를 캡처하면 위 "Bundles" 색인의 ⚠️를 ✅로 승급하고, 본 파일을 endpoint별 항목으로 분해해 [`mini-apps.md`](./mini-apps.md)와 같은 형태로 `Request body` / `Server raw response` / `CLI --json output` 섹션을 채울 것.
