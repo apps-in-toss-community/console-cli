@@ -464,15 +464,17 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 
 CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason: "delete-not-supported"`) 두는 게 정직 — 실 endpoint가 열리기 전엔 사용자가 콘솔 운영팀에 직접 요청하라는 안내를 출력해야 한다.
 
-## sdk-example dog-food 앱 상태 (2026-05-03 시점)
+## sdk-example dog-food 앱 상태 (2026-05-22 갱신)
 
 본 인벤토리 캡처에 사용한 5개 앱 중 **추적 대상은 `31146` 한 개뿐**이다. 나머지 4개는 운영팀 처리 trail로 남기고 우리 쪽 SLA tracking에서 제외 — 운영팀 처리 결과와 무관하게 다시 건드리지 않는다. 모두 워크스페이스 `3095`(sdk-example dog-food). 추가 dog-food 시 새 앱 만들지 말고 `31146`에 update mode로 적용 (`miniApp.miniAppId: 31146` 포함).
 
 ### 추적 대상
 
-| miniAppId | appName | approvalType | current | draft | firstReleaseDate | 용도 |
+| miniAppId | appName | reviewState | locked | serviceStatus | deployed bundle | 용도 |
 |---|---|---|---|---|---|---|
-| `31146` | `aitc-sdk-example` | REVIEW | 없음 | 있음 | `null` | **메인 (최종)**. AITC.DEV 브랜드. 등록 직후 검수 큐 진입 (2026-05-03). 추가 변경은 update mode로만. REVIEW lock 해제만 추적. |
+| `31146` | `aitc-sdk-example` | `approved` | `false` | `PREPARE` | `null` | **메인 (최종)**. AITC.DEV 브랜드. 앱 등록 검수 통과 — 2026-05-03 진입한 REVIEW lock이 풀렸다(2026-05-22 실측). 추가 변경은 update mode로만. |
+
+**검수가 두 층이라는 점이 중요하다** — `31146`은 *앱 등록(메타데이터) 검수*는 통과(`reviewState: approved`)했지만 `serviceStatus`는 여전히 `PREPARE`다. 이유는 review 실패가 아니라, 업로드된 번들 전부가 `reviewStatus: CREATED`(번들 출시 검수 미제출)이기 때문이다. 출시 흐름은 `bundles upload → bundles review(제출) → 운영팀 APPROVED → bundles release --confirm → serviceStatus OPENED`인데, dog-food는 `upload`만 반복했고 `review` 제출을 한 적이 없다. 그래서 release된 번들이 없어(`bundles deployed: null`) PREPARE에 정상적으로 머문다. OPENED로 넘기려면 한 deployment를 `bundles review`로 제출 → APPROVED 후 `bundles release --confirm` 해야 한다.
 
 ### 운영팀 처리 trail (touch 금지, tracking 불필요)
 
@@ -486,6 +488,6 @@ CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason
 4개 모두 한 번 REJECTED → 다음 state 전환까지 도달했다 (`with-draft.rejectedMessage`는 `approvalType === REJECTED`일 때만 채워지므로 현재는 모두 `null`). 2026-05-02 채널톡으로 정리 요청 발송 — 운영팀 처리 대기 중이며, 우리 쪽 후속 액션 없음.
 
 **중요 메모**:
-- 현재 published된(`firstReleaseDate != null`) 앱은 **0개**. 검수 통과한 적 있는 건 29349/29356인데 출시(release) 토글을 안 누른 상태.
-- `aitcc app status`가 보여주는 derived state(`approved-with-edits` / `under-review` 등)는 REVIEW lock 해제 여부의 권위가 아니다. `with-draft.success.approvalType === 'REVIEW'`가 권위. 31146 추적 시 이 필드만 본다.
-- **새 앱 등록 금지**. 31146 등록으로 dog-food 사이클 종료 — REVIEW lock(4046) 걸려도 새 앱 만들지 말고 운영팀 처리 대기.
+- 현재 출시(`serviceStatus: OPENED`)된 앱은 **0개**. 31146은 앱 등록 검수를 통과했지만(`reviewState: approved`) 번들 출시 검수를 한 번도 제출하지 않아 `PREPARE`다 (위 "추적 대상" 표 아래 설명 참조).
+- 31146의 lock 해제 여부는 `app status`(`/with-draft`의 `reviewState`)와 `app service-status`(`/review-status`)가 일치한다 — 2026-05-22 실측 둘 다 `approved`/`locked:false`. 과거 메모는 `approvalType === REVIEW`를 권위로 봤는데, 현재 CLI는 그 신호를 `reviewState`/`locked`로 정규화해 노출한다. 둘이 어긋나면 server-authoritative한 `service-status`를 믿는다.
+- **새 앱 등록 금지**. 31146 등록으로 dog-food 사이클 종료 — update mode에서 REVIEW lock(4046) 걸려도 새 앱 만들지 말고 운영팀 처리 대기.
