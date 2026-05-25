@@ -86,6 +86,16 @@
 
 콘솔 UI는 발급 직후 `S.apiKey`를 화면에 노출하며 **"이 키는 한 번만 표시되니 복사해서 안전하게 보관해주세요"** 안내 문구를 같이 띄운다. CLI도 동일 contract: stdout에 plaintext 한 줄, stderr에 1회성 경고. 로그/`--verbose`에 절대 surface하지 않는다.
 
+### 운영 인스턴스 (sdk-example dog-food)
+
+sdk-example CI 배포에 쓰는 Deploy Key 1개가 운영 중이다 — **plaintext 값은 발급 시 한 번만 노출되므로 여기 적지 않는다.** metadata만:
+
+| id | name | workspace | scope | expire |
+|---|---|---|---|---|
+| 6905 | `aitcc-sdk-ex-ci` | 3095 | `aitc-sdk-example` | 2027-05-18 |
+
+plaintext는 sdk-example GitHub repo secret `AITCC_API_KEY`에만 산다 (`ait deploy --api-key`가 소비). 분실 시 `revoke` + `create` 재발급 후 secret 갱신.
+
 ## `PUT /workspaces/<wid>/api-keys/<api_key_id>/disable` — 비활성화
 
 - **Used by**: [`src/api/api-keys.ts#disableApiKey`](../../src/api/api-keys.ts), `aitcc keys revoke`
