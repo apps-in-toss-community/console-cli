@@ -1,4 +1,5 @@
 import { defineCommand } from 'citty';
+import { saveAitTokenProfile } from '../ait-token-profile.js';
 import {
   type CreateApiKeyTarget,
   createApiKey,
@@ -28,8 +29,10 @@ import {
 //   deploy that will 401 server-side. We keep the UI-specific Korean
 //   wording out of JSON (it lives on stderr plain output only).
 //
-//   keys create --name <label> [--apps <slug,slug>] [--workspace <id>]:
-//     { ok: true, workspaceId, apiKey, name, target: {isAll, appNames}, extra } exit 0
+//   keys create --name <label> [--apps <slug,slug>] [--workspace <id>]
+//               [--save-profile <name>]:
+//     { ok: true, workspaceId, apiKey, name, target: {isAll, appNames},
+//       savedProfile?: string, saveProfileWarning?: string, extra }             exit 0
 //     { ok: false, reason: 'invalid-name', message }                            exit 2
 //     { ok: false, reason: 'invalid-apps', message }                            exit 2
 //     { ok: false, reason: 'no-workspace-selected' }                            exit 2
@@ -39,6 +42,15 @@ import {
 //   here** — the list endpoint does not echo it back. Agent-plugin skills
 //   should pipe it straight into a secret manager and never log the raw
 //   value. The CLI itself prints it to stdout once and never persists it.
+//
+//   When `--save-profile <name>` is given:
+//     - On success: `savedProfile` is set to the profile name. The key is
+//       saved to `~/.ait/credentials` so `ait deploy --profile <name>` works
+//       immediately without a manual `ait token add` step.
+//     - On failure (write error + ait not on PATH): `saveProfileWarning`
+//       explains what went wrong; `apiKey` is still emitted and `exit 0`
+//       so the caller can save it elsewhere.
+//   The secret key value is NEVER included in `saveProfileWarning` or stderr.
 //
 //   keys revoke <id> [--workspace <id>]:
 //     { ok: true, workspaceId, apiKeyId }                                       exit 0
@@ -162,6 +174,13 @@ const createCommand = defineCommand({
       type: 'string',
       description: 'Workspace ID. Defaults to the selected workspace.',
     },
+    'save-profile': {
+      type: 'string',
+      description:
+        'After issuing, save the key as an `ait` token profile (written to `~/.ait/credentials`). ' +
+        'The named profile can then be used with `ait deploy --profile <name>` immediately. ' +
+        'If omitted, the key is printed to stdout once and not persisted locally.',
+    },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
   async run({ args }) {
@@ -203,6 +222,28 @@ const createCommand = defineCommand({
 
     try {
       const result = await createApiKey(workspaceId, { name, target }, session.cookies);
+
+      // --save-profile: write the key to ~/.ait/credentials so `ait deploy
+      // --profile <name>` works immediately.  Failure is non-fatal: we still
+      // surface the key and exit 0 so the caller can save it elsewhere.
+      // SECRET-HANDLING: apiKey is never included in warning messages.
+      const saveProfileName = args['save-profile'] ? String(args['save-profile']) : undefined;
+      let savedProfile: string | undefined;
+      let saveProfileWarning: string | undefined;
+
+      if (saveProfileName !== undefined) {
+        const saveResult = saveAitTokenProfile(saveProfileName, result.apiKey);
+        if (saveResult.ok) {
+          savedProfile = saveResult.profile;
+        } else {
+          saveProfileWarning =
+            `Could not save to ait profile "${saveProfileName}": ${saveResult.detail}. ` +
+            'Save the key manually with `ait token add --api-key <key> ' +
+            saveProfileName +
+            '`.';
+        }
+      }
+
       if (args.json) {
         emitJson({
           ok: true,
@@ -210,18 +251,30 @@ const createCommand = defineCommand({
           apiKey: result.apiKey,
           name,
           target: { isAll: target.isAll, appNames: [...target.appNames] },
+          ...(savedProfile !== undefined ? { savedProfile } : {}),
+          ...(saveProfileWarning !== undefined ? { saveProfileWarning } : {}),
           extra: result.extra,
         });
         return exitAfterFlush(ExitCode.Ok);
       }
+
       // Plaintext is shown exactly once. The console UI surfaces the same
       // "이 키는 한 번만 표시되니 복사해서 안전하게 보관해주세요." warning;
       // we mirror it on stderr so stdout stays a clean single line that's
       // friendly to `aitcc keys create ... | secret-tool store ...` pipes.
       process.stdout.write(`${result.apiKey}\n`);
-      process.stderr.write(
-        '⚠️  This key is shown only once. Save it to a secret manager now — it cannot be retrieved later.\n',
-      );
+      if (savedProfile !== undefined) {
+        process.stderr.write(
+          `Saved as ait profile "${savedProfile}". Run: ait deploy --profile ${savedProfile}\n`,
+        );
+      } else {
+        process.stderr.write(
+          '⚠️  This key is shown only once. Save it to a secret manager now — it cannot be retrieved later.\n',
+        );
+      }
+      if (saveProfileWarning !== undefined) {
+        process.stderr.write(`Warning: ${saveProfileWarning}\n`);
+      }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
       return emitFailureFromError(args.json, err);
