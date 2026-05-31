@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.36
+
+### Patch Changes
+
+- d009a58: fix(api): bundles test-links missing deploymentId query → 4000
+
 ## 0.1.35
 
 ### Patch Changes
