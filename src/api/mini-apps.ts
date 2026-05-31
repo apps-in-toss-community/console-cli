@@ -1119,20 +1119,31 @@ export async function postBundleTestPush(
   return raw as Record<string, unknown>;
 }
 
+export interface BundleTestLinksResult {
+  readonly linkUri: string;
+}
+
 export async function fetchBundleTestLinks(
   workspaceId: number,
   miniAppId: number,
+  deploymentId: string,
   cookies: readonly CdpCookie[],
   opts: { fetchImpl?: FetchLike } = {},
-): Promise<Readonly<Record<string, unknown>>> {
-  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/test-links`;
+): Promise<BundleTestLinksResult> {
+  const url =
+    `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/bundles/test-links` +
+    `?deploymentId=${encodeURIComponent(deploymentId)}`;
   const raw = await requestConsoleApi<unknown>({
     url,
     cookies,
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
   });
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  return raw as Record<string, unknown>;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Unexpected test-links shape for app=${miniAppId}`);
+  }
+  const data = raw as Record<string, unknown>;
+  const linkUri = typeof data.linkUri === 'string' ? data.linkUri : '';
+  return { linkUri };
 }
 
 // --- Register (create) ---

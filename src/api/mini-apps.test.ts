@@ -6,6 +6,7 @@ import {
   fetchAppServiceStatus,
   fetchAppTemplates,
   fetchBundles,
+  fetchBundleTestLinks,
   fetchConversionMetrics,
   fetchDeployedBundle,
   fetchImpressionCategoryList,
@@ -1150,5 +1151,56 @@ describe('fetchAppServiceStatus', () => {
     await expect(fetchAppServiceStatus(3095, 29405, cookies, { fetchImpl })).rejects.toThrow(
       /missing serviceStatus/,
     );
+  });
+});
+
+describe('fetchBundleTestLinks', () => {
+  it('attaches deploymentId as a query parameter and returns linkUri', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            linkUri: 'intoss-private://mini-app?serviceId=31146&deploymentId=<deployment-id>',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const result = await fetchBundleTestLinks(3095, 31146, '<deployment-id>', cookies, {
+      fetchImpl,
+    });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/31146/bundles/test-links?deploymentId=%3Cdeployment-id%3E',
+    );
+    expect(result.linkUri).toBe(
+      'intoss-private://mini-app?serviceId=31146&deploymentId=<deployment-id>',
+    );
+  });
+
+  it('encodes special characters in deploymentId', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({ resultType: 'SUCCESS', success: { linkUri: 'intoss-private://test' } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    await fetchBundleTestLinks(3095, 31146, 'uuid-1234-abcd', cookies, { fetchImpl });
+    expect(calledUrl).toContain('deploymentId=uuid-1234-abcd');
+  });
+
+  it('throws on unexpected response shape', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(
+      fetchBundleTestLinks(3095, 31146, 'some-id', cookies, { fetchImpl }),
+    ).rejects.toThrow(/Unexpected test-links shape/);
   });
 });

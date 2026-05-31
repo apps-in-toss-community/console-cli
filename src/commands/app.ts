@@ -1902,8 +1902,8 @@ const bundlesReleaseCommand = defineCommand({
 //   app bundles test-push <id> --deployment-id <uuid> [--workspace <id>]:
 //     { ok: true, workspaceId, appId, deploymentId, result: { ... } } exit 0
 //
-//   app bundles test-links <id> [--workspace <id>]:
-//     { ok: true, workspaceId, appId, links: { ... } }                exit 0
+//   app bundles test-links <id> --deployment-id <uuid> [--workspace <id>]:
+//     { ok: true, workspaceId, appId, deploymentId, linkUri: string }  exit 0
 
 const bundlesTestPushCommand = defineCommand({
   meta: {
@@ -1963,13 +1963,17 @@ const bundlesTestPushCommand = defineCommand({
 const bundlesTestLinksCommand = defineCommand({
   meta: {
     name: 'test-links',
-    description: 'Show per-device test URLs for the mini-app.',
+    description: 'Show the test deep-link URL for a specific bundle.',
   },
   args: {
     id: {
       type: 'positional',
       description: 'Mini-app ID. Optional when `aitcc.yaml` provides `miniAppId`.',
       required: false,
+    },
+    'deployment-id': {
+      type: 'string',
+      description: 'deploymentId of the bundle to fetch the test link for.',
     },
     workspace: {
       type: 'string',
@@ -1978,6 +1982,15 @@ const bundlesTestLinksCommand = defineCommand({
     json: { type: 'boolean', description: 'Emit machine-readable JSON.', default: false },
   },
   async run({ args }) {
+    const deploymentId = typeof args['deployment-id'] === 'string' ? args['deployment-id'] : '';
+    if (deploymentId === '') {
+      if (args.json) {
+        emitJson({ ok: false, reason: 'missing-deployment-id' });
+      } else {
+        process.stderr.write('app bundles test-links: --deployment-id <uuid> is required.\n');
+      }
+      return exitAfterFlush(ExitCode.Usage);
+    }
     const ctx = await resolveAppOrFail({
       json: args.json,
       appIdRaw: args.id,
@@ -1989,21 +2002,23 @@ const bundlesTestLinksCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
     try {
-      const links = await fetchBundleTestLinks(workspaceId, appId, session.cookies);
+      const { linkUri } = await fetchBundleTestLinks(
+        workspaceId,
+        appId,
+        deploymentId,
+        session.cookies,
+      );
       if (args.json) {
-        emitJson({ ok: true, workspaceId, appId, links });
+        emitJson({ ok: true, workspaceId, appId, deploymentId, linkUri });
         return exitAfterFlush(ExitCode.Ok);
       }
-      const keys = Object.keys(links);
-      if (keys.length === 0) {
-        process.stdout.write(`App ${appId} (ws ${workspaceId}): no test links available\n`);
+      if (linkUri === '') {
+        process.stdout.write(
+          `App ${appId} (ws ${workspaceId}): no test link available for deployment ${deploymentId}\n`,
+        );
         return exitAfterFlush(ExitCode.Ok);
       }
-      process.stdout.write(`App ${appId} (ws ${workspaceId}):\n`);
-      for (const k of keys) {
-        const v = links[k];
-        process.stdout.write(`  ${k}\t${typeof v === 'string' ? v : JSON.stringify(v)}\n`);
-      }
+      process.stdout.write(`App ${appId} (ws ${workspaceId}):\n  ${linkUri}\n`);
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
       return emitFailureFromError(args.json, err);
