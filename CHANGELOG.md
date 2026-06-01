@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.38
+
+### Patch Changes
+
+- 8d95db3: refactor(auth): OS keychain 완전 제거 — file-only credential store(~/.config/aitcc/credentials.json, perm 0600)로 통일. 기존 keychain 자격증명은 첫 명령 실행 시 자동 마이그레이션됨.
+
 ## 0.1.37
 
 ### Patch Changes
