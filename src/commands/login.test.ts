@@ -319,12 +319,31 @@ describe('resolveCredentialsForLogin', () => {
   });
 
   it('rejects an unknown --save value (exit 2)', async () => {
-    const got = await resolveCredentialsForLogin(
-      { ...baseArgs, email: 'a@b', password: 'pw', save: 'file' },
-      {},
-      { env: {}, ...nonTty },
-    );
-    expect(got).toMatchObject({ kind: 'error', reason: 'invalid-save' });
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, email: 'a@b', password: 'pw', save: 'disk' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toMatchObject({ kind: 'error', reason: 'invalid-save' });
+    } finally {
+      writeMock.mockRestore();
+    }
+  });
+
+  it('honours --save=file by routing to the file backend', async () => {
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, email: 'a@b', password: 'pw', save: 'file' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toMatchObject({ kind: 'ok', saveTarget: 'file' });
+    } finally {
+      writeMock.mockRestore();
+    }
   });
 
   it('falls through to env when no flags are set and both env vars are present', async () => {

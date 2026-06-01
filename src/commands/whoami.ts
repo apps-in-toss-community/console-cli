@@ -11,7 +11,7 @@ import { maybeCheckForUpdate } from '../update-check.js';
 // `whoami` should never trigger a Touch ID / libsecret prompt. Returns
 // `null` when nothing is configured so the JSON shape can stay compact.
 async function describeCredentialSource(): Promise<{
-  source: 'env' | 'keychain' | 'none';
+  source: 'env' | 'keychain' | 'file' | 'none';
   email: string | null;
 }> {
   const active = await getActiveCredentialEmail().catch(() => null);
@@ -20,12 +20,15 @@ async function describeCredentialSource(): Promise<{
 }
 
 function formatCredentials(cred: {
-  source: 'env' | 'keychain' | 'none';
+  source: 'env' | 'keychain' | 'file' | 'none';
   email: string | null;
 }): string {
   if (cred.source === 'none') return 'none (run `aitcc login` to save)';
   if (cred.source === 'env') {
     return `env (AITCC_EMAIL${cred.email ? ` = ${cred.email}` : ''})`;
+  }
+  if (cred.source === 'file') {
+    return `file (~/.config/aitcc/credentials.json)${cred.email ? ` (${cred.email})` : ''}`;
   }
   return `keychain${cred.email ? ` (${cred.email})` : ''}`;
 }

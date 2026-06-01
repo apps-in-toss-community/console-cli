@@ -135,18 +135,19 @@ export function chooseLoginMode(input: {
 // has reached the workspace page — both paths converge there.
 export type LoginMode = 'interactive' | 'headless';
 
-export type SaveTarget = 'keychain' | 'none';
+export type SaveTarget = 'keychain' | 'file' | 'none';
 
 export interface LoginDeps {
   // DI seam for tests and for keeping the CLI entrypoint as the only
   // module that imports `loadCredentials` directly. `null` means "no
   // credentials configured, take the interactive path".
   readonly getCredentials?: () => Promise<CredentialsSource | null>;
-  // DI seam for the keychain write. Tests can substitute an in-memory
+  // DI seam for the credential write. Tests can substitute an in-memory
   // backend; production wires `saveCredentials`.
   readonly saveCredentials?: (
     email: string,
     password: string,
+    useFile?: boolean,
   ) => Promise<{ status: SaveCredentialsStatus }>;
   // DI seam for stdin reads (`--password-stdin`). Tests inject the
   // expected password without having to feed a real stream.
@@ -187,6 +188,10 @@ const defaultPromptDeps: PromptDeps = {
         {
           name: 'OS keychain (recommended) — next login runs headlessly',
           value: 'keychain',
+        },
+        {
+          name: 'File (~/.config/aitcc/credentials.json, perm 0600) — use for SSH/headless sessions',
+          value: 'file',
         },
         {
           name: 'Do not save — one-shot. (Tip: AITCC_EMAIL/AITCC_PASSWORD env for CI.)',
@@ -234,7 +239,7 @@ export const loginCommand = defineCommand({
     save: {
       type: 'string',
       description:
-        'Where to persist credentials when --email/--password* are passed: "keychain" or "none" (default).',
+        'Where to persist credentials when --email/--password* are passed: "keychain", "file", or "none" (default). Use "file" for SSH/headless sessions where the OS keychain is unavailable.',
     },
     'skip-onboarding': {
       type: 'boolean',
@@ -253,7 +258,11 @@ export const loginCommand = defineCommand({
         passwordStdin: args['password-stdin'],
         save: typeof args.save === 'string' ? args.save : undefined,
       },
-      { getCredentials: loadCredentials, saveCredentials },
+      {
+        getCredentials: loadCredentials,
+        saveCredentials: (email, password, useFile) =>
+          saveCredentials(email, password, { useFile: useFile === true }),
+      },
     );
   },
 });
@@ -269,7 +278,7 @@ export interface LoginCommandArgs {
 }
 
 interface ResolvedCredentials {
-  readonly source: 'argv' | 'env' | 'keychain' | 'prompt';
+  readonly source: 'argv' | 'env' | 'keychain' | 'file' | 'prompt';
   readonly email: string;
   readonly password: string;
 }
@@ -345,12 +354,16 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
 
   // Persist credentials BEFORE attempting login when the user asked us to.
   // Saving up-front means a successful save followed by a failed login still
-  // leaves the keychain in the user-intended state (so they can re-run
+  // leaves the backend in the user-intended state (so they can re-run
   // `aitcc login` without re-prompting). Save failure with an explicit
-  // `--save keychain` is fatal — silently downgrading to "session-only" would
-  // be the opposite of the user's request.
+  // `--save keychain` or `--save file` is fatal — silently downgrading to
+  // "session-only" would be the opposite of the user's request.
   let saved: SaveCredentialsStatus | 'skipped' = 'skipped';
-  if (resolved.saveTarget === 'keychain' && resolved.credentials !== null) {
+  if (
+    (resolved.saveTarget === 'keychain' || resolved.saveTarget === 'file') &&
+    resolved.credentials !== null
+  ) {
+    const useFile = resolved.saveTarget === 'file';
     const save = deps.saveCredentials;
     if (!save) {
       emitError(
@@ -360,11 +373,15 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
       return exitAfterFlush(ExitCode.Generic);
     }
     try {
-      const result = await save(resolved.credentials.email, resolved.credentials.password);
+      const result = await save(resolved.credentials.email, resolved.credentials.password, useFile);
       saved = result.status;
       if (!args.json) {
         if (result.status === 'unchanged') {
           process.stderr.write('Credentials already saved (no change).\n');
+        } else if (useFile) {
+          process.stderr.write(
+            `Credentials saved to file backend (${resolved.credentials.email}).\n`,
+          );
         } else {
           process.stderr.write(
             `Credentials saved to OS keychain (${resolved.credentials.email}).\n`,
@@ -373,12 +390,34 @@ export async function runLoginCommand(args: LoginCommandArgs, deps: LoginDeps): 
       }
     } catch (err) {
       const message = (err as Error).message;
-      emitError(
-        { reason: 'keychain-save-failed', message },
-        `Failed to save credentials to the OS keychain: ${message}\n` +
-          'On Linux, install libsecret (`secret-tool`) and retry. ' +
-          'Re-run with `--save none` to skip persistence.',
-      );
+      if (!useFile && process.platform === 'darwin') {
+        emitError(
+          { reason: 'keychain-save-failed', message },
+          `keychain 접근에 실패했습니다.\n` +
+            `SSH/headless 세션이면 다음 중 하나를 시도하세요:\n` +
+            `  1) 데스크톱 GUI Mac에서: aitcc auth export --format=env (KR IP 필요)\n` +
+            `     SSH에서: AITCC_SESSION='...' aitcc auth import --from-env\n` +
+            `  2) 같은 SSH 세션에서 keychain unlock:\n` +
+            `     security unlock-keychain ~/Library/Keychains/login.keychain-db\n` +
+            `     (login 비밀번호 입력 후 재시도)\n` +
+            `  3) keychain 대신 파일 저장:\n` +
+            `     aitcc login --save=file (~/.config/aitcc/credentials.json, perm 0600)\n` +
+            `참고: https://github.com/apps-in-toss-community/console-cli/issues/176`,
+        );
+      } else if (!useFile) {
+        emitError(
+          { reason: 'keychain-save-failed', message },
+          `Failed to save credentials to the OS keychain: ${message}\n` +
+            'On Linux, install libsecret (`secret-tool`) and retry. ' +
+            'Re-run with `--save none` to skip persistence.',
+        );
+      } else {
+        emitError(
+          { reason: 'file-save-failed', message },
+          `Failed to save credentials to file backend: ${message}\n` +
+            'Check that ~/.config/aitcc/ is writable, or use AITCC_CREDENTIAL_FILE to specify a custom path.',
+        );
+      }
       return exitAfterFlush(ExitCode.Usage);
     }
   }
@@ -496,11 +535,11 @@ export async function resolveCredentialsForLogin(
   // emit a clean error before we touch the network or any prompt.
   let saveTarget: SaveTarget | undefined;
   if (args.save !== undefined) {
-    if (args.save !== 'keychain' && args.save !== 'none') {
+    if (args.save !== 'keychain' && args.save !== 'file' && args.save !== 'none') {
       return {
         kind: 'error',
         reason: 'invalid-save',
-        message: `--save must be "keychain" or "none" (got "${args.save}").`,
+        message: `--save must be "keychain", "file", or "none" (got "${args.save}").`,
         exitCode: ExitCode.Usage,
       };
     }

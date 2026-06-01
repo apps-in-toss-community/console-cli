@@ -111,6 +111,43 @@ aitcc app status         # 플래그 없이 동작 — aitcc.yaml에서 컨텍�
 
 CLI는 OS 표준 위치(Google Chrome, Chromium, Microsoft Edge)에서 Chrome을 찾습니다. 다른 곳에 설치돼 있으면 `AITCC_BROWSER=/path/to/chrome`으로 실행 파일을 지정하고, 스테이징 환경을 가리키려면 `AITCC_OAUTH_URL`로 로그인 URL을 override합니다. `--timeout <초>`로 로그인 대기 시간을 조절합니다 (기본 300초).
 
+## SSH / headless 환경에서 로그인
+
+SSH 원격 세션이나 GUI가 없는 서버에서는 macOS Keychain 접근이 막혀 `--save keychain`이 실패할 수 있습니다. 세 가지 우회 방법이 있습니다:
+
+**방법 1 — 세션 export/import (권장, KR IP 필요)**
+
+Desktop GUI Mac에서 세션을 export해 SSH 환경에 주입합니다:
+
+```sh
+# Desktop (GUI Mac, 이미 로그인된 상태):
+aitcc auth export --format env   # → AITCC_SESSION=... 출력
+
+# SSH 환경에서:
+AITCC_SESSION='...' aitcc app deploy ./bundle.ait --json
+```
+
+**방법 2 — keychain unlock**
+
+같은 SSH 세션에서 keychain을 잠금 해제한 뒤 재시도합니다:
+
+```sh
+security unlock-keychain ~/Library/Keychains/login.keychain-db
+# (login 비밀번호 입력)
+aitcc login --save keychain --email you@example.com --password-stdin
+```
+
+**방법 3 — 파일 backend**
+
+Keychain 대신 평문 파일에 자격증명을 저장합니다. 단일 사용자 머신 전제이며 FileVault(디스크 암호화) 사용을 권장합니다:
+
+```sh
+aitcc login --save=file --email you@example.com --password-stdin
+# → ~/.config/aitcc/credentials.json (perm 0600)에 저장
+```
+
+저장 후 SSH 환경에서 `aitcc login`이 자동으로 이 파일을 읽어 headless 로그인을 진행합니다. 경로를 바꾸려면 `AITCC_CREDENTIAL_FILE` env var를 지정합니다. 자세한 내용은 [issue #176](https://github.com/apps-in-toss-community/console-cli/issues/176) 참조.
+
 ## 세션 저장
 
 로컬 세션은 XDG 규약 경로에 mode `0600`으로 저장됩니다:
