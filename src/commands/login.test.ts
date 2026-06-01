@@ -245,7 +245,7 @@ describe('resolveCredentialsForLogin', () => {
     }
   });
 
-  it('honours --save keychain by reporting it on the argv path', async () => {
+  it('--save=keychain emits a deprecation warning and falls back to file', async () => {
     const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       const got = await resolveCredentialsForLogin(
@@ -253,7 +253,9 @@ describe('resolveCredentialsForLogin', () => {
         {},
         { env: {}, ...nonTty },
       );
-      expect(got).toMatchObject({ kind: 'ok', saveTarget: 'keychain' });
+      expect(got).toMatchObject({ kind: 'ok', saveTarget: 'file' });
+      const calls = writeMock.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((s) => s.includes('deprecated'))).toBe(true);
     } finally {
       writeMock.mockRestore();
     }
@@ -362,11 +364,11 @@ describe('resolveCredentialsForLogin', () => {
     });
   });
 
-  it('uses the keychain when getCredentials returns a value (no env)', async () => {
+  it('uses the file backend when getCredentials returns a value (no env)', async () => {
     const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       const fromStore: CredentialsSource = {
-        kind: 'keychain',
+        kind: 'file',
         email: 'kc@x',
         password: 'kc-pw',
       };
@@ -377,13 +379,11 @@ describe('resolveCredentialsForLogin', () => {
       );
       expect(got).toEqual({
         kind: 'ok',
-        credentials: { source: 'keychain', email: 'kc@x', password: 'kc-pw' },
+        credentials: { source: 'file', email: 'kc@x', password: 'kc-pw' },
         saveTarget: 'none',
       });
       const calls = writeMock.mock.calls.map((c) => String(c[0]));
-      expect(calls.some((s) => s.includes('Using credentials from OS keychain for kc@x'))).toBe(
-        true,
-      );
+      expect(calls.some((s) => s.includes('Using saved credentials for kc@x'))).toBe(true);
     } finally {
       writeMock.mockRestore();
     }
@@ -411,7 +411,7 @@ describe('resolveCredentialsForLogin', () => {
       },
       saveTarget: () => {
         calls.push('saveTarget');
-        return Promise.resolve('keychain' as SaveTarget);
+        return Promise.resolve('file' as SaveTarget);
       },
     };
     const got = await resolveCredentialsForLogin(
@@ -422,7 +422,7 @@ describe('resolveCredentialsForLogin', () => {
     expect(got).toEqual({
       kind: 'ok',
       credentials: { source: 'prompt', email: 'typed@x', password: 'typed-pw' },
-      saveTarget: 'keychain',
+      saveTarget: 'file',
     });
     expect(calls).toEqual(['email', 'password', 'saveTarget']);
   });
@@ -456,12 +456,17 @@ describe('resolveCredentialsForLogin', () => {
   });
 
   it('rejects --interactive combined with --save (so the user sees their save was ignored)', async () => {
-    const got = await resolveCredentialsForLogin(
-      { ...baseArgs, interactive: true, save: 'keychain' },
-      {},
-      { env: {}, ...nonTty },
-    );
-    expect(got).toMatchObject({ kind: 'error', reason: 'conflicting-interactive-flags' });
+    const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      const got = await resolveCredentialsForLogin(
+        { ...baseArgs, interactive: true, save: 'file' },
+        {},
+        { env: {}, ...nonTty },
+      );
+      expect(got).toMatchObject({ kind: 'error', reason: 'conflicting-interactive-flags' });
+    } finally {
+      writeMock.mockRestore();
+    }
   });
 
   it('--interactive returns ok with null credentials so the visible browser drives the form', async () => {
@@ -473,11 +478,11 @@ describe('resolveCredentialsForLogin', () => {
     expect(got).toEqual({ kind: 'ok', credentials: null, saveTarget: 'none' });
   });
 
-  it('--json suppresses the keychain breadcrumb so machine consumers do not see noise', async () => {
+  it('--json suppresses the saved-credentials breadcrumb so machine consumers do not see noise', async () => {
     const writeMock = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
       const fromStore: CredentialsSource = {
-        kind: 'keychain',
+        kind: 'file',
         email: 'kc@x',
         password: 'kc-pw',
       };
@@ -487,7 +492,7 @@ describe('resolveCredentialsForLogin', () => {
         { env: {}, ...nonTty },
       );
       const calls = writeMock.mock.calls.map((c) => String(c[0]));
-      expect(calls.some((s) => s.includes('Using credentials from OS keychain'))).toBe(false);
+      expect(calls.some((s) => s.includes('Using saved credentials'))).toBe(false);
     } finally {
       writeMock.mockRestore();
     }

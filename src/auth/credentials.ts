@@ -1,44 +1,32 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { authStateFilePath } from '../paths.js';
-import { type CredentialBackend, CredentialBackendUnsupportedError } from './backend.js';
+import type { CredentialBackend } from './backend.js';
 import { FILE_BACKEND } from './backends/file.js';
-import { LINUX_BACKEND } from './backends/linux.js';
-import { MACOS_BACKEND } from './backends/macos.js';
-import { WINDOWS_BACKEND } from './backends/windows.js';
+import { migrateKeychainToFileIfNeeded } from './keychain-migration.js';
 
-// Toss Business email + password persisted across two layers so a future
-// `aitcc login` can drive the sign-in form headlessly:
-//   - the password lives in the OS keychain, keyed by `service=SERVICE,
-//     account=<email>`. The keychain is the only place the secret ever
-//     touches disk.
+// Toss Business email + password persisted to a single-layer file store:
+//   - the password lives in `~/.config/aitcc/credentials.json` (mode 0600),
+//     keyed by `<service>:<email>`. Plain-file storage matches the model
+//     used by gh/aws/gcloud and avoids native OS keychain dependencies that
+//     complicate `bun build --compile` on all three platforms.
 //   - the active email is mirrored to `auth-state.json` (0600) so we can
-//     look up the keychain entry without the user re-typing the address
+//     look up the credential entry without the user re-typing the address
 //     every time.
 //
 // `loadCredentials()` first checks env vars (`AITCC_EMAIL` +
 // `AITCC_PASSWORD`) so CI runs can inject single-shot credentials without
-// touching the keychain. The returned discriminated union tells callers
-// which source they got.
+// touching the file. The returned discriminated union tells callers which
+// source they got.
 //
 // SECURITY MODEL
-// - Single-user machine assumption. The native tools (`security`,
-//   `secret-tool`, PowerShell + CredWrite) accept the password on argv on
-//   macOS and Windows, briefly visible in `ps`/Task Manager to other
-//   processes running as the same user. That's the OS tool's own limit;
-//   we surface it in user-facing copy and don't pretend to defend
-//   against an attacker already running as the user.
-// - Linux uses `secret-tool` which streams the password on stdin; argv
-//   stays clean.
-// - This module never logs or prints passwords. Errors include backend
-//   exit codes / stderr only — they must NOT include credential values.
+// - Single-user machine assumption with disk encryption (FileVault / LUKS)
+//   recommended. Credentials are stored as plain text in a 0600 file — the
+//   same trade-off gh, aws-cli, and gcloud accept.
+// - This module never logs or prints passwords. Errors must NOT include
+//   credential values.
 
-export {
-  CREDENTIAL_SERVICE,
-  type CredentialBackend,
-  CredentialBackendCommandError,
-  CredentialBackendUnsupportedError,
-} from './backend.js';
+export { CREDENTIAL_SERVICE, type CredentialBackend } from './backend.js';
 
 export interface Credentials {
   readonly email: string;
@@ -47,42 +35,21 @@ export interface Credentials {
 
 export type CredentialsSource =
   | { readonly kind: 'env'; readonly email: string; readonly password: string }
-  | { readonly kind: 'keychain'; readonly email: string; readonly password: string }
   | { readonly kind: 'file'; readonly email: string; readonly password: string };
 
-// --- Backend dispatch ---
+// --- Backend accessor ---
 
 export interface ResolveBackendOptions {
-  readonly platform?: NodeJS.Platform;
-  // Test seam — bypass platform detection.
+  // Test seam — bypass the real file system.
   readonly override?: CredentialBackend;
-  // Use the file backend regardless of platform. Activated by `--save=file`
-  // or the AITCC_CREDENTIAL_BACKEND=file environment variable.
-  readonly useFile?: boolean;
 }
 
 export function resolveBackend(opts: ResolveBackendOptions = {}): CredentialBackend {
   if (opts.override) return opts.override;
-  // File backend takes precedence when explicitly requested.
-  const useFile = opts.useFile === true || process.env.AITCC_CREDENTIAL_BACKEND === 'file';
-  if (useFile) return FILE_BACKEND;
-  const platform = opts.platform ?? process.platform;
-  switch (platform) {
-    case 'darwin':
-      return MACOS_BACKEND;
-    case 'linux':
-      return LINUX_BACKEND;
-    case 'win32':
-      return WINDOWS_BACKEND;
-    default:
-      throw new CredentialBackendUnsupportedError(
-        platform,
-        'Only macOS, Linux (libsecret), and Windows are supported.',
-      );
-  }
+  return FILE_BACKEND;
 }
 
-// --- Auth state (active email pointer) ---
+// --- Auth state (active-email pointer) ---
 
 interface AuthState {
   readonly schemaVersion: 1;
@@ -137,9 +104,8 @@ export interface LoadCredentialsOptions extends ResolveBackendOptions {
 /**
  * Resolve credentials from the highest-priority source available:
  *   1. `AITCC_EMAIL` + `AITCC_PASSWORD` env vars (CI single-shot use).
- *   2. File backend (`~/.config/aitcc/credentials.json`) when
- *      `AITCC_CREDENTIAL_BACKEND=file` is set or `opts.useFile` is true.
- *   3. OS keychain entry whose email is recorded in `auth-state.json`.
+ *   2. File backend (`~/.config/aitcc/credentials.json`) — the only
+ *      persistent store; email pointer lives in `auth-state.json`.
  *
  * Returns `null` when no source is configured. The discriminated `kind`
  * lets callers (e.g. the login flow) tell why a credential was found
@@ -158,23 +124,28 @@ export async function loadCredentials(
   const state = await readAuthState();
   if (!state) return null;
   const backend = resolveBackend(opts);
-  const password = await backend.get(state.activeEmail);
+  let password = await backend.get(state.activeEmail);
   if (password === null) {
-    // The pointer exists but the backend entry is gone — partial state.
+    // File entry is absent — try a one-time migration from the OS keychain
+    // for users who previously used `--save=keychain`. Silent on failure.
+    await migrateKeychainToFileIfNeeded(state.activeEmail).catch(() => null);
+    password = await backend.get(state.activeEmail);
+  }
+  if (password === null) {
+    // The pointer exists but no credential found — partial state.
     // Treat as "no credentials" rather than fatal; callers can re-save.
     return null;
   }
-  const kind: CredentialsSource['kind'] = backend.name === 'file' ? 'file' : 'keychain';
-  return { kind, email: state.activeEmail, password };
+  return { kind: 'file', email: state.activeEmail, password };
 }
 
 export type SaveCredentialsStatus = 'created' | 'updated' | 'unchanged';
 
 /**
- * Persist credentials to the OS keychain and update the active-email
- * pointer. Returns `'unchanged'` (no keychain write) when the same email
- * + password is already stored — avoids triggering OS keychain prompts on
- * every call when the user re-runs `auth set` with the same input.
+ * Persist credentials to the file backend and update the active-email
+ * pointer. Returns `'unchanged'` (no file write) when the same email
+ * + password is already stored — avoids unnecessary disk writes on every
+ * call when the user re-runs `login` with the same input.
  */
 export async function saveCredentials(
   email: string,
@@ -200,8 +171,8 @@ export async function saveCredentials(
   }
 
   await backend.set(email, password);
-  // If we are switching emails, the previous keychain entry would otherwise
-  // dangle. Best-effort cleanup so the keychain reflects the active email.
+  // If we are switching emails, the previous file entry would otherwise
+  // dangle. Best-effort cleanup so the store reflects only the active email.
   if (previousState && previousState.activeEmail !== email) {
     try {
       await backend.clear(previousState.activeEmail);
@@ -214,31 +185,28 @@ export async function saveCredentials(
 }
 
 /**
- * Read just the active-email pointer without touching the OS keychain.
- * Useful for surfaces like `auth status --json` that want to report
- * whether credentials are configured without triggering a Touch ID /
- * libsecret prompt for the password.
+ * Read just the active-email pointer without loading the password from disk.
+ * Useful for surfaces like `whoami` that want to report whether credentials
+ * are configured without performing a full credential read.
  *
  * Returns the email and where it was found (`'env'` when
- * `AITCC_EMAIL` + `AITCC_PASSWORD` are present, `'keychain'` when the
- * `auth-state.json` pointer exists), or `null` when nothing is
- * configured.
+ * `AITCC_EMAIL` + `AITCC_PASSWORD` are present, `'file'` when the
+ * `auth-state.json` pointer exists), or `null` when nothing is configured.
  */
 export async function getActiveCredentialEmail(
   opts: { readonly env?: NodeJS.ProcessEnv } = {},
-): Promise<{ kind: 'env' | 'keychain' | 'file'; email: string } | null> {
+): Promise<{ kind: 'env' | 'file'; email: string } | null> {
   const env = opts.env ?? process.env;
   if (env.AITCC_EMAIL && env.AITCC_PASSWORD) {
     return { kind: 'env', email: env.AITCC_EMAIL };
   }
   const state = await readAuthState();
   if (!state) return null;
-  const useFile = env.AITCC_CREDENTIAL_BACKEND === 'file';
-  return { kind: useFile ? 'file' : 'keychain', email: state.activeEmail };
+  return { kind: 'file', email: state.activeEmail };
 }
 
 /**
- * Remove the keychain entry and the auth-state pointer. Returns
+ * Remove the file credential entry and the auth-state pointer. Returns
  * `existed: true` if either side previously held data.
  */
 export async function deleteCredentials(
@@ -247,16 +215,8 @@ export async function deleteCredentials(
   const state = await readAuthState();
   let backendExisted = false;
   if (state) {
-    try {
-      const result = await resolveBackend(opts).clear(state.activeEmail);
-      backendExisted = result.existed;
-    } catch (err) {
-      if (err instanceof CredentialBackendUnsupportedError) {
-        // No backend — auth-state alone is the only thing to clear.
-      } else {
-        throw err;
-      }
-    }
+    const result = await resolveBackend(opts).clear(state.activeEmail);
+    backendExisted = result.existed;
   }
   const stateResult = await clearAuthState();
   return { existed: backendExisted || stateResult.existed };
