@@ -1,11 +1,10 @@
 #!/usr/bin/env bun
 /// <reference types="bun" />
 
-// PR α smoke test: round-trip credentials through the OS keychain inside a
+// Dev smoke test: round-trip credentials through the file backend inside a
 // `bun build --compile` binary. Not part of the shipped CLI — purely a dev
-// verification harness so we know the spawn() + node:fs/promises code paths
-// survive Bun's bundler and run against the real native tooling
-// (`security` / `secret-tool` / PowerShell) on the host platform.
+// verification harness so we know the node:fs/promises code paths survive
+// Bun's bundler and round-trip correctly.
 //
 // Usage:
 //   bun run scripts/credentials-smoke.ts          # source-form
@@ -67,14 +66,14 @@ async function main(): Promise<void> {
   if (created.status !== 'created') fail(`expected created, got ${created.status}`);
   console.log('[smoke] save#1 status=created');
 
-  // 2. load (keychain)
+  // 2. load (file)
   const loaded = await loadCredentials();
-  if (!loaded || loaded.kind !== 'keychain') fail(`expected kind=keychain, got ${loaded?.kind}`);
+  if (!loaded || loaded.kind !== 'file') fail(`expected kind=file, got ${loaded?.kind}`);
   if (loaded.email !== account) fail(`email mismatch: ${loaded.email}`);
   if (loaded.password !== password) fail('password mismatch');
-  console.log('[smoke] load kind=keychain ✓');
+  console.log('[smoke] load kind=file ✓');
 
-  // 3. save same value again (unchanged — no keychain write)
+  // 3. save same value again (unchanged — no file write)
   const same = await saveCredentials(account, password);
   if (same.status !== 'unchanged') fail(`expected unchanged, got ${same.status}`);
   console.log('[smoke] save#2 status=unchanged ✓');

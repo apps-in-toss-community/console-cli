@@ -4,12 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authStateFilePath } from '../paths.js';
-import {
-  type CredentialBackend,
-  CredentialBackendCommandError,
-  CredentialBackendUnsupportedError,
-  redactStderr,
-} from './backend.js';
+import { type CredentialBackend, CredentialBackendCommandError, redactStderr } from './backend.js';
 import {
   deleteCredentials,
   loadCredentials,
@@ -46,7 +41,7 @@ class InMemoryBackend implements CredentialBackend {
 
 describe('credentials — env source', () => {
   // Isolate XDG_CONFIG_HOME so a developer's real ~/.config/aitcc/auth-state.json
-  // doesn't make `loadCredentials` probe the keychain on fall-through.
+  // doesn't interfere with these tests.
   const originalXdg = process.env.XDG_CONFIG_HOME;
   let root: string;
 
@@ -72,20 +67,20 @@ describe('credentials — env source', () => {
     expect(backend.getCalls).toBe(0);
   });
 
-  it('falls through to keychain when only one env var is set', async () => {
+  it('falls through to file backend when only one env var is set', async () => {
     const backend = new InMemoryBackend();
     const got = await loadCredentials({
       override: backend,
       env: { AITCC_EMAIL: 'ci@example.com' }, // password missing
     });
     expect(got).toBeNull();
-    // Partial env match must not turn into a keychain probe — both env
+    // Partial env match must not turn into a backend probe — both env
     // vars are required to take the env path.
     expect(backend.getCalls).toBe(0);
   });
 });
 
-describe('credentials — keychain source', () => {
+describe('credentials — file source', () => {
   const originalXdg = process.env.XDG_CONFIG_HOME;
   let root: string;
 
@@ -122,11 +117,11 @@ describe('credentials — keychain source', () => {
     }
   });
 
-  it('loadCredentials returns kind=keychain after save', async () => {
+  it('loadCredentials returns kind=file after save', async () => {
     const backend = new InMemoryBackend();
     await saveCredentials('a@example.com', 'pw1', { override: backend });
     const got = await loadCredentials({ override: backend, env: {} });
-    expect(got).toEqual({ kind: 'keychain', email: 'a@example.com', password: 'pw1' });
+    expect(got).toEqual({ kind: 'file', email: 'a@example.com', password: 'pw1' });
   });
 
   it('saveCredentials with same email + same password is unchanged (no-op write)', async () => {
@@ -135,7 +130,7 @@ describe('credentials — keychain source', () => {
     const setCallsBefore = backend.setCalls;
     const result = await saveCredentials('a@example.com', 'pw1', { override: backend });
     expect(result.status).toBe('unchanged');
-    // No keychain write — important to avoid OS keychain prompts on rerun.
+    // No file write — avoids unnecessary disk I/O on rerun.
     expect(backend.setCalls).toBe(setCallsBefore);
   });
 
@@ -147,7 +142,7 @@ describe('credentials — keychain source', () => {
     expect(backend.store.get('a@example.com')).toBe('pw2');
   });
 
-  it('saveCredentials switching emails clears the previous keychain entry', async () => {
+  it('saveCredentials switching emails clears the previous file entry', async () => {
     const backend = new InMemoryBackend();
     await saveCredentials('old@example.com', 'pw-old', { override: backend });
     expect(backend.store.has('old@example.com')).toBe(true);
@@ -162,16 +157,16 @@ describe('credentials — keychain source', () => {
     expect(got?.email).toBe('new@example.com');
   });
 
-  it('loadCredentials returns null when pointer dangles (keychain entry is missing)', async () => {
+  it('loadCredentials returns null when pointer dangles (file entry is missing)', async () => {
     const backend = new InMemoryBackend();
     await saveCredentials('a@example.com', 'pw1', { override: backend });
-    // Simulate the keychain entry being wiped out-of-band.
+    // Simulate the file entry being wiped out-of-band.
     backend.store.clear();
     const got = await loadCredentials({ override: backend, env: {} });
     expect(got).toBeNull();
   });
 
-  it('deleteCredentials removes both keychain entry and pointer', async () => {
+  it('deleteCredentials removes both file entry and auth-state pointer', async () => {
     const backend = new InMemoryBackend();
     await saveCredentials('a@example.com', 'pw1', { override: backend });
     const first = await deleteCredentials({ override: backend });
@@ -200,20 +195,8 @@ describe('credentials — backend resolution', () => {
     expect(resolveBackend({ override: backend })).toBe(backend);
   });
 
-  it('resolveBackend throws CredentialBackendUnsupportedError for unknown platforms', () => {
-    expect(() => resolveBackend({ platform: 'aix' })).toThrow(CredentialBackendUnsupportedError);
-  });
-
-  it('resolveBackend picks the macOS, Linux, and Windows backends by name', () => {
-    expect(resolveBackend({ platform: 'darwin' }).name).toBe('macos-keychain');
-    expect(resolveBackend({ platform: 'linux' }).name).toBe('libsecret');
-    expect(resolveBackend({ platform: 'win32' }).name).toBe('windows-credential-manager');
-  });
-
-  it('resolveBackend returns file backend when useFile=true regardless of platform', () => {
-    expect(resolveBackend({ platform: 'darwin', useFile: true }).name).toBe('file');
-    expect(resolveBackend({ platform: 'linux', useFile: true }).name).toBe('file');
-    expect(resolveBackend({ platform: 'win32', useFile: true }).name).toBe('file');
+  it('resolveBackend returns the file backend by default', () => {
+    expect(resolveBackend().name).toBe('file');
   });
 });
 

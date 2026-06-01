@@ -45,7 +45,7 @@ aitcc --version          # print the embedded version
 aitcc login              # interactive: prompts email/password/save target, then signs in
 aitcc login --interactive   # force the visible-browser flow (skip headless)
 aitcc logout             # delete the local session file
-aitcc logout --purge     # also delete saved keychain credentials (replaces `auth clear`)
+aitcc logout --purge     # also delete saved credentials (replaces `auth clear`)
 aitcc whoami             # show the currently logged-in user + credential source
 aitcc whoami --offline   # use the cached identity without hitting the API
 aitcc whoami --json      # machine-readable output for scripts and agents
@@ -62,7 +62,7 @@ printf '%s' "$AITCC_PASSWORD" | aitcc login --email you@example.com --password-s
 AITCC_EMAIL=you@example.com AITCC_PASSWORD=… aitcc login --json
 ```
 
-Add `--save keychain` to persist the credentials so the next `aitcc login` runs without prompting.
+Add `--save file` to persist the credentials to `~/.config/aitcc/credentials.json` so the next `aitcc login` runs without prompting.
 
 `aitcc upgrade` respects `GITHUB_TOKEN` to avoid anonymous GitHub API rate limits.
 
@@ -105,7 +105,7 @@ aitcc app status         # works with no flags — context comes from aitcc.yaml
 
 ### Login details
 
-`aitcc login` resolves credentials from (in order) explicit `--email` + `--password` / `--password-stdin` flags, the `AITCC_EMAIL` + `AITCC_PASSWORD` environment, the OS keychain (saved by a prior `--save keychain`), or — on a TTY — an interactive prompt that asks for both fields plus where to save them. It then launches a Chrome-family browser via the Chrome DevTools Protocol, drives the sign-in headlessly when credentials are available, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
+`aitcc login` resolves credentials from (in order) explicit `--email` + `--password` / `--password-stdin` flags, the `AITCC_EMAIL` + `AITCC_PASSWORD` environment, the file backend (`~/.config/aitcc/credentials.json`, perm 0600), or — on a TTY — an interactive prompt that asks for both fields plus where to save them. It then launches a Chrome-family browser via the Chrome DevTools Protocol, drives the sign-in headlessly when credentials are available, and waits for the main frame to reach the post-login workspace page. Once it does, the CLI dumps all cookies over CDP (including `HttpOnly` auth cookies that JavaScript can't see) and persists them to the local session file. The browser runs against a temporary, isolated `--user-data-dir` that is wiped on exit, so your everyday browser profile is never touched.
 
 Pass `--interactive` to force the visible-browser flow even when credentials are configured (useful for switching accounts or working around step-up auth). The legacy `aitcc auth set` / `auth clear` / `auth status` commands still work but emit a deprecation warning — prefer `aitcc login` (interactive prompt offers a save option), `aitcc logout --purge`, and `aitcc whoami` instead. They will be removed in 1.0.
 
@@ -113,40 +113,27 @@ The CLI looks for Chrome in the standard OS install locations (Google Chrome, Ch
 
 ## Using aitcc in SSH / headless environments
 
-macOS Keychain access is blocked in SSH remote sessions and GUI-less servers, so `--save keychain` will fail there. Three workarounds are available:
-
-**Option 1 — Export / import the session (recommended, requires a KR IP)**
-
-Export the session on a desktop GUI Mac and inject it into the SSH environment:
+Credentials are stored in `~/.config/aitcc/credentials.json` (perm 0600) and work the same way in SSH and GUI-less server environments. Plain-text storage is the same trade-off made by `gh`, `aws-cli`, and `gcloud`; disk encryption (FileVault, LUKS) is recommended.
 
 ```sh
-# On a desktop Mac that is already logged in:
+aitcc login --save=file --email you@example.com --password-stdin
+# → stored in ~/.config/aitcc/credentials.json (perm 0600)
+# subsequent aitcc login runs in SSH will read this file and sign in headlessly
+```
+
+Override the path with the `AITCC_CREDENTIAL_FILE` environment variable.
+
+**Session export / import (requires a KR IP)**
+
+You can also export a session from a desktop machine and inject it into the SSH environment:
+
+```sh
+# On a desktop that is already logged in:
 aitcc auth export --format env   # outputs: AITCC_SESSION=...
 
 # In the SSH environment:
 AITCC_SESSION='...' aitcc app deploy ./bundle.ait --json
 ```
-
-**Option 2 — Unlock the keychain**
-
-Unlock the keychain in the same SSH session, then retry:
-
-```sh
-security unlock-keychain ~/Library/Keychains/login.keychain-db
-# (enter login password when prompted)
-aitcc login --save keychain --email you@example.com --password-stdin
-```
-
-**Option 3 — File backend**
-
-Store credentials in a plain file instead of the keychain. Assumes a single-user machine; FileVault (full-disk encryption) is strongly recommended:
-
-```sh
-aitcc login --save=file --email you@example.com --password-stdin
-# → stored in ~/.config/aitcc/credentials.json (perm 0600)
-```
-
-After saving, subsequent `aitcc login` runs in the SSH environment will read this file and sign in headlessly. Override the path with the `AITCC_CREDENTIAL_FILE` environment variable. See [issue #176](https://github.com/apps-in-toss-community/console-cli/issues/176) for background.
 
 ## Session storage
 
@@ -157,7 +144,7 @@ The local session lives at an XDG-compliant path with file mode `0600`:
 
 The containing directory is created with mode `0700`. Cookies captured during login are **never** printed, logged, or attached to `--verbose` output — only `user.email`, `name`, and workspace summary surface through `whoami`.
 
-See [CLAUDE.md](./CLAUDE.md) for the rationale behind using a plain `0600` file instead of an OS keychain.
+See [CLAUDE.md](./CLAUDE.md) for the design rationale behind using a plain `0600` file.
 
 ## Continuous integration
 

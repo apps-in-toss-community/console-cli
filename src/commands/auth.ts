@@ -14,7 +14,7 @@ import { authExportCommand } from './auth-export.js';
 import { authImportCommand } from './auth-import.js';
 
 // `aitcc auth` — user-facing surface over the credentials library. The
-// library handles env precedence, OS keychain dispatch, and idempotent
+// library handles env precedence, file-backend dispatch, and idempotent
 // writes; this file is the thin CLI shell that turns those primitives into
 // `set` / `clear` / `status` subcommands.
 //
@@ -42,7 +42,7 @@ import { authImportCommand } from './auth-import.js';
 //
 // Passwords NEVER appear in any output (stdout/stderr/JSON). The auth
 // state pointer file (`auth-state.json`) only carries the email, and
-// the keychain backend never echoes the password to its own logs.
+// the file backend never echoes the password to any log.
 
 // One-line deprecation banner — emitted to stderr regardless of --json so
 // machine consumers don't see it in their parsed payload but the human
@@ -154,7 +154,7 @@ export async function runAuthSet(args: AuthSetArgs, deps: AuthDeps = {}): Promis
     result = await saveCredentials(email, password, deps.backend ? { override: deps.backend } : {});
   } catch (err) {
     const message = (err as Error).message;
-    if (args.json) emitJson({ ok: false, reason: 'keychain-error', message });
+    if (args.json) emitJson({ ok: false, reason: 'save-error', message });
     else process.stderr.write(`Failed to save credentials: ${message}\n`);
     return exitAfterFlush(ExitCode.Generic);
   }
@@ -164,7 +164,7 @@ export async function runAuthSet(args: AuthSetArgs, deps: AuthDeps = {}): Promis
   } else if (result.status === 'unchanged') {
     process.stdout.write('Credentials already saved (no change).\n');
   } else {
-    process.stdout.write(`Credentials saved for ${email} (keychain).\n`);
+    process.stdout.write(`Credentials saved for ${email}.\n`);
   }
   return exitAfterFlush(ExitCode.Ok);
 }
@@ -234,7 +234,7 @@ export async function runAuthClear(args: AuthClearArgs, deps: AuthDeps = {}): Pr
     result = await deleteCredentials(deps.backend ? { override: deps.backend } : {});
   } catch (err) {
     const message = (err as Error).message;
-    if (args.json) emitJson({ ok: false, reason: 'keychain-error', message });
+    if (args.json) emitJson({ ok: false, reason: 'clear-error', message });
     else process.stderr.write(`Failed to clear credentials: ${message}\n`);
     return exitAfterFlush(ExitCode.Generic);
   }
@@ -258,10 +258,8 @@ export interface AuthStatusArgs {
 
 export async function runAuthStatus(args: AuthStatusArgs, deps: AuthDeps = {}): Promise<void> {
   emitDeprecation('use `aitcc whoami` (now reports credential source).');
-  // Read the email pointer without touching the keychain — `auth status`
-  // shouldn't trigger a Touch ID / libsecret prompt just to answer "do I
-  // have credentials configured?". Password retrieval lives in the login
-  // path, which already needs it.
+  // Read the email pointer without loading the password — `auth status`
+  // only needs to report whether credentials are configured, not what they are.
   const active = await getActiveCredentialEmail(deps.env ? { env: deps.env } : {}).catch(
     () => null,
   );
@@ -283,7 +281,7 @@ export async function runAuthStatus(args: AuthStatusArgs, deps: AuthDeps = {}): 
   }
 
   if (active) {
-    const sourceLabel = active.kind === 'env' ? 'environment (AITCC_EMAIL/PASSWORD)' : 'keychain';
+    const sourceLabel = active.kind === 'env' ? 'environment (AITCC_EMAIL/PASSWORD)' : 'file';
     process.stdout.write(`Email: ${active.email}\n`);
     process.stdout.write(`Source: ${sourceLabel}\n`);
   } else {

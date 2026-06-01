@@ -7,11 +7,10 @@ import { exitAfterFlush } from '../flush.js';
 import { readSession, sessionPathForDiagnostics } from '../session.js';
 import { maybeCheckForUpdate } from '../update-check.js';
 
-// Resolve the credential source label without ever fetching the password —
-// `whoami` should never trigger a Touch ID / libsecret prompt. Returns
-// `null` when nothing is configured so the JSON shape can stay compact.
+// Resolve the credential source label without loading the password from disk.
+// Returns `null` when nothing is configured so the JSON shape can stay compact.
 async function describeCredentialSource(): Promise<{
-  source: 'env' | 'keychain' | 'file' | 'none';
+  source: 'env' | 'file' | 'none';
   email: string | null;
 }> {
   const active = await getActiveCredentialEmail().catch(() => null);
@@ -20,17 +19,14 @@ async function describeCredentialSource(): Promise<{
 }
 
 function formatCredentials(cred: {
-  source: 'env' | 'keychain' | 'file' | 'none';
+  source: 'env' | 'file' | 'none';
   email: string | null;
 }): string {
   if (cred.source === 'none') return 'none (run `aitcc login` to save)';
   if (cred.source === 'env') {
     return `env (AITCC_EMAIL${cred.email ? ` = ${cred.email}` : ''})`;
   }
-  if (cred.source === 'file') {
-    return `file (~/.config/aitcc/credentials.json)${cred.email ? ` (${cred.email})` : ''}`;
-  }
-  return `keychain${cred.email ? ` (${cred.email})` : ''}`;
+  return `file (~/.config/aitcc/credentials.json)${cred.email ? ` (${cred.email})` : ''}`;
 }
 
 // --json contract (consumed by agent-plugin):

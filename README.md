@@ -45,7 +45,7 @@ aitcc --version          # 임베드된 버전 출력
 aitcc login              # 인터랙티브: 이메일/비밀번호/저장 위치를 묻고 로그인
 aitcc login --interactive   # headless 대신 visible-browser 강제
 aitcc logout             # 로컬 세션 파일 삭제
-aitcc logout --purge     # 저장된 키체인 자격증명도 함께 삭제 (`auth clear` 대체)
+aitcc logout --purge     # 저장된 자격증명도 함께 삭제 (`auth clear` 대체)
 aitcc whoami             # 현재 로그인된 사용자 + 자격증명 출처 표시
 aitcc whoami --offline   # API 호출 없이 캐시된 identity 사용
 aitcc whoami --json      # 스크립트·에이전트용 machine-readable 출력
@@ -62,7 +62,7 @@ printf '%s' "$AITCC_PASSWORD" | aitcc login --email you@example.com --password-s
 AITCC_EMAIL=you@example.com AITCC_PASSWORD=… aitcc login --json
 ```
 
-`--save keychain`을 붙이면 자격증명이 저장돼 다음 `aitcc login`이 prompt 없이 실행됩니다.
+`--save file`을 붙이면 자격증명이 `~/.config/aitcc/credentials.json`에 저장돼 다음 `aitcc login`이 prompt 없이 실행됩니다.
 
 `aitcc upgrade`는 GitHub API anonymous rate limit을 피하려고 `GITHUB_TOKEN`을 존중합니다.
 
@@ -105,7 +105,7 @@ aitcc app status         # 플래그 없이 동작 — aitcc.yaml에서 컨텍�
 
 ### 로그인 동작
 
-`aitcc login`은 자격증명을 다음 순서로 찾습니다: `--email` + `--password` / `--password-stdin` 플래그 → `AITCC_EMAIL` + `AITCC_PASSWORD` 환경 변수 → OS 키체인(이전 `--save keychain`으로 저장) → (TTY 환경에서만) 인터랙티브 prompt. 자격증명을 확보하면 Chrome DevTools Protocol로 Chrome 계열 브라우저를 띄워 가능하면 headless로 로그인을 진행하고, main frame이 로그인 후 workspace 페이지에 도달할 때까지 기다립니다. 도달하면 CDP로 모든 쿠키(JS로는 못 보는 `HttpOnly` 인증 쿠키 포함)를 덤프해 로컬 세션 파일에 저장합니다. 브라우저는 종료 시 삭제되는 임시 `--user-data-dir`에서 실행되므로 일상 브라우저 프로필은 절대 건드리지 않습니다.
+`aitcc login`은 자격증명을 다음 순서로 찾습니다: `--email` + `--password` / `--password-stdin` 플래그 → `AITCC_EMAIL` + `AITCC_PASSWORD` 환경 변수 → 파일 backend(`~/.config/aitcc/credentials.json`) → (TTY 환경에서만) 인터랙티브 prompt. 자격증명을 확보하면 Chrome DevTools Protocol로 Chrome 계열 브라우저를 띄워 가능하면 headless로 로그인을 진행하고, main frame이 로그인 후 workspace 페이지에 도달할 때까지 기다립니다. 도달하면 CDP로 모든 쿠키(JS로는 못 보는 `HttpOnly` 인증 쿠키 포함)를 덤프해 로컬 세션 파일에 저장합니다. 브라우저는 종료 시 삭제되는 임시 `--user-data-dir`에서 실행되므로 일상 브라우저 프로필은 절대 건드리지 않습니다.
 
 자격증명이 설정돼 있어도 visible-browser flow를 강제하려면 `--interactive`를 사용합니다 (계정 전환, step-up 인증 우회). 레거시 `aitcc auth set` / `auth clear` / `auth status`는 여전히 동작하지만 deprecation 경고를 emit합니다 — `aitcc login`(인터랙티브 prompt가 저장 옵션 제공), `aitcc logout --purge`, `aitcc whoami`를 사용하세요. 1.0에서 제거됩니다.
 
@@ -113,40 +113,27 @@ CLI는 OS 표준 위치(Google Chrome, Chromium, Microsoft Edge)에서 Chrome을
 
 ## SSH / headless 환경에서 로그인
 
-SSH 원격 세션이나 GUI가 없는 서버에서는 macOS Keychain 접근이 막혀 `--save keychain`이 실패할 수 있습니다. 세 가지 우회 방법이 있습니다:
-
-**방법 1 — 세션 export/import (권장, KR IP 필요)**
-
-Desktop GUI Mac에서 세션을 export해 SSH 환경에 주입합니다:
+SSH 원격 세션이나 GUI가 없는 서버에서도 자격증명 저장이 동작합니다. 자격증명은 `~/.config/aitcc/credentials.json` (perm 0600)에 저장되며 SSH/CI 환경에서도 동일하게 작동합니다. 평문 저장이므로 디스크 암호화(FileVault, LUKS) 사용을 권장합니다.
 
 ```sh
-# Desktop (GUI Mac, 이미 로그인된 상태):
+aitcc login --save=file --email you@example.com --password-stdin
+# → ~/.config/aitcc/credentials.json (perm 0600)에 저장
+# 이후 SSH 환경에서 aitcc login이 이 파일을 읽어 headless 로그인을 진행합니다.
+```
+
+경로를 바꾸려면 `AITCC_CREDENTIAL_FILE` env var를 지정합니다.
+
+**세션 export/import (KR IP 필요)**
+
+Desktop에서 세션을 export해 SSH 환경에 주입하는 방법도 있습니다:
+
+```sh
+# Desktop (이미 로그인된 상태):
 aitcc auth export --format env   # → AITCC_SESSION=... 출력
 
 # SSH 환경에서:
 AITCC_SESSION='...' aitcc app deploy ./bundle.ait --json
 ```
-
-**방법 2 — keychain unlock**
-
-같은 SSH 세션에서 keychain을 잠금 해제한 뒤 재시도합니다:
-
-```sh
-security unlock-keychain ~/Library/Keychains/login.keychain-db
-# (login 비밀번호 입력)
-aitcc login --save keychain --email you@example.com --password-stdin
-```
-
-**방법 3 — 파일 backend**
-
-Keychain 대신 평문 파일에 자격증명을 저장합니다. 단일 사용자 머신 전제이며 FileVault(디스크 암호화) 사용을 권장합니다:
-
-```sh
-aitcc login --save=file --email you@example.com --password-stdin
-# → ~/.config/aitcc/credentials.json (perm 0600)에 저장
-```
-
-저장 후 SSH 환경에서 `aitcc login`이 자동으로 이 파일을 읽어 headless 로그인을 진행합니다. 경로를 바꾸려면 `AITCC_CREDENTIAL_FILE` env var를 지정합니다. 자세한 내용은 [issue #176](https://github.com/apps-in-toss-community/console-cli/issues/176) 참조.
 
 ## 세션 저장
 
@@ -157,7 +144,7 @@ aitcc login --save=file --email you@example.com --password-stdin
 
 상위 디렉토리는 mode `0700`으로 생성됩니다. 로그인 중 캡처된 쿠키는 **절대** 출력·로깅되지 않으며 `--verbose`에도 노출되지 않습니다 — `whoami`로 노출되는 건 `user.email`, `name`, workspace 요약뿐입니다.
 
-OS 키체인 대신 plain `0600` 파일을 쓰는 이유는 [CLAUDE.md](./CLAUDE.md) 참조.
+plain `0600` 파일을 쓰는 설계 이유는 [CLAUDE.md](./CLAUDE.md) 참조.
 
 ## CI/CD 통합
 

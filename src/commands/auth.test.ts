@@ -144,7 +144,7 @@ describe('runAuthSet', () => {
     expect(exited?.code).toBe(0);
     const payload = JSON.parse(spy2.stdout.join('').trimEnd()) as Record<string, unknown>;
     expect(payload.status).toBe('unchanged');
-    // No additional keychain write — that's the whole point of the
+    // No additional backend write — that's the whole point of the
     // `unchanged` discriminant; stale tests would let this regress
     // and re-prompt users on every re-run.
     expect(backend.setCalls).toBe(callsBefore);
@@ -267,7 +267,7 @@ describe('runAuthClear', () => {
     expect(payload.reason).toBe('confirmation-required');
   });
 
-  it('deletes both keychain entry and pointer when present', async () => {
+  it('deletes both file entry and auth-state pointer when present', async () => {
     const backend = new InMemoryBackend();
     // Seed by going through saveCredentials so the auth-state file exists.
     const spy0 = spyStdoutStderr();
@@ -316,7 +316,7 @@ describe('runAuthStatus', () => {
     expect(payload.session.active).toBe(false);
   });
 
-  it('reports source=keychain after a save', async () => {
+  it('reports source=file after a save', async () => {
     const backend = new InMemoryBackend();
     const spy0 = spyStdoutStderr();
     await captureExit(() =>
@@ -332,7 +332,7 @@ describe('runAuthStatus', () => {
     };
     expect(payload.credentials.stored).toBe(true);
     expect(payload.credentials.email).toBe('a@example.com');
-    expect(payload.credentials.source).toBe('keychain');
+    expect(payload.credentials.source).toBe('file');
   });
 
   it('reports source=env when AITCC_EMAIL + AITCC_PASSWORD are set, without touching backend', async () => {
