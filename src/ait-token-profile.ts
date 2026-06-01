@@ -57,9 +57,9 @@ function readCredentials(path: string): Record<string, string> {
 function writeCredentials(path: string, map: Record<string, string>): void {
   const dir = join(path, '..');
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
-  writeFileSync(path, JSON.stringify(map, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(path, `${JSON.stringify(map, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 /**

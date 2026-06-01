@@ -30,7 +30,7 @@ import {
 //   wording out of JSON (it lives on stderr plain output only).
 //
 //   keys create --name <label> [--apps <slug,slug>] [--workspace <id>]
-//               [--save-profile <name>]:
+//               [--save-profile <name>] [--no-save-profile]:
 //     { ok: true, workspaceId, apiKey, name, target: {isAll, appNames},
 //       savedProfile?: string, saveProfileWarning?: string, extra }             exit 0
 //     { ok: false, reason: 'invalid-name', message }                            exit 2
@@ -41,9 +41,17 @@ import {
 //   The `apiKey` field carries the plaintext token and is surfaced **only
 //   here** — the list endpoint does not echo it back. Agent-plugin skills
 //   should pipe it straight into a secret manager and never log the raw
-//   value. The CLI itself prints it to stdout once and never persists it.
+//   value. The CLI itself prints it to stdout once.
 //
-//   When `--save-profile <name>` is given:
+//   By default the key is automatically saved to `~/.ait/credentials` under
+//   the same name as --name so `ait deploy --profile <name>` works
+//   immediately. Pass `--no-save-profile` to skip this (stdout-only, for CI
+//   pipes that store the key elsewhere).
+//
+//   When `--save-profile <name>` is given it overrides the auto-save
+//   profile name; `--no-save-profile` disables saving entirely.
+//
+//   On auto/explicit save:
 //     - On success: `savedProfile` is set to the profile name. The key is
 //       saved to `~/.ait/credentials` so `ait deploy --profile <name>` works
 //       immediately without a manual `ait token add` step.
@@ -81,6 +89,24 @@ export function validateKeyName(raw: string): NameValidationError | null {
   if (raw.length > NAME_MAX) return 'too-long';
   if (!NAME_REGEX.test(raw)) return 'bad-chars';
   return null;
+}
+
+/**
+ * Resolve the ait profile name to save the Deploy Key under.
+ *
+ * - `noSaveProfile: true` → undefined (skip saving)
+ * - `saveProfileOverride` present → use that name
+ * - default → use `name` (the --name value)
+ *
+ * Exported for unit testing.
+ */
+export function resolveProfileName(
+  name: string,
+  opts: { noSaveProfile?: boolean; saveProfileOverride?: string },
+): string | undefined {
+  if (opts.noSaveProfile) return undefined;
+  if (opts.saveProfileOverride) return opts.saveProfileOverride;
+  return name;
 }
 
 export type AppsParseResult =
@@ -177,9 +203,16 @@ const createCommand = defineCommand({
     'save-profile': {
       type: 'string',
       description:
-        'After issuing, save the key as an `ait` token profile (written to `~/.ait/credentials`). ' +
-        'The named profile can then be used with `ait deploy --profile <name>` immediately. ' +
-        'If omitted, the key is printed to stdout once and not persisted locally.',
+        'Profile name for the ait token (defaults to --name). The key is written to ' +
+        '`~/.ait/credentials` so `ait deploy --profile <name>` works immediately. ' +
+        'Use --no-save-profile to skip.',
+    },
+    'no-save-profile': {
+      type: 'boolean',
+      default: false,
+      description:
+        'Do not save the issued key to an ait token profile — print to stdout only ' +
+        '(for CI pipes that store it elsewhere).',
     },
     json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
   },
@@ -223,11 +256,16 @@ const createCommand = defineCommand({
     try {
       const result = await createApiKey(workspaceId, { name, target }, session.cookies);
 
-      // --save-profile: write the key to ~/.ait/credentials so `ait deploy
-      // --profile <name>` works immediately.  Failure is non-fatal: we still
-      // surface the key and exit 0 so the caller can save it elsewhere.
+      // Auto-save the key to ~/.ait/credentials so `ait deploy --profile <name>`
+      // works immediately without a manual `ait token add` step.
+      // --no-save-profile disables this; --save-profile <other> overrides the name.
+      // Failure is non-fatal: we still surface the key and exit 0 so the caller
+      // can save it elsewhere.
       // SECRET-HANDLING: apiKey is never included in warning messages.
-      const saveProfileName = args['save-profile'] ? String(args['save-profile']) : undefined;
+      const saveProfileName = resolveProfileName(name, {
+        noSaveProfile: args['no-save-profile'],
+        ...(args['save-profile'] ? { saveProfileOverride: String(args['save-profile']) } : {}),
+      });
       let savedProfile: string | undefined;
       let saveProfileWarning: string | undefined;
 
@@ -258,10 +296,13 @@ const createCommand = defineCommand({
         return exitAfterFlush(ExitCode.Ok);
       }
 
-      // Plaintext is shown exactly once. The console UI surfaces the same
-      // "이 키는 한 번만 표시되니 복사해서 안전하게 보관해주세요." warning;
-      // we mirror it on stderr so stdout stays a clean single line that's
-      // friendly to `aitcc keys create ... | secret-tool store ...` pipes.
+      // Plaintext is shown exactly once on stdout so the line is pipe-friendly
+      // (`aitcc keys create ... | secret-tool store ...`).
+      // On the default/auto-save path stderr confirms where the profile landed
+      // so the user can immediately run `ait deploy --profile <name>`.
+      // The "shown only once" warning is only emitted when saving was skipped
+      // (--no-save-profile) or failed, so the user knows to save it manually.
+      // SECRET-HANDLING: apiKey never appears in stderr or warning text.
       process.stdout.write(`${result.apiKey}\n`);
       if (savedProfile !== undefined) {
         process.stderr.write(

@@ -223,6 +223,28 @@ aitcc telemetry tier0-on        # Tier 0 다시 활성화
 
 `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
 
+## Deploy Key 발급
+
+배포 자동화를 위한 워크스페이스-scope 자격증명(Deploy Key)을 발급합니다.
+
+```sh
+aitcc keys create --name ci-deploy
+```
+
+키 발급 즉시 `~/.ait/credentials`에 `ci-deploy` 프로파일로 저장되므로, 별도 `ait token add` 단계 없이 바로 사용할 수 있습니다:
+
+```sh
+ait deploy --profile ci-deploy ./bundle.ait
+```
+
+stdout에는 plaintext 키 한 줄만 나옵니다 (파이프 친화적). stderr는 저장된 프로파일 이름을 확인해줍니다. CI 파이프에서 키를 외부 secret manager에 직접 주입할 때처럼 로컬 저장이 필요 없다면 `--no-save-profile`로 저장을 건너뜁니다:
+
+```sh
+aitcc keys create --name ci-deploy --no-save-profile | secret-tool store --label=… key password
+```
+
+프로파일 이름을 `--name`과 다르게 지정하려면 `--save-profile <other-name>`을 사용합니다. plaintext 키는 발급 시 한 번만 노출되며 목록 endpoint에서 다시 확인할 수 없습니다 — 분실 시 `aitcc keys revoke <id>`로 무효화하고 재발급합니다.
+
 ## Pre-commit hook
 
 선택 사항이지만 권장합니다. clone 후 표준 pre-commit hook을 활성화하면 staged 파일에 `biome check`가 자동으로 돕니다 (push 전 빠른 피드백):

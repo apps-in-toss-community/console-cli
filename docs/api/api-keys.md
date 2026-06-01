@@ -119,3 +119,18 @@ UI는 응답 후 list query를 invalidate하므로 cli도 `revoke` 후엔 `ls`�
 - plaintext key는 발급 응답(`apiKey`)에서 단 한 번만 surface되고 list endpoint는 이를 echo하지 않는다. 분실 시 `revoke` + `create` 재발급이 유일한 경로다.
 - 이 키 한 개로 워크스페이스의 배포 API에 접근할 수 있으므로 secret manager에 즉시 저장한다 (`aitcc keys create --json`로 받아 keychain/CI secret으로 파이프).
 - 세션 쿠키 redaction 룰(`docs/api/_redaction.md`)이 그대로 적용된다 — `--json` 출력 외 어떤 경로(stderr, 로그, error message)에도 plaintext key를 노출하지 않는다.
+
+## ait 프로파일 자동 저장
+
+`aitcc keys create` 발급 즉시 `~/.ait/credentials`(mode `0600`, 상위 디렉토리 `0700`)에 `--name`과 동일한 이름의 프로파일로 저장된다. 저장이 완료되면 별도의 `ait token add` 없이 바로 사용 가능하다:
+
+```sh
+aitcc keys create --name ci-deploy
+# stderr: Saved as ait profile "ci-deploy". Run: ait deploy --profile ci-deploy
+ait deploy --profile ci-deploy ./bundle.ait
+```
+
+- `--save-profile <other>`: 프로파일 이름을 `--name`과 다르게 지정한다.
+- `--no-save-profile`: 자동 저장을 건너뛰고 stdout에만 key를 출력한다. CI 파이프에서 외부 secret manager로 직접 주입할 때 사용한다.
+
+파일 write 실패 시(디스크 권한 문제 등)에도 plaintext key는 stdout에 출력되고 exit 0이므로, 호출자가 다른 경로로 저장할 수 있다. 실패 상세는 stderr `Warning:` 줄로 emit되며 **plaintext key는 절대 포함되지 않는다**.
