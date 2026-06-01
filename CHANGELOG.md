@@ -1,5 +1,11 @@
 # @ait-co/console-cli
 
+## 0.1.37
+
+### Patch Changes
+
+- 465dd01: feat(auth): SSH/headless 세션 keychain 우회 — --save=file 옵션 + login 실패 시 unlock-keychain 안내.
+
 ## 0.1.36
 
 ### Patch Changes
