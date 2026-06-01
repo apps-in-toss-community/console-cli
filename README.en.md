@@ -223,6 +223,28 @@ The following command groups are implemented end-to-end:
 
 `app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
 
+## Issuing a Deploy Key
+
+Issue a workspace-scoped credential (Deploy Key) for deploy automation:
+
+```sh
+aitcc keys create --name ci-deploy
+```
+
+The key is automatically saved to `~/.ait/credentials` under the `ci-deploy` profile as soon as it is issued — no separate `ait token add` step required:
+
+```sh
+ait deploy --profile ci-deploy ./bundle.ait
+```
+
+Only the plaintext key is written to stdout (pipe-friendly). stderr confirms which profile was saved. If you are piping the key into an external secret manager and do not need a local profile, pass `--no-save-profile`:
+
+```sh
+aitcc keys create --name ci-deploy --no-save-profile | secret-tool store --label=… key password
+```
+
+To save the profile under a different name than `--name`, pass `--save-profile <other-name>`. The plaintext key is exposed once at issuance and cannot be retrieved later — if you lose it, revoke it with `aitcc keys revoke <id>` and issue a new one.
+
 ## Pre-commit hook
 
 Optional but recommended. After cloning, activate the standard pre-commit hook (runs `biome check` on staged files):
