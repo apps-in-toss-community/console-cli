@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { authStateFilePath } from '../paths.js';
 import { type CredentialBackend, CredentialBackendUnsupportedError } from './backend.js';
+import { FILE_BACKEND } from './backends/file.js';
 import { LINUX_BACKEND } from './backends/linux.js';
 import { MACOS_BACKEND } from './backends/macos.js';
 import { WINDOWS_BACKEND } from './backends/windows.js';
@@ -46,9 +47,8 @@ export interface Credentials {
 
 export type CredentialsSource =
   | { readonly kind: 'env'; readonly email: string; readonly password: string }
-  | { readonly kind: 'keychain'; readonly email: string; readonly password: string };
-// A future `'file'` source (~/.config/aitcc/credentials.json) would add a
-// third variant here so callers can distinguish at the type level.
+  | { readonly kind: 'keychain'; readonly email: string; readonly password: string }
+  | { readonly kind: 'file'; readonly email: string; readonly password: string };
 
 // --- Backend dispatch ---
 
@@ -56,10 +56,16 @@ export interface ResolveBackendOptions {
   readonly platform?: NodeJS.Platform;
   // Test seam — bypass platform detection.
   readonly override?: CredentialBackend;
+  // Use the file backend regardless of platform. Activated by `--save=file`
+  // or the AITCC_CREDENTIAL_BACKEND=file environment variable.
+  readonly useFile?: boolean;
 }
 
 export function resolveBackend(opts: ResolveBackendOptions = {}): CredentialBackend {
   if (opts.override) return opts.override;
+  // File backend takes precedence when explicitly requested.
+  const useFile = opts.useFile === true || process.env.AITCC_CREDENTIAL_BACKEND === 'file';
+  if (useFile) return FILE_BACKEND;
   const platform = opts.platform ?? process.platform;
   switch (platform) {
     case 'darwin':
@@ -131,15 +137,14 @@ export interface LoadCredentialsOptions extends ResolveBackendOptions {
 /**
  * Resolve credentials from the highest-priority source available:
  *   1. `AITCC_EMAIL` + `AITCC_PASSWORD` env vars (CI single-shot use).
- *   2. OS keychain entry whose email is recorded in `auth-state.json`.
+ *   2. File backend (`~/.config/aitcc/credentials.json`) when
+ *      `AITCC_CREDENTIAL_BACKEND=file` is set or `opts.useFile` is true.
+ *   3. OS keychain entry whose email is recorded in `auth-state.json`.
  *
  * Returns `null` when no source is configured. The discriminated `kind`
  * lets callers (e.g. the login flow) tell why a credential was found
  * without having to peek at process env themselves — useful for
  * "auto-login from CI" diagnostics.
- *
- * A future `'file'` source (~/.config/aitcc/credentials.json) is left as a
- * follow-up; once added, it slots between (1) and (2).
  */
 export async function loadCredentials(
   opts: LoadCredentialsOptions = {},
@@ -152,13 +157,15 @@ export async function loadCredentials(
   }
   const state = await readAuthState();
   if (!state) return null;
-  const password = await resolveBackend(opts).get(state.activeEmail);
+  const backend = resolveBackend(opts);
+  const password = await backend.get(state.activeEmail);
   if (password === null) {
-    // The pointer exists but the keychain entry is gone — partial state.
+    // The pointer exists but the backend entry is gone — partial state.
     // Treat as "no credentials" rather than fatal; callers can re-save.
     return null;
   }
-  return { kind: 'keychain', email: state.activeEmail, password };
+  const kind: CredentialsSource['kind'] = backend.name === 'file' ? 'file' : 'keychain';
+  return { kind, email: state.activeEmail, password };
 }
 
 export type SaveCredentialsStatus = 'created' | 'updated' | 'unchanged';
@@ -219,14 +226,15 @@ export async function saveCredentials(
  */
 export async function getActiveCredentialEmail(
   opts: { readonly env?: NodeJS.ProcessEnv } = {},
-): Promise<{ kind: 'env' | 'keychain'; email: string } | null> {
+): Promise<{ kind: 'env' | 'keychain' | 'file'; email: string } | null> {
   const env = opts.env ?? process.env;
   if (env.AITCC_EMAIL && env.AITCC_PASSWORD) {
     return { kind: 'env', email: env.AITCC_EMAIL };
   }
   const state = await readAuthState();
   if (!state) return null;
-  return { kind: 'keychain', email: state.activeEmail };
+  const useFile = env.AITCC_CREDENTIAL_BACKEND === 'file';
+  return { kind: useFile ? 'file' : 'keychain', email: state.activeEmail };
 }
 
 /**

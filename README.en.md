@@ -111,6 +111,43 @@ Pass `--interactive` to force the visible-browser flow even when credentials are
 
 The CLI looks for Chrome in the standard OS install locations (Google Chrome, Chromium, Microsoft Edge). Override the executable with `AITCC_BROWSER=/path/to/chrome` if your install is elsewhere; override the sign-in URL with `AITCC_OAUTH_URL` if you need to point at a staging environment. `--timeout <seconds>` controls how long the CLI will wait for sign-in to finish (default 300s).
 
+## Using aitcc in SSH / headless environments
+
+macOS Keychain access is blocked in SSH remote sessions and GUI-less servers, so `--save keychain` will fail there. Three workarounds are available:
+
+**Option 1 — Export / import the session (recommended, requires a KR IP)**
+
+Export the session on a desktop GUI Mac and inject it into the SSH environment:
+
+```sh
+# On a desktop Mac that is already logged in:
+aitcc auth export --format env   # outputs: AITCC_SESSION=...
+
+# In the SSH environment:
+AITCC_SESSION='...' aitcc app deploy ./bundle.ait --json
+```
+
+**Option 2 — Unlock the keychain**
+
+Unlock the keychain in the same SSH session, then retry:
+
+```sh
+security unlock-keychain ~/Library/Keychains/login.keychain-db
+# (enter login password when prompted)
+aitcc login --save keychain --email you@example.com --password-stdin
+```
+
+**Option 3 — File backend**
+
+Store credentials in a plain file instead of the keychain. Assumes a single-user machine; FileVault (full-disk encryption) is strongly recommended:
+
+```sh
+aitcc login --save=file --email you@example.com --password-stdin
+# → stored in ~/.config/aitcc/credentials.json (perm 0600)
+```
+
+After saving, subsequent `aitcc login` runs in the SSH environment will read this file and sign in headlessly. Override the path with the `AITCC_CREDENTIAL_FILE` environment variable. See [issue #176](https://github.com/apps-in-toss-community/console-cli/issues/176) for background.
+
 ## Session storage
 
 The local session lives at an XDG-compliant path with file mode `0600`:

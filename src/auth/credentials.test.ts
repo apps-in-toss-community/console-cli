@@ -209,6 +209,12 @@ describe('credentials — backend resolution', () => {
     expect(resolveBackend({ platform: 'linux' }).name).toBe('libsecret');
     expect(resolveBackend({ platform: 'win32' }).name).toBe('windows-credential-manager');
   });
+
+  it('resolveBackend returns file backend when useFile=true regardless of platform', () => {
+    expect(resolveBackend({ platform: 'darwin', useFile: true }).name).toBe('file');
+    expect(resolveBackend({ platform: 'linux', useFile: true }).name).toBe('file');
+    expect(resolveBackend({ platform: 'win32', useFile: true }).name).toBe('file');
+  });
 });
 
 describe('credentials — error redaction', () => {
