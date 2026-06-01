@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -282,5 +283,27 @@ describe('readAitBundle', () => {
     } catch (err) {
       expect((err as AitBundleError).reason).toBe('file-unreadable');
     }
+  });
+});
+
+// --- Forward-compat regression guard: real bundle built by web-framework 3.0-beta --------
+//
+// sdk30-test-app.ait was produced by:
+//   npx @apps-in-toss/web-framework@3.0.0-beta.9d42c0b ait build
+// in a scratch project containing a minimal apps-in-toss.config.ts and an
+// empty dist/ dir.  The build printed:
+//   deploymentId: 019e81fa-836a-7555-8d70-4b340dee6fa8
+//
+// This test pins that deploymentId so any future ait-format layout change
+// that silently breaks the hand-rolled parser will surface as a red test.
+
+const FIXTURE_DIR = fileURLToPath(new URL('./fixtures', import.meta.url));
+
+describe('deploymentIdFromBundleBytes (web-framework 3.0-beta real fixture)', () => {
+  it('parses sdk30-test-app.ait with zero code change — forward-compat guard', () => {
+    const bytes = new Uint8Array(readFileSync(join(FIXTURE_DIR, 'sdk30-test-app.ait')));
+    const result = deploymentIdFromBundleBytes(bytes, 'sdk30-test-app.ait');
+    expect(result.format).toBe('ait');
+    expect(result.deploymentId).toBe('019e81fa-836a-7555-8d70-4b340dee6fa8');
   });
 });
