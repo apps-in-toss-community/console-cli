@@ -2,11 +2,11 @@
 
 ## 프로젝트 성격
 
-`apps-in-toss-community`는 토스/앱인토스 팀과 제휴 관계가 없는 커뮤니티 프로젝트다. 공식 프로젝트 아님. 사용자에게 보여지는 모든 산출물(README, UI 카피, 패키지 설명, 커밋/PR 메시지, 코드 주석 등)에서 "공식(official)", "토스가 제공하는", "앱인토스에서 만든", "powered by Toss" 같은 제휴·후원·인증 암시 표현은 금지. 대신 "커뮤니티(community)" 같은 자연스러운 표현. 의심스러우면 빼라.
+`apps-in-toss-community`는 토스/앱인토스 팀과 제휴 관계가 없는 커뮤니티 프로젝트다. 사용자에게 보여지는 모든 산출물(README, UI 카피, 패키지 설명, 커밋/PR 메시지, 코드 주석 등)에서 "공식(official)", "토스가 제공하는", "앱인토스에서 만든", "powered by Toss" 같은 제휴·후원·인증 암시 표현은 금지. 대신 "커뮤니티(community)" 같은 자연스러운 표현. 의심스러우면 빼라.
 
 **톤 가이드** (방어적 disclaimer 금지): README 푸터에 한 줄로 1회만 명시 — ko `README.md`는 `커뮤니티 오픈소스 프로젝트입니다.`, en `README.en.md`는 `Community open-source project.`. "제휴 아님" 같은 방어적 표현 대신 "커뮤니티 오픈소스" 정체성만 자연스럽게. 헤더 직후의 `>` blockquote 박스, ⚠️ 아이콘, 굵은 글씨, `unofficial`/`비공식` 같은 강한 라벨은 쓰지 않는다. 한 파일 안에서 영/한 병기 금지(다중 언어는 ko/en 별도 파일로 분리). 기술적 단서("blessed API 아님, 깨질 수 있음" 등)는 disclaimer에 묶지 않고 본문 기능 설명에 자연스럽게 녹인다.
 
-**README i18n**: `README.md`(한국어, GitHub default) + `README.en.md`(영어). 둘 다 상단 상호 link(`[한국어](./README.md)` / `[English](./README.en.md)`), 동등 정본 — 한 쪽 갱신 시 같은 PR에서 반대쪽도 갱신. 자세한 정책은 umbrella `CLAUDE.md` "i18n 정책" 섹션.
+**README i18n**: `README.md`(한국어, GitHub default) + `README.en.md`(영어). 둘 다 상단 상호 link(`[한국어](./README.md)` / `[English](./README.en.md)`), 동등 정본 — 한 쪽 갱신 시 같은 PR에서 반대쪽도 갱신. 자세한 정책은 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) "i18n 정책" 섹션.
 
 ## 짝 repo
 
@@ -43,6 +43,8 @@ CLI는 [`citty`](https://github.com/unjs/citty) 기반. 이유: subcommand 트�
 **커버 범위 (0.1.x)**: `login` / `logout` / `whoami` / `upgrade` / `completion` 루트 명령에 더해 리소스-스코프 subcommand:
 
 - `app init / ls / show / status / register / deploy / ratings / reports / certs / metrics / share-rewards / messages / events / templates / categories / service-status` 및 `app bundles {ls, deployed, upload, review, release, test-push, test-links}`
+- `keys create / ls / revoke` (Deploy Key 발급/조회/폐기 — 배포 자동화용 워크스페이스-scope 자격증명)
+- `members ls / invite / remove` (워크스페이스 멤버 조회/초대/제거)
 - `workspace partner / terms / segments ls`
 - `me terms`
 - `notices ls / show / categories`
@@ -107,14 +109,11 @@ OS keychain은 native dependency라 `bun build --compile`이 플랫폼별로 깔
 
 세션 쿠키와는 **분리된 layer**. 쿠키는 휘발성 (재로그인 한 번이면 새로 받음), email + password는 durable이므로 `aitcc login`이 저장된 credential로 form을 headlessly 채운다 (`src/commands/login.ts`가 `loadCredentials` 소비). CLI 사용자 surface도 `auth set` / `auth clear` / `auth status`로 들어와 있다 — 단 0.1.25부터 `aitcc login` / `aitcc logout --purge` / `aitcc whoami`로 folded되어 deprecation 경고를 띄우며, 제거는 1.0 예정 (`auth export` / `auth import`은 portable session blob 전용이라 deprecate 안 함).
 
-- **Email**: `auth-state.json` (`$XDG_CONFIG_HOME/aitcc/auth-state.json`, `0600`, schema v1, just `{ schemaVersion, activeEmail }`). 비밀이 아니라 keychain entry를 찾기 위한 포인터일 뿐이다. 분리 이유: keychain 백엔드 (`security` / `secret-tool` / CredRead)는 lookup에 account 이름이 필요한데 그게 곧 email이다. cookie 세션 파일과 별도로 둠 — 쿠키 wipe 후에도 credential은 살아남아야 한다.
-- **Password**: OS keychain. service = `aitcc.credentials`, account = `<email>`. **stock CLI 도구만 호출**해서 native peer 의존이 없고, `bun build --compile`이 깔끔하게 번들된다 (검증: `scripts/credentials-smoke.ts`로 darwin-arm64 round-trip).
-  - macOS: `security add-generic-password -A` / `find-generic-password -w` / `delete-generic-password`. `-A` flag로 ACL을 열어 후속 read에 prompt 없음 (단일 사용자 머신 가정 — argv-visible password와 동일 trade-off). `-T ''`는 정반대 의미라 함께 못 씀.
-  - Linux: `secret-tool store/lookup/clear` (libsecret). password를 stdin으로 흘려 argv 노출 회피.
-  - Windows: PowerShell + `Add-Type` P/Invoke로 `CredWrite` / `CredRead` / `CredDelete`. password는 hex로 인코딩해서 script body에 박음 (Task Manager 보호).
-- **Source priority** (`loadCredentials`): `AITCC_EMAIL` + `AITCC_PASSWORD` env (CI single-shot) → keychain via auth-state pointer → `null`. 반환은 `kind`-discriminated union (`'env' | 'keychain'`)이라 호출자가 진단에 사용 가능. `'file'` source (`~/.config/aitcc/credentials.json`)는 follow-up.
-- **Idempotent save**: `saveCredentials(email, pw)`이 같은 값으로 호출되면 `status: 'unchanged'` + 키체인 write 안 함 → 사용자가 같은 입력으로 재시도해도 OS prompt가 추가로 안 뜬다. 다른 email로 switch 시 이전 keychain entry는 best-effort `clear`.
-- **TouchID는 안 씀**. `LocalAuthentication.framework` + `SecItemAdd` 직접 호출이 필요한데 dlopen + Linux/Windows 동등 path 추가가 폭발해서 `bun --compile` 부담. 1.0 follow-up.
+- **Password**: `~/.config/aitcc/credentials.json` (mode `0600`, `FILE_BACKEND` = `src/auth/backends/file.js`). OS keychain 의존 없이 `gh`/`aws-cli`/`gcloud`와 동일한 plain-file 방식으로 저장. 단일 사용자 머신 + 디스크 암호화(FileVault/LUKS) 권장 전제. 키는 `<service>:<email>` 형태로 인덱싱.
+- **Email**: `auth-state.json` (`$XDG_CONFIG_HOME/aitcc/auth-state.json`, `0600`, schema v1, `{ schemaVersion, activeEmail }`). 비밀이 아니라 credentials.json 항목을 찾기 위한 포인터. cookie 세션 파일과 분리 — 쿠키 wipe 후에도 credential은 살아남아야 한다.
+- **Source priority** (`loadCredentials`): `AITCC_EMAIL` + `AITCC_PASSWORD` env (CI single-shot) → file backend (auth-state 포인터 경유) → `null`. 반환은 `kind`-discriminated union (`'env' | 'file'`)이라 호출자가 진단에 사용 가능.
+- **Idempotent save**: `saveCredentials(email, pw)`이 같은 값으로 호출되면 `status: 'unchanged'` + file write 안 함. 다른 email로 switch 시 이전 file entry는 best-effort `clear`.
+- **이전 keychain 사용자 one-time migration**: `migrateKeychainToFileIfNeeded` (`src/auth/keychain-migration.ts`)가 file entry 없는 경우 OS keychain에서 자동 마이그레이션 시도 (silent on failure).
 
 ### Login 선택 근거 (CDP capture vs OAuth callback server)
 
