@@ -2,7 +2,7 @@
 
 `<base>` = `https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole`
 
-워크스페이스-scope의 콘솔 API 키 (배포 자동화 등 용도). 미니앱-scope의 인증서(`certs`)와 별도. 자세한 인증서는 [`mini-app-misc.md`](./mini-app-misc.md) 참고.
+워크스페이스-scope의 Deploy Key(콘솔 UI 표기: "API 키") — 배포 자동화 등 용도. 미니앱-scope의 인증서(`certs`)와 별도. 자세한 인증서는 [`mini-app-misc.md`](./mini-app-misc.md) 참고.
 
 세 endpoint 모두 콘솔 관리 페이지 chunk(`static/index.ZsA5htf8.js`)에서 추출했다 — 발급 사례 없이 minified bundle을 정독해 호출 컨벤션을 확정한 결과라 첫 번째 라이브 발급 응답으로 다시 한번 확인해야 한다 (`extra` envelope에 새 필드가 있을 수 있음, surface는 그대로 유지).
 
