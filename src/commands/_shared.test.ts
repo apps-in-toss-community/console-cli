@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeSession } from '../session.js';
-import { resolveWorkspaceContext } from './_shared.js';
+import { hintForErrorCode, resolveWorkspaceContext } from './_shared.js';
 
 // `resolveWorkspaceContext` is the shared boilerplate every workspace-
 // scoped command (`app ls`, `members ls`, `keys ls`, …) depends on for
@@ -127,5 +127,19 @@ describe('resolveWorkspaceContext', () => {
     });
     const ctx = await resolveWorkspaceContext({ json: false });
     expect(ctx?.workspaceId).toBe(42);
+  });
+});
+
+describe('hintForErrorCode', () => {
+  it('points 5010 at `aitcc me terms agree --scope AI_RISK_USE`', () => {
+    const hint = hintForErrorCode('5010');
+    expect(hint).toBeDefined();
+    expect(hint).toContain('aitcc me terms agree --scope AI_RISK_USE');
+  });
+
+  it('returns undefined for codes with no known CLI remedy', () => {
+    expect(hintForErrorCode('4046')).toBeUndefined();
+    expect(hintForErrorCode('4010')).toBeUndefined();
+    expect(hintForErrorCode(undefined)).toBeUndefined();
   });
 });
