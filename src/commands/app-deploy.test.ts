@@ -80,6 +80,8 @@ interface DryRunStubOptions {
   workspaceTerms?: Partial<Record<string, ReadonlyArray<unknown>>>;
   /** User-terms override. Default: []. */
   userTerms?: ReadonlyArray<unknown>;
+  /** AI_RISK_USE scoped user-terms override. Default: []. */
+  aiRiskTerms?: ReadonlyArray<unknown>;
   /** Throw on every fetch — used for the "terms fetch failed → warning" branch. */
   failAll?: boolean;
 }
@@ -125,6 +127,9 @@ function makeDryRunStub(options: DryRunStubOptions): {
         isAdult: true,
         isOverseasBusiness: false,
       });
+    }
+    if (url.includes('/console-user-terms/me?termsScope=AI_RISK_USE')) {
+      return jsonResponse(options.aiRiskTerms ?? []);
     }
     if (url.endsWith('/console-user-terms/me')) {
       return jsonResponse(options.userTerms ?? []);
@@ -614,5 +619,231 @@ describe('runDeploy', () => {
     expect(parsed.reason).toBe('session-expired');
     expect(parsed.uploaded).toBe(true);
     expect(parsed.reviewed).toBe(false);
+  });
+
+  it('--dry-run lists AI_RISK_USE blocker (errorCode 5010) when required term is unagreed', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-ai-risk');
+    const stub = makeDryRunStub({
+      workspaceId: 3095,
+      aiRiskTerms: [
+        {
+          required: true,
+          termsId: 87304,
+          revisionId: 65672,
+          title: '앱인토스 혁신금융서비스 위험 고지',
+          contentsUrl: 'https://service.toss.im/terms/87304/revisions/65672',
+          actionType: 'NONE',
+          isAgreed: false,
+          isOneTimeConsent: false,
+        },
+      ],
+    });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.wouldSucceed).toBe(false);
+    expect(parsed.terms.checked).toBe(true);
+    const aiRiskBlocker = parsed.terms.blockers.find(
+      (b: { type: string }) => b.type === 'AI_RISK_USE',
+    );
+    expect(aiRiskBlocker).toBeDefined();
+    expect(aiRiskBlocker).toMatchObject({
+      scope: 'user',
+      type: 'AI_RISK_USE',
+      errorCode: 5010,
+      action: 'aitcc me terms agree --scope AI_RISK_USE',
+    });
+  });
+
+  it('--dry-run has no AI_RISK_USE blocker when all AI risk terms are agreed', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-ai-agreed');
+    const stub = makeDryRunStub({
+      workspaceId: 3095,
+      aiRiskTerms: [
+        {
+          required: true,
+          termsId: 87304,
+          revisionId: 65672,
+          title: '앱인토스 혁신금융서비스 위험 고지',
+          contentsUrl: 'https://service.toss.im/terms/87304/revisions/65672',
+          actionType: 'NONE',
+          isAgreed: true,
+          isOneTimeConsent: false,
+        },
+      ],
+    });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: true }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const parsed = JSON.parse(stdout.join(''));
+    expect(parsed.wouldSucceed).toBe(true);
+    expect(
+      parsed.terms.blockers.filter((b: { type: string }) => b.type === 'AI_RISK_USE'),
+    ).toHaveLength(0);
+  });
+
+  it('--dry-run plaintext terms-unchecked warning includes 5010 in error code enumeration', async () => {
+    await writeSessionAt(3095);
+    const path = writeBundleFile(root, 'dep-unchecked');
+    const stub = makeDryRunStub({ workspaceId: 3095, failAll: true });
+    const exit = await captureExit(() =>
+      runDeploy({ path, app: '29397', dryRun: true, json: false }, { fetchImpl: stub.fetchImpl }),
+    );
+    expect(exit?.code).toBe(0);
+    const out = stdout.join('');
+    expect(out).toContain('5010');
+  });
+
+  it('live --json stdout is exactly one parseable JSON line even with AI risk terms pending (stdout invariant)', async () => {
+    // Regression guard: preflight warning must NEVER appear on stdout.
+    await writeSessionAt(3095);
+
+    const fakeBundle: AitBundleInfo = {
+      format: 'ait',
+      deploymentId: 'live-dep-id',
+      bytes: new Uint8Array(4),
+    };
+
+    const stubFetch: FetchLike = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      // AI_RISK_USE preflight — return a pending term
+      if (url.includes('/console-user-terms/me?termsScope=AI_RISK_USE')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'SUCCESS',
+            success: [
+              {
+                required: true,
+                termsId: 87304,
+                revisionId: 65672,
+                title: 'AI Risk',
+                contentsUrl: 'https://example.com/ai',
+                actionType: 'NONE',
+                isAgreed: false,
+                isOneTimeConsent: false,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('/deployments/initialize')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'SUCCESS',
+            success: {
+              uploadUrl: 'https://upload.example.com/put',
+              deployment: { reviewStatus: 'PREPARE' },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('upload.example.com')) {
+        return new Response(null, { status: 200 });
+      }
+      if (url.includes('/deployments/complete')) {
+        return new Response(
+          JSON.stringify({ resultType: 'SUCCESS', success: { deploymentId: 'live-dep-id' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unmocked URL: ${url}`);
+    };
+
+    const exit = await captureExit(() =>
+      runDeploy(
+        { path: '/fake/bundle.ait', app: '29397', json: true },
+        { fetchImpl: stubFetch, readBundleImpl: async () => fakeBundle },
+      ),
+    );
+
+    expect(exit?.code).toBe(0);
+    const out = stdout.join('');
+    // stdout must be exactly one line
+    const lines = out.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    // and it must be parseable JSON
+    const parsed = JSON.parse(out);
+    expect(parsed.ok).toBe(true);
+    // preflight warning must not appear on stdout
+    expect(out).not.toContain('[warn]');
+    expect(out).not.toContain('AI_RISK_USE');
+  });
+
+  it('live non-json preflight warning appears on stderr (not stdout) when AI risk terms pending', async () => {
+    await writeSessionAt(3095);
+
+    const fakeBundle: AitBundleInfo = {
+      format: 'ait',
+      deploymentId: 'live-dep-id-2',
+      bytes: new Uint8Array(4),
+    };
+
+    const stubFetch: FetchLike = async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/console-user-terms/me?termsScope=AI_RISK_USE')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'SUCCESS',
+            success: [
+              {
+                required: true,
+                termsId: 87304,
+                revisionId: 65672,
+                title: 'AI Risk',
+                contentsUrl: 'https://example.com/ai',
+                actionType: 'NONE',
+                isAgreed: false,
+                isOneTimeConsent: false,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('/deployments/initialize')) {
+        return new Response(
+          JSON.stringify({
+            resultType: 'SUCCESS',
+            success: {
+              uploadUrl: 'https://upload.example.com/put',
+              deployment: { reviewStatus: 'PREPARE' },
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url.includes('upload.example.com')) {
+        return new Response(null, { status: 200 });
+      }
+      if (url.includes('/deployments/complete')) {
+        return new Response(
+          JSON.stringify({ resultType: 'SUCCESS', success: { deploymentId: 'live-dep-id-2' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unmocked URL: ${url}`);
+    };
+
+    const exit = await captureExit(() =>
+      runDeploy(
+        { path: '/fake/bundle.ait', app: '29397', json: false },
+        { fetchImpl: stubFetch, readBundleImpl: async () => fakeBundle },
+      ),
+    );
+
+    expect(exit?.code).toBe(0);
+    // warning goes to stderr
+    expect(stderr.join('')).toContain('[warn]');
+    expect(stderr.join('')).toContain('AI_RISK_USE');
+    // stdout has no warning
+    expect(stdout.join('')).not.toContain('[warn]');
+    expect(stdout.join('')).not.toContain('AI_RISK_USE');
   });
 });

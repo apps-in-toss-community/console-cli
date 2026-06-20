@@ -100,6 +100,42 @@ export async function fetchUserTerms(
   });
 }
 
+export type AiRiskTermsState =
+  | { status: 'agreed' }
+  | { status: 'pending'; pending: readonly UserTerm[] }
+  | { status: 'unknown' };
+
+// Best-effort, bounded preflight for the account-level AI_RISK_USE gate
+// (errorCode 5010). Never throws: a fetch error / non-array / timeout
+// resolves to { status: 'unknown' } so the caller can silently skip its
+// warning and let the real API call be the authoritative gate.
+//
+// IMPORTANT: the HTTP layer (executeAndUnwrap) has NO timeout. We bound the
+// wait here with Promise.race against an unref'd timer so a hung KR edge /
+// WAF stall can never delay the primary action (keys create / deploy) by
+// more than `timeoutMs`. Mirrors whoami's runBackgroundUpdateCheck pattern.
+export async function probeAiRiskTerms(
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike; timeoutMs?: number } = {},
+): Promise<AiRiskTermsState> {
+  const timeoutMs = opts.timeoutMs ?? 2000;
+  const fetched = await Promise.race([
+    fetchUserTerms(cookies, {
+      scope: 'AI_RISK_USE',
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    }).catch(() => null),
+    new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), timeoutMs);
+      if (typeof t.unref === 'function') t.unref();
+    }),
+  ]);
+  if (fetched === null) return { status: 'unknown' };
+  // Replicate the exact live-gate predicate (fetchTermsBlockers):
+  // required && !isAgreed. Optional-but-unagreed must NOT warn (false nag).
+  const pending = fetched.filter((t) => t.required && !t.isAgreed);
+  return pending.length === 0 ? { status: 'agreed' } : { status: 'pending', pending };
+}
+
 // `(termsId, revisionId)` pair the agree endpoint expects per term. Kept
 // narrow on purpose — `UserTerm` carries title/actionType/isAgreed that
 // the server has no use for on submit. Mirrors `WorkspaceTermAgreement`.

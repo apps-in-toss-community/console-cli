@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
 import { type FetchLike, TossApiError } from './http.js';
-import { agreeUserTerms, fetchConsoleMemberUserInfo, fetchUserTerms } from './me.js';
+import {
+  agreeUserTerms,
+  fetchConsoleMemberUserInfo,
+  fetchUserTerms,
+  probeAiRiskTerms,
+} from './me.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -157,6 +162,101 @@ describe('fetchUserTerms', () => {
     expect(got).toHaveLength(1);
     expect(got[0]?.termsId).toBe(87304);
     expect(got[0]?.isAgreed).toBe(false);
+  });
+});
+
+describe('probeAiRiskTerms', () => {
+  function makeTermsFetch(terms: unknown[]): FetchLike {
+    return async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: terms }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+  }
+
+  it('returns agreed when all required terms are isAgreed', async () => {
+    const fetchImpl = makeTermsFetch([
+      {
+        required: true,
+        termsId: 1,
+        revisionId: 1,
+        title: 'T',
+        contentsUrl: 'U',
+        actionType: 'NONE',
+        isAgreed: true,
+        isOneTimeConsent: false,
+      },
+    ]);
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('agreed');
+  });
+
+  it('returns pending with the unagreed term when required && !isAgreed', async () => {
+    const fetchImpl = makeTermsFetch([
+      {
+        required: true,
+        termsId: 2,
+        revisionId: 1,
+        title: 'AI Risk',
+        contentsUrl: 'https://example.com/ai-risk',
+        actionType: 'NONE',
+        isAgreed: false,
+        isOneTimeConsent: false,
+      },
+    ]);
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('pending');
+    if (result.status === 'pending') {
+      expect(result.pending).toHaveLength(1);
+      expect(result.pending[0]?.title).toBe('AI Risk');
+    }
+  });
+
+  it('returns agreed (not pending) when optional (!required) && !isAgreed (false nag prevention)', async () => {
+    const fetchImpl = makeTermsFetch([
+      {
+        required: false,
+        termsId: 3,
+        revisionId: 1,
+        title: 'Optional',
+        contentsUrl: 'U',
+        actionType: 'NONE',
+        isAgreed: false,
+        isOneTimeConsent: false,
+      },
+    ]);
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('agreed');
+  });
+
+  it('returns agreed when the array is empty (nothing required)', async () => {
+    const fetchImpl = makeTermsFetch([]);
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('agreed');
+  });
+
+  it('returns unknown when fetch throws (network error) — never throws itself', async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new Error('network down');
+    };
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('unknown');
+  });
+
+  it('returns unknown when success payload is not an array (fetchUserTerms throws)', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { not: 'an array' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    const result = await probeAiRiskTerms(cookies, { fetchImpl });
+    expect(result.status).toBe('unknown');
+  });
+
+  it('returns unknown when fetchImpl never resolves (timeout guard)', async () => {
+    const fetchImpl: FetchLike = () => new Promise(() => {}); // hangs forever
+    const result = await probeAiRiskTerms(cookies, { fetchImpl, timeoutMs: 50 });
+    expect(result.status).toBe('unknown');
   });
 });
 

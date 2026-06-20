@@ -1,6 +1,6 @@
 import { defineCommand } from 'citty';
 import { NetworkError, TossApiError } from '../api/http.js';
-import { fetchConsoleMemberUserInfo } from '../api/me.js';
+import { type AiRiskTermsState, fetchConsoleMemberUserInfo, probeAiRiskTerms } from '../api/me.js';
 import { getActiveCredentialEmail } from '../auth/credentials.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
@@ -132,7 +132,15 @@ export const whoamiCommand = defineCommand({
     }
 
     try {
-      const info = await fetchConsoleMemberUserInfo(session.cookies);
+      const [infoR, gateR] = await Promise.allSettled([
+        fetchConsoleMemberUserInfo(session.cookies),
+        probeAiRiskTerms(session.cookies),
+      ]);
+      if (infoR.status === 'rejected') throw infoR.reason;
+      const info = infoR.value;
+      const gate: AiRiskTermsState =
+        gateR.status === 'fulfilled' ? gateR.value : { status: 'unknown' };
+
       if (args.json) {
         process.stdout.write(
           `${JSON.stringify({
@@ -154,6 +162,12 @@ export const whoamiCommand = defineCommand({
             capturedAt: session.capturedAt,
             credentialSource: cred.source,
             ...(cred.email ? { credentialEmail: cred.email } : {}),
+            aiRiskTerms:
+              gate.status === 'agreed'
+                ? { status: 'agreed' }
+                : gate.status === 'pending'
+                  ? { status: 'pending', errorCode: 5010 }
+                  : { status: 'unknown' },
           })}\n`,
         );
         return exitAfterFlush(ExitCode.Ok);
@@ -166,6 +180,14 @@ export const whoamiCommand = defineCommand({
           process.stdout.write(`  - ${w.workspaceName} (id ${w.workspaceId}, ${w.role})\n`);
         }
       }
+      if (gate.status === 'pending') {
+        process.stdout.write(
+          'AI risk terms: 미동의 (errorCode 5010 차단 중) — `aitcc me terms agree --scope AI_RISK_USE`로 동의\n',
+        );
+      } else if (gate.status === 'agreed') {
+        process.stdout.write('AI risk terms: 동의 완료\n');
+      }
+      // status === 'unknown' (probe 실패): 줄 생략
       await runBackgroundUpdateCheck(args.json);
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {

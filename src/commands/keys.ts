@@ -6,12 +6,14 @@ import {
   disableApiKey,
   fetchApiKeys,
 } from '../api/api-keys.js';
+import { probeAiRiskTerms } from '../api/me.js';
 import { APP_NAME_REGEX } from '../config/app-manifest.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import {
   emitFailureFromError,
   emitJson,
+  formatAiRiskPreflightWarning,
   printContextHeader,
   resolveWorkspaceContext,
 } from './_shared.js';
@@ -251,6 +253,20 @@ const createCommand = defineCommand({
       target = { isAll: false, appNames: parsed.slugs };
     } else {
       target = { isAll: true, appNames: [] };
+    }
+
+    // Preflight: best-effort AI_RISK_USE (5010) gate check before the real
+    // createApiKey call. Diagnostic-only — never blocks; the server is the
+    // authoritative gate (emitFailureFromError prints hintForErrorCode('5010')
+    // if we proceed and still get 5010). Under --json we skip the human warning
+    // entirely (printContextHeader precedent) so stdout stays one JSON line.
+    // SECRET-HANDLING: only title/contentsUrl (public) are rendered — never
+    // session.cookies, the Cookie header, or the GET URL.
+    if (!args.json) {
+      const gate = await probeAiRiskTerms(session.cookies);
+      if (gate.status === 'pending') {
+        process.stderr.write(formatAiRiskPreflightWarning(gate.pending));
+      }
     }
 
     try {
