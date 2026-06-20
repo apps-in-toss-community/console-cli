@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CdpCookie } from '../cdp.js';
-import type { FetchLike } from './http.js';
-import { fetchConsoleMemberUserInfo, fetchUserTerms } from './me.js';
+import { type FetchLike, TossApiError } from './http.js';
+import { agreeUserTerms, fetchConsoleMemberUserInfo, fetchUserTerms } from './me.js';
 
 const cookies: readonly CdpCookie[] = [
   {
@@ -125,5 +125,87 @@ describe('fetchUserTerms', () => {
       isAgreed: false,
       isOneTimeConsent: false,
     });
+  });
+
+  it('appends ?termsScope=AI_RISK_USE when a scope is given', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: [
+            {
+              required: true,
+              termsId: 87304,
+              revisionId: 65672,
+              title: '앱인토스 혁신금융서비스에 관한 위험 고지 및 이용 약관',
+              contentsUrl: 'https://service.toss.im/terms/87304/revisions/65672',
+              actionType: 'NONE',
+              isAgreed: false,
+              isOneTimeConsent: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchUserTerms(cookies, { fetchImpl, scope: 'AI_RISK_USE' });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/console-user-terms/me?termsScope=AI_RISK_USE',
+    );
+    expect(got).toHaveLength(1);
+    expect(got[0]?.termsId).toBe(87304);
+    expect(got[0]?.isAgreed).toBe(false);
+  });
+});
+
+describe('agreeUserTerms', () => {
+  it('POSTs to /console-user-terms/me with an agreedList payload', async () => {
+    let calledUrl = '';
+    let calledMethod = '';
+    let calledBody = '';
+    const fetchImpl: FetchLike = async (input, init) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      calledMethod = init?.method ?? 'GET';
+      calledBody = typeof init?.body === 'string' ? init.body : '';
+      return new Response(JSON.stringify({ resultType: 'SUCCESS', success: {} }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    await agreeUserTerms([{ termsId: 87304, revisionId: 65672 }], cookies, { fetchImpl });
+    expect(calledMethod).toBe('POST');
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/console-user-terms/me',
+    );
+    expect(JSON.parse(calledBody)).toEqual({
+      agreedList: [{ termsId: 87304, revisionId: 65672 }],
+    });
+  });
+
+  it('throws synchronously on an empty term list (server is non-idempotent)', async () => {
+    let called = false;
+    const fetchImpl: FetchLike = async () => {
+      called = true;
+      return new Response('', { status: 200 });
+    };
+    await expect(agreeUserTerms([], cookies, { fetchImpl })).rejects.toThrow(/at least one term/);
+    expect(called).toBe(false);
+  });
+
+  it('surfaces server-side failures as TossApiError', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'FAIL',
+          success: null,
+          error: { errorType: 0, errorCode: '500', reason: 'already-agreed' },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    await expect(
+      agreeUserTerms([{ termsId: 1, revisionId: 1 }], cookies, { fetchImpl }),
+    ).rejects.toBeInstanceOf(TossApiError);
   });
 });

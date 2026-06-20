@@ -76,7 +76,7 @@ export function emitNetworkError(json: boolean, message: string): void {
 export function emitApiError(
   json: boolean,
   message: string,
-  details?: { status?: number; errorCode?: string },
+  details?: { status?: number; errorCode?: string; hint?: string },
 ): void {
   if (json) {
     emitJson({
@@ -84,11 +84,28 @@ export function emitApiError(
       reason: 'api-error',
       ...(details?.status !== undefined ? { status: details.status } : {}),
       ...(details?.errorCode !== undefined ? { errorCode: details.errorCode } : {}),
+      ...(details?.hint !== undefined ? { hint: details.hint } : {}),
       message,
     });
   } else {
     process.stderr.write(`Unexpected error: ${message}\n`);
+    if (details?.hint !== undefined) process.stderr.write(`${details.hint}\n`);
   }
+}
+
+// Some error codes have a concrete CLI remedy. When we recognise one, we
+// attach a one-line `hint` so the seam to the fixing command is printed
+// instead of leaving the user to discover it. `5010` (혁신금융서비스 약관
+// 미동의 — AI-risk disclosure/usage terms) gates Deploy Key issuance and
+// almost every other workspace read/write at the *account* level; the fix
+// is `aitcc me terms agree --scope AI_RISK_USE`. Returns `undefined` for
+// codes with no known CLI remedy (most numeric codes pass through verbatim
+// — see docs/api/_error-codes.md).
+export function hintForErrorCode(errorCode: string | undefined): string | undefined {
+  if (errorCode === '5010') {
+    return 'AI 위험 고지·이용약관 동의가 필요합니다 — `aitcc me terms agree --scope AI_RISK_USE`로 동의하세요.';
+  }
+  return undefined;
 }
 
 /**
@@ -115,7 +132,12 @@ export async function emitFailureFromError(json: boolean, err: unknown): Promise
       reason: err.reason,
       fallback: err.message,
     });
-    emitApiError(json, message, { status: err.status, errorCode: err.errorCode });
+    const hint = hintForErrorCode(err.errorCode);
+    emitApiError(json, message, {
+      status: err.status,
+      errorCode: err.errorCode,
+      ...(hint !== undefined ? { hint } : {}),
+    });
     return exitAfterFlush(ExitCode.ApiError);
   }
   if (err instanceof NetworkError) {

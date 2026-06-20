@@ -7,7 +7,8 @@
 | Method | Path | 용도 | 상태 |
 |---|---|---|---|
 | GET | `/members/me/user-info` | 현재 사용자 정보 + 소속 워크스페이스 목록 | ✅ |
-| GET | `/console-user-terms/me` | 사용자 본인의 콘솔 이용약관 동의 상태 | ✅ |
+| GET | `/console-user-terms/me` | 사용자 본인의 콘솔 이용약관 동의 상태 (`?termsScope=AI_RISK_USE`로 AI 위험 고지 약관) | ✅ |
+| POST | `/console-user-terms/me` | 계정-level 약관 동의 제출 (`agreedList`) | ✅ |
 
 ## 인증 흐름 (참고)
 
@@ -147,9 +148,10 @@ CLI 로그인 직후의 liveness check. 모든 명령이 부팅 시점에 한 �
 
 ## `GET /console-user-terms/me` — 사용자 콘솔 이용약관 동의 상태
 
-- **Used by**: [`src/api/me.ts#fetchUserTerms`](../../src/api/me.ts), `aitcc me terms`
+- **Used by**: [`src/api/me.ts#fetchUserTerms`](../../src/api/me.ts), `aitcc me terms [--scope AI_RISK_USE]`
 - **Capture status**: ✅ confirmed
 - **Auth**: 세션 쿠키
+- **Query**: `termsScope` (optional). 생략 시 기본 콘솔 가입 약관 bucket. `AI_RISK_USE`를 주면 AI 위험 고지·이용약관 bucket을 반환한다(콘솔 SPA `혁신금융서비스약관동의Page`가 쓰는 경로, route `/ai-risk-use-terms`).
 
 ### Response
 
@@ -175,3 +177,47 @@ CLI 로그인 직후의 liveness check. 모든 명령이 부팅 시점에 한 �
 
 - 워크스페이스-level 약관(`/workspaces/<wid>/console-workspace-terms/...`)과 별도. 이건 사용자 본인의 콘솔 가입 약관.
 - shape이 [`workspaces.md`](./workspaces.md)의 워크스페이스 약관과 동일 — 둘 다 같은 `terms` 모델 위에 얹혀 있다.
+
+### `?termsScope=AI_RISK_USE` — AI 위험 고지 약관 (errorCode 5010)
+
+`termsScope=AI_RISK_USE`로 호출하면 "앱인토스 혁신금융서비스에 관한 위험 고지 및 이용 약관" bucket을 반환한다. 이 약관은 **계정-level** 선결 게이트로, 미동의 시 거의 모든 워크스페이스 read/write가 `errorCode: 5010`(`혁신금융서비스_약관_미동의`)으로 막힌다 — Deploy Key 발급(`keys create`)·배포(`app deploy`) 포함. 계정 하나에 한 번 동의하면 모든 워크스페이스에서 풀린다(워크스페이스별 아님).
+
+캡처 (2026-06-17, 콘솔 SPA `혁신금융서비스약관동의Page` 정적 분석 + GET 실측):
+
+```json
+{
+  "resultType": "SUCCESS",
+  "success": [
+    {
+      "required": true,
+      "termsId": 87304,
+      "revisionId": 65672,
+      "title": "앱인토스 혁신금융서비스에 관한 위험 고지 및 이용 약관",
+      "contentsUrl": "https://service.toss.im/terms/87304/revisions/65672",
+      "actionType": "NONE",
+      "isAgreed": false,
+      "isOneTimeConsent": false
+    }
+  ]
+}
+```
+
+GET은 동의 전에도 200으로 응답한다(5010에 막히지 않음) — 약관 본문을 보여주고 동의받기 위한 경로라 게이트 밖이다.
+
+## `POST /console-user-terms/me` — 계정-level 약관 동의 제출
+
+- **Used by**: [`src/api/me.ts#agreeUserTerms`](../../src/api/me.ts), `aitcc me terms agree --scope AI_RISK_USE`
+- **Capture status**: ✅ 경로·body 스키마 확정 (콘솔 SPA `혁신금융서비스약관동의Page` 정적 분석). 실 제출은 법적 동의라 사용자가 수행.
+- **Auth**: 세션 쿠키
+
+### Request
+
+```json
+{ "agreedList": [{ "termsId": 87304, "revisionId": 65672 }] }
+```
+
+워크스페이스 약관 제출(`POST /workspaces/<wid>/console-workspace-terms`)과 동일한 `agreedList` 모양이지만 path에 `workspaceId`가 없다(계정-level). `termsId`/`revisionId`는 위 GET에서 가져온다. 서버는 비-멱등 — 이미 동의한 term을 재제출하면 실패하므로 client가 `isAgreed === false`만 추려 보낸다.
+
+### 법적 동의 게이트 (CLI)
+
+`aitcc me terms agree`는 제출 전 `title` + `contentsUrl`을 보여주고 **명시적 확인**을 받는다 — 인터랙티브 TTY는 `y/N` 프롬프트, `--json`/non-TTY는 `--yes` 플래그를 요구한다. 자동 동의는 없다.
