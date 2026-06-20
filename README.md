@@ -182,36 +182,6 @@ aitcc app deploy ./aitc-sdk-example.ait --json
 
 `agent-plugin` skill은 항상 `--json`으로 shell out하고 stdout을 파싱합니다.
 
-## 텔레메트리
-
-`aitcc`는 두 단계로 분리된 익명 사용 통계를 수집합니다. 자세한 내용은 [privacy 페이지](https://docs.aitc.dev/privacy) 참조.
-
-### Tier 0 — 일별 익명 핑 (기본 ON, opt-out)
-
-매 실행 시 하루 한 번 익명 핑을 보냅니다. 수집 항목: `{source, version, platform}`. 개인 식별 정보 없음. `anon_id`도 없음 — 서버가 일별 salt로 IP+UA 해시를 계산해 저장하며, 그 외 정보는 저장하지 않습니다. "이 버전을 실제로 쓰는 사람이 있는가"를 파악하기 위한 최소 신호입니다.
-
-opt-out 방법 (세 가지):
-
-- `AITCC_TELEMETRY=off` 환경 변수 — 이 쉘 세션 전체 비활성
-- `--no-telemetry` 플래그 — 이 invocation만 비활성 (영구 X)
-- `aitcc telemetry tier0-off` — 영구 opt-out (state file에 저장)
-
-### Tier 1 — 세부 이벤트 (기본 OFF, opt-in)
-
-처음 실행 시 TTY 환경에서만 동의를 묻습니다. CI/파이프 환경에선 자동으로 비활성화됩니다. 수집 항목: 실행된 명령 이름, 버전, 플랫폼, 임의 익명 ID (`anon_id`). 개인 식별 정보(이메일, 세션, 사용자 ID 등)는 절대 전송하지 않습니다.
-
-```sh
-aitcc telemetry status          # 두 tier 상태 + 익명 ID 확인
-aitcc telemetry status --json   # machine-readable 출력
-aitcc telemetry enable          # Tier 1 활성화
-aitcc telemetry disable         # Tier 1 비활성화
-aitcc telemetry delete          # 서버에 저장된 Tier 1 데이터 삭제 요청 + 로컬 익명 ID 교체
-aitcc telemetry tier0-off       # Tier 0 익명 핑 영구 비활성화
-aitcc telemetry tier0-on        # Tier 0 다시 활성화
-```
-
-상태 파일: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/telemetry.json`, mode `0600`).
-
 ## 진행 상황
 
 다음 명령군이 end-to-end로 동작합니다:
@@ -219,7 +189,7 @@ aitcc telemetry tier0-on        # Tier 0 다시 활성화
 - 인증·세션: `login` / `logout` / `whoami` / `auth` (export/import)
 - 워크스페이스: `workspace` / `members` / `me` / `notices`
 - 미니앱: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
-- 그 외: Deploy Key 발급(`keys`), `telemetry`, `upgrade`(self-update), `completion`(셸 자동완성)
+- 그 외: Deploy Key 발급(`keys`), `upgrade`(self-update), `completion`(셸 자동완성)
 
 `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
 
