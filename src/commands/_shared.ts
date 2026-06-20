@@ -1,5 +1,6 @@
 import { describeApiError } from '../api/error-messages.js';
 import { NetworkError, TossApiError } from '../api/http.js';
+import type { UserTerm } from '../api/me.js';
 import { findProjectContext, type ProjectContext } from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
@@ -103,9 +104,34 @@ export function emitApiError(
 // — see docs/api/_error-codes.md).
 export function hintForErrorCode(errorCode: string | undefined): string | undefined {
   if (errorCode === '5010') {
-    return 'AI 위험 고지·이용약관 동의가 필요합니다 — `aitcc me terms agree --scope AI_RISK_USE`로 동의하세요.';
+    return (
+      'AI 위험 고지·이용약관(AI_RISK_USE) 동의가 필요해요. ' +
+      '`aitcc me terms --scope AI_RISK_USE`로 약관을 확인하고, ' +
+      '`aitcc me terms agree --scope AI_RISK_USE`로 동의하세요 ' +
+      '(법적 동의 — 계정 소유자가 직접 링크를 검토한 뒤 동의해야 하며, ' +
+      '비대화형/--json 환경에서는 --yes로 확인).'
+    );
   }
   return undefined;
+}
+
+// Terse, stderr-only preflight warning for the AI_RISK_USE (5010) gate.
+// Reuses hintForErrorCode('5010') for the actionable line so the preflight
+// and the post-failure hint never drift. Renders ONLY public title/
+// contentsUrl (SECRET-HANDLING: never cookies / Cookie header / GET URL).
+export function formatAiRiskPreflightWarning(pending: readonly UserTerm[]): string {
+  const lines: string[] = [];
+  lines.push(
+    '[warn] AI 위험 고지·이용약관(AI_RISK_USE) 미동의 상태예요 — 이 명령이 errorCode 5010으로 막힐 수 있어요.\n',
+  );
+  for (const t of pending) {
+    lines.push(`  - ${t.title}\n      ${t.contentsUrl}\n`);
+  }
+  // Single-sourced remedy line (= post-failure hint). hintForErrorCode never
+  // returns undefined for '5010', but fall back defensively.
+  lines.push(`  ${hintForErrorCode('5010') ?? ''}\n`);
+  lines.push('  법적 동의라 계정 소유자가 직접 위 링크를 확인하고 동의해야 해요.\n');
+  return lines.join('');
 }
 
 /**

@@ -1,6 +1,11 @@
 import { describeApiError } from '../api/error-messages.js';
 import { type FetchLike, NetworkError, TossApiError } from '../api/http.js';
-import { fetchConsoleMemberUserInfo, fetchUserTerms } from '../api/me.js';
+import {
+  type AiRiskTermsState,
+  fetchConsoleMemberUserInfo,
+  fetchUserTerms,
+  probeAiRiskTerms,
+} from '../api/me.js';
 import {
   postBundleMemo,
   postBundleRelease,
@@ -21,6 +26,7 @@ import type { Session } from '../session.js';
 import {
   emitFailureFromError,
   emitJson,
+  formatAiRiskPreflightWarning,
   parsePositiveInt,
   printContextHeader,
   requireMiniAppId,
@@ -277,13 +283,22 @@ export async function runDeploy(args: DeployArgs, deps: DeployDeps = {}): Promis
   let reviewResult: Readonly<Record<string, unknown>> | null = null;
 
   try {
-    const init = await postDeploymentsInitialize(
-      workspaceId,
-      appId,
-      deploymentId,
-      session.cookies,
-      apiOpts,
-    );
+    // Preflight (best-effort, diagnostic) runs CONCURRENTLY with the first
+    // deploy API call so its latency overlaps existing work, not adds to it.
+    // Under --json the human warning is skipped (stdout = one JSON line);
+    // the authoritative 5010 + hint still land in the JSON failure payload
+    // if init/complete throws 5010.
+    // SECRET-HANDLING: only title/contentsUrl (public) are rendered — never
+    // session.cookies, the Cookie header, or the GET URL.
+    const [init, gate] = await Promise.all([
+      postDeploymentsInitialize(workspaceId, appId, deploymentId, session.cookies, apiOpts),
+      args.json
+        ? Promise.resolve<AiRiskTermsState>({ status: 'unknown' })
+        : probeAiRiskTerms(session.cookies, apiOpts),
+    ]);
+    if (!args.json && gate.status === 'pending') {
+      process.stderr.write(formatAiRiskPreflightWarning(gate.pending));
+    }
     if (init.reviewStatus !== 'PREPARE') {
       if (args.json) {
         emitJson({
@@ -635,8 +650,9 @@ async function fetchTermsBlockers(
   // spread collapses everything to a union and forces casts at the use
   // sites).
   try {
-    const [userTerms, workspaceResults] = await Promise.all([
+    const [userTerms, aiRiskTerms, workspaceResults] = await Promise.all([
       fetchUserTerms(session.cookies, apiOpts),
+      fetchUserTerms(session.cookies, { scope: 'AI_RISK_USE', ...apiOpts }),
       Promise.all(
         WORKSPACE_TERM_TYPES.map(
           async (t) =>
@@ -658,6 +674,17 @@ async function fetchTermsBlockers(
           errorCode: 4036,
           title: t.title,
           action: 'aitcc me terms',
+        });
+      }
+    }
+    for (const t of aiRiskTerms) {
+      if (t.required && !t.isAgreed) {
+        blockers.push({
+          scope: 'user',
+          type: 'AI_RISK_USE',
+          errorCode: 5010,
+          title: t.title,
+          action: 'aitcc me terms agree --scope AI_RISK_USE',
         });
       }
     }
@@ -724,7 +751,7 @@ function renderDryRunText(
       `  warning: could not check terms status (${derived.terms.error ?? 'unknown error'}).\n`,
     );
     lines.push(
-      '  live deploy may still fail with a 4032/4036/4037/4039/4040/4099/5001 errorCode.\n',
+      '  live deploy may still fail with a 4032/4036/4037/4039/4040/4099/5001/5010 errorCode.\n',
     );
   } else if (derived.terms.blockers.length === 0) {
     lines.push('  all deploy-related terms are agreed\n');

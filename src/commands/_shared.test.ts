@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeSession } from '../session.js';
-import { hintForErrorCode, resolveWorkspaceContext } from './_shared.js';
+import {
+  formatAiRiskPreflightWarning,
+  hintForErrorCode,
+  resolveWorkspaceContext,
+} from './_shared.js';
 
 // `resolveWorkspaceContext` is the shared boilerplate every workspace-
 // scoped command (`app ls`, `members ls`, `keys ls`, …) depends on for
@@ -131,15 +135,45 @@ describe('resolveWorkspaceContext', () => {
 });
 
 describe('hintForErrorCode', () => {
-  it('points 5010 at `aitcc me terms agree --scope AI_RISK_USE`', () => {
+  it('5010 hint contains AI_RISK_USE, me terms agree, and --yes', () => {
     const hint = hintForErrorCode('5010');
     expect(hint).toBeDefined();
-    expect(hint).toContain('aitcc me terms agree --scope AI_RISK_USE');
+    expect(hint).toContain('AI_RISK_USE');
+    expect(hint).toContain('me terms agree');
+    expect(hint).toContain('--yes');
   });
 
   it('returns undefined for codes with no known CLI remedy', () => {
     expect(hintForErrorCode('4046')).toBeUndefined();
     expect(hintForErrorCode('4010')).toBeUndefined();
     expect(hintForErrorCode(undefined)).toBeUndefined();
+  });
+});
+
+describe('formatAiRiskPreflightWarning', () => {
+  const pendingTerm = {
+    required: true,
+    termsId: 1,
+    revisionId: 1,
+    title: 'AI 위험 약관',
+    contentsUrl: 'https://example.com/ai-risk',
+    actionType: 'NONE',
+    isAgreed: false,
+    isOneTimeConsent: false,
+  };
+
+  it('starts with [warn] and contains the term title and contentsUrl', () => {
+    const msg = formatAiRiskPreflightWarning([pendingTerm]);
+    expect(msg).toMatch(/^\[warn\]/);
+    expect(msg).toContain('AI 위험 약관');
+    expect(msg).toContain('https://example.com/ai-risk');
+  });
+
+  it('contains the same remedy text as hintForErrorCode("5010") (drift guard)', () => {
+    const msg = formatAiRiskPreflightWarning([pendingTerm]);
+    const hint = hintForErrorCode('5010');
+    expect(hint).toBeDefined();
+    // The preflight warning embeds the hint text verbatim.
+    expect(msg).toContain(hint ?? '');
   });
 });
