@@ -182,36 +182,6 @@ Every command accepts `--json`. When set:
 
 `agent-plugin` skills shell out with `--json` exclusively and parse stdout.
 
-## Telemetry
-
-`aitcc` collects anonymous usage statistics split into two tiers. See the [privacy page](https://docs.aitc.dev/privacy) for details.
-
-### Tier 0 — anonymous daily ping (on by default, opt-out)
-
-Once per day per machine, a minimal anonymous ping is sent on every invocation. Collected: `{source, version, platform}`. No PII, no `anon_id` — the server derives a daily hash from IP + User-Agent using a rotating salt, and stores nothing else. This is the minimum signal needed to know "is anyone actually using this version?"
-
-Three ways to opt out:
-
-- `AITCC_TELEMETRY=off` environment variable — disables all telemetry for this shell session
-- `--no-telemetry` flag — disables for this single invocation only (not permanent)
-- `aitcc telemetry tier0-off` — permanently opts out (persisted to the state file)
-
-### Tier 1 — detailed events (off by default, opt-in)
-
-On first run in a TTY, the CLI prompts for consent. In CI or pipe environments it silently defaults to deny. Collected: command name, version, platform, random persistent anonymous ID (`anon_id`). No personally identifiable information (email, session, user ID, etc.) is ever sent.
-
-```sh
-aitcc telemetry status          # show both tier status + anon ID
-aitcc telemetry status --json   # machine-readable output
-aitcc telemetry enable          # enable Tier 1 events
-aitcc telemetry disable         # disable Tier 1 events
-aitcc telemetry delete          # request deletion of Tier 1 server data + rotate local anon ID
-aitcc telemetry tier0-off       # permanently opt out of Tier 0 daily ping
-aitcc telemetry tier0-on        # re-enable Tier 0 after a previous tier0-off
-```
-
-State file: `$XDG_CONFIG_HOME/aitcc/telemetry.json` (fallback `~/.config/aitcc/telemetry.json`, mode `0600`).
-
 ## Status
 
 The following command groups are implemented end-to-end:
@@ -219,7 +189,7 @@ The following command groups are implemented end-to-end:
 - Auth & session: `login` / `logout` / `whoami` / `auth` (export/import)
 - Workspace: `workspace` / `members` / `me` / `notices`
 - Mini-app: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
-- Misc: Deploy Key issuance (`keys`), `telemetry`, `upgrade` (self-update), `completion` (shell completion)
+- Misc: Deploy Key issuance (`keys`), `upgrade` (self-update), `completion` (shell completion)
 
 `app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
 
