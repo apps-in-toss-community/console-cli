@@ -81,7 +81,7 @@
 
 - `app metrics` heartbeat/retention 실제 응답 (현재는 빈 배열 + `cacheTime`). ([`mini-app-misc.md`](./mini-app-misc.md))
 - `app events` log catalog 한 항목의 실 본문 (현재는 빈 배열). ([`mini-app-misc.md`](./mini-app-misc.md))
-- API key 발급된 후 list 응답 — fallback chain 정리. ([`api-keys.md`](./api-keys.md))
+- Deploy Key 발급된 후 list 응답 — fallback chain 정리. ([`api-keys.md`](./api-keys.md))
 - Certs 발급된 후 list 응답. ([`mini-app-misc.md`](./mini-app-misc.md))
 
 **우선순위 4 — 별도 액션 필요**:

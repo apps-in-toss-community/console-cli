@@ -127,7 +127,7 @@ UI는 응답 후 list query를 invalidate하므로 cli도 `revoke` 후엔 `ls`�
 ```sh
 aitcc keys create --name ci-deploy
 # stderr: Saved as ait profile "ci-deploy". Run: ait deploy --profile ci-deploy
-ait deploy --profile ci-deploy ./bundle.ait
+ait deploy --profile ci-deploy --location ./bundle.ait
 ```
 
 - `--save-profile <other>`: 프로파일 이름을 `--name`과 다르게 지정한다.

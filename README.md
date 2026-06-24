@@ -22,7 +22,7 @@ installer가 OS(`uname -s`)와 아키텍처(`uname -m`)를 자동 감지해 최�
 특정 버전 고정:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.34 sh
+curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.42 sh
 ```
 
 설치 경로를 바꾸려면 `AITCC_INSTALL_DIR=/custom/path` (기본 `$HOME/.local/bin`).
@@ -204,7 +204,7 @@ aitcc keys create --name ci-deploy
 키 발급 즉시 `~/.ait/credentials`에 `ci-deploy` 프로파일로 저장되므로, 별도 `ait token add` 단계 없이 바로 사용할 수 있습니다:
 
 ```sh
-ait deploy --profile ci-deploy ./bundle.ait
+ait deploy --profile ci-deploy --location ./bundle.ait
 ```
 
 stdout에는 plaintext 키 한 줄만 나옵니다 (파이프 친화적). stderr는 저장된 프로파일 이름을 확인해줍니다. CI 파이프에서 키를 외부 secret manager에 직접 주입할 때처럼 로컬 저장이 필요 없다면 `--no-save-profile`로 저장을 건너뜁니다:
