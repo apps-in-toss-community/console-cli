@@ -22,7 +22,7 @@ The installer detects OS (`uname -s`) and arch (`uname -m`), downloads the match
 Pin a specific version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.34 sh
+curl -fsSL https://raw.githubusercontent.com/apps-in-toss-community/console-cli/main/install.sh | AITCC_VERSION=v0.1.42 sh
 ```
 
 Override the install directory with `AITCC_INSTALL_DIR=/custom/path` (default `$HOME/.local/bin`).
@@ -204,7 +204,7 @@ aitcc keys create --name ci-deploy
 The key is automatically saved to `~/.ait/credentials` under the `ci-deploy` profile as soon as it is issued — no separate `ait token add` step required:
 
 ```sh
-ait deploy --profile ci-deploy ./bundle.ait
+ait deploy --profile ci-deploy --location ./bundle.ait
 ```
 
 Only the plaintext key is written to stdout (pipe-friendly). stderr confirms which profile was saved. If you are piping the key into an external secret manager and do not need a local profile, pass `--no-save-profile`:
