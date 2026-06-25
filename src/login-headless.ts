@@ -58,6 +58,29 @@ export function urlIndicatesStepUp(url: string): boolean {
   return STEP_UP_URL_PATTERN.test(pathname);
 }
 
+// Detect the Toss 90-day password-rotation interstitial. Toss interposes
+// this page between a successful sign-in and the OAuth redirect once 90 days
+// have elapsed since the last password change. The page offers two buttons:
+//   • "2차인증하고 변경하기" — triggers a 2FA + password change. NEVER click.
+//   • "90일 뒤에 변경" — pure dismiss, resumes the OAuth chain. Safe to automate.
+//
+// Detection is pathname-only (same discipline as `urlIndicatesStepUp`) so
+// the `redirect_uri` query string can't produce a false positive even if it
+// contains the path fragment as an encoded substring.
+export function isPasswordRotationInterstitial(url: string): boolean {
+  let parsed: { host: string; pathname: string };
+  try {
+    const u = new URL(url);
+    parsed = { host: u.host, pathname: u.pathname };
+  } catch {
+    return false;
+  }
+  return (
+    parsed.host === 'business.toss.im' &&
+    parsed.pathname.toLowerCase().includes('/change-password-for-security')
+  );
+}
+
 export function bodyIndicatesStepUp(bodyText: string): boolean {
   return STEP_UP_BODY_PATTERN.test(bodyText);
 }
@@ -72,7 +95,7 @@ export interface HeadlessLoginCredentials {
 export type HeadlessLoginOutcome =
   | { readonly kind: 'ok'; readonly stepUp: boolean }
   | { readonly kind: 'fallback'; readonly reason: string }
-  | { readonly kind: 'timeout'; readonly stage: 'submit' | 'step-up' };
+  | { readonly kind: 'timeout'; readonly stage: 'submit' | 'step-up'; readonly observedMs: number };
 
 export interface RunHeadlessLoginOptions {
   readonly client: CdpClient;
@@ -253,6 +276,63 @@ const POST_SUBMIT_PROBE_FN = `
   }
 `;
 
+// Defer-click JS for the 90-day password-rotation interstitial. Evaluated
+// in the page after we detect the interstitial URL; clicks the dismiss
+// button ("90일 뒤에 변경") and NEVER the danger button ("2차인증하고 변경하기").
+//
+// Selection order:
+//   1. Enumerate all button / [role="button"] elements.
+//   2. Pick candidates whose normalised text contains "90일" OR "뒤에 변경"
+//      AND does NOT contain "2차인증" or "인증하고변경" (negated guard against
+//      the danger button — structurally incapable of clicking it).
+//   3. Cross-check: prefer elements with data-tds-desktop-button-variant="clear"
+//      over other matches (the safe button carries that attribute).
+//   4. If NO candidates remain (only danger matches, or nothing found),
+//      return { ok: false, reason: 'only-danger-button' | 'defer-not-found' }.
+//
+// SAFETY: steps 2 is a HARD GUARD. The danger button text contains
+// "2차인증하고변경하기" — the negation in step 2 structurally prevents it from
+// ever being selected. This is not a best-effort hint; it is the load-bearing
+// safety constraint.
+const CLICK_DEFER_FN = `
+  () => {
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+    const isDanger = (el) => {
+      const txt = (el.textContent || '').replace(/\\s+/g, '');
+      return /2차인증|인증하고변경/.test(txt);
+    };
+    const isDefer = (el) => {
+      const txt = (el.textContent || '').replace(/\\s+/g, '');
+      return (txt.includes('90일') || txt.includes('뒤에변경')) && !isDanger(el);
+    };
+    const dangerCount = candidates.filter(isDanger).length;
+    const deferCandidates = candidates.filter(isDefer);
+    if (deferCandidates.length === 0) {
+      const reason = dangerCount > 0 ? 'only-danger-button' : 'defer-not-found';
+      return { ok: false, reason };
+    }
+    // Prefer the clear/grey variant button (the safe dismiss button) over others.
+    const preferred = deferCandidates.find(
+      el => el.getAttribute('data-tds-desktop-button-variant') === 'clear',
+    ) || deferCandidates[0];
+    if (preferred.disabled) {
+      return { ok: false, reason: 'defer-disabled' };
+    }
+    const clickedText = (preferred.textContent || '').trim();
+    preferred.click();
+    return { ok: true, clickedText };
+  }
+`;
+
+// How long to wait for the SPA to render the defer button after the
+// interstitial URL is first detected. The React root may not have booted yet.
+const DEFER_BUTTON_WAIT_MS = 8_000;
+const DEFER_BUTTON_POLL_MS = 200;
+
+// Nag copy that should be present once the interstitial has fully rendered.
+// We check for it before clicking so we don't click into a half-loaded page.
+const PASSWORD_NAG_COPY_RE = /비밀번호를 변경한지|계정 보호|새 비밀번호/;
+
 interface FormReadyProbe {
   ready: boolean;
   count: number;
@@ -268,6 +348,12 @@ interface PostSubmitProbe {
   bodyText: string;
   hasCaptchaIframe: boolean;
   hasErrorBanner: boolean;
+}
+
+interface DeferClickResult {
+  ok: boolean;
+  reason?: string;
+  clickedText?: string;
 }
 
 /**
@@ -353,12 +439,13 @@ export async function runHeadlessLogin(
       return { kind: 'fallback', reason: phase1.reason };
     }
     if (phase1.kind === 'timeout') {
-      return { kind: 'timeout', stage: 'submit' };
+      return { kind: 'timeout', stage: 'submit', observedMs: phase1.observedMs };
     }
 
     // Phase 2: step-up. Inform the caller and wait — much longer — for
     // the user to complete the Toss-app prompt.
     onStepUp?.();
+    const stepUpStart = Date.now();
     const phase2 = await pollForLanding(client, sessionId, stepUpTimeoutMs, () => liveLandingUrl);
     if (phase2 === 'landed') return { kind: 'ok', stepUp: true };
     // `pollForLanding` is typed `'landed' | 'timeout'`; the assignment below
@@ -366,7 +453,7 @@ export async function runHeadlessLogin(
     // value being added without the matching case here.
     const _: 'timeout' = phase2;
     void _;
-    return { kind: 'timeout', stage: 'step-up' };
+    return { kind: 'timeout', stage: 'step-up', observedMs: Date.now() - stepUpStart };
   } finally {
     offNav();
   }
@@ -412,7 +499,7 @@ type Phase1Result =
   | { kind: 'landed' }
   | { kind: 'step-up' }
   | { kind: 'fallback'; reason: string }
-  | { kind: 'timeout' };
+  | { kind: 'timeout'; observedMs: number };
 
 async function observeUntilLandingOrStepUp(
   client: CdpClient,
@@ -420,11 +507,33 @@ async function observeUntilLandingOrStepUp(
   totalMs: number,
   liveLanding: () => string | null,
 ): Promise<Phase1Result> {
-  const deadline = Date.now() + totalMs;
+  const start = Date.now();
+  const deadline = start + totalMs;
+  // Guard: click the defer button at most once per run to prevent a
+  // render-race from triggering multiple clicks.
+  let deferAttempted = false;
+
   while (Date.now() < deadline) {
     if (liveLanding()) return { kind: 'landed' };
     const fromTree = await getMainFrameUrl(client, sessionId);
     if (fromTree && isLoginLanding(fromTree)) return { kind: 'landed' };
+
+    // Detect the 90-day password-rotation interstitial by URL. When found,
+    // wait for the SPA to render the body copy + buttons, then click defer.
+    // The final /workspace hop is a client-side SPA route with no
+    // Page.frameNavigated event, so we MUST keep polling `getMainFrameUrl`
+    // after clicking — the existing loop handles that.
+    if (!deferAttempted && fromTree && isPasswordRotationInterstitial(fromTree)) {
+      deferAttempted = true;
+      const clickResult = await waitAndClickDefer(client, sessionId);
+      if (clickResult.ok) {
+        // Defer was clicked; continue polling for the final /workspace landing.
+        await sleep(POST_SUBMIT_POLL_MS);
+        continue;
+      }
+      // Defer click failed (only danger button visible, or not found).
+      return { kind: 'fallback', reason: 'password-change-required' };
+    }
 
     const probe = await evaluateInPage<PostSubmitProbe>(
       client,
@@ -442,13 +551,59 @@ async function observeUntilLandingOrStepUp(
         // tripping a rate-limit lockout.
         return { kind: 'fallback', reason: 'login-error-banner' };
       }
+      // Also detect the interstitial via the probe URL if getMainFrameUrl
+      // returned null on that tick (race with the navigation committing).
+      if (!deferAttempted && isPasswordRotationInterstitial(probe.value.url)) {
+        deferAttempted = true;
+        const clickResult = await waitAndClickDefer(client, sessionId);
+        if (clickResult.ok) {
+          await sleep(POST_SUBMIT_POLL_MS);
+          continue;
+        }
+        return { kind: 'fallback', reason: 'password-change-required' };
+      }
       if (urlIndicatesStepUp(probe.value.url) || bodyIndicatesStepUp(probe.value.bodyText)) {
         return { kind: 'step-up' };
       }
     }
     await sleep(POST_SUBMIT_POLL_MS);
   }
-  return { kind: 'timeout' };
+  return { kind: 'timeout', observedMs: Date.now() - start };
+}
+
+/**
+ * Wait up to DEFER_BUTTON_WAIT_MS for the SPA to render the interstitial's
+ * body copy and buttons, then run the defer-click eval. Returns the result
+ * of the eval (ok/not-ok) so the caller can decide whether to fall back.
+ */
+async function waitAndClickDefer(client: CdpClient, sessionId: string): Promise<DeferClickResult> {
+  const deadline = Date.now() + DEFER_BUTTON_WAIT_MS;
+  while (Date.now() < deadline) {
+    const probe = await evaluateInPage<PostSubmitProbe>(
+      client,
+      sessionId,
+      `(${POST_SUBMIT_PROBE_FN})()`,
+    );
+    if (probe.ok) {
+      const hasNagCopy = PASSWORD_NAG_COPY_RE.test(probe.value.bodyText);
+      const hasButtons = probe.value.bodyText.length > 0;
+      if (hasNagCopy && hasButtons) {
+        // Page appears ready; run the defer click.
+        const click = await evaluateInPage<DeferClickResult>(
+          client,
+          sessionId,
+          `(${CLICK_DEFER_FN})()`,
+        );
+        if (click.ok) return click.value;
+        // eval itself failed (e.g. context destroyed mid-nav) — treat
+        // as not-found rather than leaking the eval error.
+        return { ok: false, reason: 'defer-eval-failed' };
+      }
+    }
+    await sleep(DEFER_BUTTON_POLL_MS);
+  }
+  // Timed out waiting for the interstitial body to render.
+  return { ok: false, reason: 'defer-not-found' };
 }
 
 async function pollForLanding(
@@ -480,4 +635,5 @@ export const __test = {
   FILL_AND_SUBMIT_FN,
   FORM_READY_PROBE_FN,
   POST_SUBMIT_PROBE_FN,
+  CLICK_DEFER_FN,
 };
