@@ -156,7 +156,11 @@ describe('headlessLoginFromCredentials', () => {
     expect(result.kind).toBe('step-up-needed');
   });
 
-  it('returns { kind: "step-up-needed" } when runHeadlessLogin times out at submit', async () => {
+  it('returns { kind: "failed" } when runHeadlessLogin times out at submit', async () => {
+    // A submit-stage timeout means the form never resolved (unhandled
+    // interstitial, captcha, network) — NOT a Toss-app step-up situation.
+    // It must surface as a generic failure so the caller prints the
+    // "run `aitcc login`" message rather than the misleading step-up one.
     vi.mocked(headlessMod.runHeadlessLogin).mockResolvedValue({
       kind: 'timeout',
       stage: 'submit',
@@ -166,7 +170,10 @@ describe('headlessLoginFromCredentials', () => {
       email: 'dev@example.com',
       password: 'secret',
     });
-    expect(result.kind).toBe('step-up-needed');
+    expect(result.kind).toBe('failed');
+    if (result.kind === 'failed') {
+      expect(result.reason).toBe('submit-timeout');
+    }
   });
 
   it('returns { kind: "failed" } when runHeadlessLogin returns fallback', async () => {

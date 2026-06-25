@@ -127,9 +127,17 @@ export async function headlessLoginFromCredentials(
 
   if (outcome.kind === 'timeout') {
     await disposeAll();
-    // submit-stage timeout: could not complete form (captcha, network, etc.)
-    // step-up timeout: user did not respond to Toss app push
-    return { kind: 'step-up-needed' };
+    if (outcome.stage === 'step-up') {
+      // The user was asked to confirm a step-up prompt in the Toss app and
+      // the window elapsed without completion. This can't be completed
+      // headlessly — the caller routes it to the "run `aitcc login`" path.
+      return { kind: 'step-up-needed' };
+    }
+    // submit-stage timeout: the form never resolved (unhandled interstitial,
+    // captcha, network). This is NOT a step-up situation — auto-reauth can't
+    // open a visible browser to recover, so surface a generic failure rather
+    // than the misleading "complete the step-up in your Toss app" message.
+    return { kind: 'failed', reason: 'submit-timeout' };
   }
 
   // outcome.kind === 'ok' — pull cookies, resolve identity, write session.
