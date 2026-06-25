@@ -1,10 +1,18 @@
 import { describeApiError } from '../api/error-messages.js';
 import { NetworkError, TossApiError } from '../api/http.js';
 import type { UserTerm } from '../api/me.js';
+import type { CredentialsSource } from '../auth/credentials.js';
+import { loadCredentials } from '../auth/credentials.js';
+import { type HeadlessLoginResult, headlessLoginFromCredentials } from '../auth/headless-login.js';
 import { findProjectContext, type ProjectContext } from '../config/project-context.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { readSession, type Session, sessionPathForDiagnostics } from '../session.js';
+import {
+  isEnvSessionActive,
+  readSession,
+  type Session,
+  sessionPathForDiagnostics,
+} from '../session.js';
 
 // Shared output helpers used by every session-scoped subcommand
 // (`workspace`, `app`, `members`, `keys`, and the in-flight `deploy`/`logs`).
@@ -210,12 +218,8 @@ export async function resolveWorkspaceContext(args: {
     })
   | null
 > {
-  const session = await readSession();
-  if (!session) {
-    emitNotAuthenticated(args.json);
-    await exitAfterFlush(ExitCode.NotAuthenticated);
-    return null;
-  }
+  const session = await acquireSessionOrReauth(args.json);
+  if (!session) return null;
 
   let flagWorkspaceId: number | undefined;
   if (args.workspace) {
@@ -254,13 +258,111 @@ export async function resolveWorkspaceContext(args: {
  * `if (!session) return`" pattern.
  */
 export async function requireSession(json: boolean): Promise<Session | null> {
-  const session = await readSession();
-  if (!session) {
+  return acquireSessionOrReauth(json);
+}
+
+// --- Dependency injection seams (for testing) ---
+
+export interface AcquireSessionDeps {
+  /** Override for readSession — defaults to the real fs-backed reader. */
+  readonly readSession?: () => Promise<Session | null>;
+  /** Override for loadCredentials — defaults to the real credential loader. */
+  readonly loadCredentials?: () => Promise<CredentialsSource | null>;
+  /**
+   * Override for the headless-login call — defaults to
+   * `headlessLoginFromCredentials`.  Receives only email + password so
+   * tests never need real Chrome.
+   */
+  readonly headlessLogin?: (input: {
+    email: string;
+    password: string;
+  }) => Promise<HeadlessLoginResult>;
+}
+
+/**
+ * Acquire a live session, transparently re-authenticating with saved file
+ * credentials when the session is absent and the conditions allow it.
+ *
+ * Priority / carve-out matrix:
+ *   1. Session present → return it immediately (happy path, zero I/O).
+ *   2. `AITCC_SESSION` env active (CI mode) → `emitNotAuthenticated` + exit 10.
+ *      Never auto-spawn in CI — the operator controls the session blob.
+ *   3. No file credentials (`loadCredentials` → null) → same exit.
+ *   4. Credentials from env (`kind: 'env'`) → same exit.
+ *      `AITCC_EMAIL`+`AITCC_PASSWORD` are single-shot CI injections;
+ *      a missing session there means the session has truly expired for
+ *      this run and the operator should rotate the secret, not headlessly
+ *      re-login on every invocation.
+ *   5. Credentials from file (`kind: 'file'`) → attempt ONE headless login.
+ *      - `ok`          → return the newly-written session.
+ *      - `step-up-needed` → print step-up message + exit 10.
+ *      - `failed`      → print generic reauth-failed message + exit 10.
+ *
+ * The `deps` parameter is an injection seam for unit tests — production
+ * callers leave it undefined and get the real implementations.
+ *
+ * Returns `null` only after `exitAfterFlush` is called (which terminates
+ * the process), so `null` is a type-level "force `if (!session) return`"
+ * handshake that mirrors the pattern used by `requireSession`,
+ * `resolveWorkspaceContext`, and `resolveAppOrFail`.
+ */
+export async function acquireSessionOrReauth(
+  json: boolean,
+  deps?: AcquireSessionDeps,
+): Promise<Session | null> {
+  const doReadSession = deps?.readSession ?? readSession;
+  const doLoadCredentials = deps?.loadCredentials ?? loadCredentials;
+  const doHeadlessLogin =
+    deps?.headlessLogin ??
+    ((input: { email: string; password: string }) =>
+      headlessLoginFromCredentials({ email: input.email, password: input.password }));
+
+  // 1. Session already present — nothing to do.
+  const existing = await doReadSession();
+  if (existing) return existing;
+
+  // 2. AITCC_SESSION env is active (CI mode) — never auto-spawn.
+  if (isEnvSessionActive()) {
     emitNotAuthenticated(json);
     await exitAfterFlush(ExitCode.NotAuthenticated);
     return null;
   }
-  return session;
+
+  // 3 & 4. Load credentials; bail out when none found or env-sourced.
+  const cred = await doLoadCredentials();
+  if (!cred || cred.kind === 'env') {
+    emitNotAuthenticated(json);
+    await exitAfterFlush(ExitCode.NotAuthenticated);
+    return null;
+  }
+
+  // 5. File-sourced credentials — attempt ONE headless login.
+  process.stderr.write('Session expired — re-authenticating with saved credentials…\n');
+
+  const result = await doHeadlessLogin({ email: cred.email, password: cred.password });
+
+  if (result.kind === 'ok') {
+    // Return the freshly-written session (already in result.session).
+    return result.session;
+  }
+
+  if (result.kind === 'step-up-needed') {
+    process.stderr.write(
+      'Re-authentication requires a step-up (Toss app push). ' +
+        'Run `aitcc login` to complete the sign-in interactively.\n',
+    );
+    emitNotAuthenticated(json);
+    await exitAfterFlush(ExitCode.NotAuthenticated);
+    return null;
+  }
+
+  // result.kind === 'failed'
+  process.stderr.write(
+    'Automatic re-authentication failed. Run `aitcc login` to start a new session.\n',
+  );
+  emitNotAuthenticated(json);
+  await exitAfterFlush(ExitCode.NotAuthenticated);
+  return null;
 }
 
 export type ContextSource = 'flag' | 'env' | 'yaml' | 'session';
@@ -453,12 +555,8 @@ export async function resolveAppOrFail(args: {
     flagMiniAppId = parsed;
   }
 
-  const session = await readSession();
-  if (!session) {
-    emitNotAuthenticated(args.json);
-    await exitAfterFlush(ExitCode.NotAuthenticated);
-    return null;
-  }
+  const session = await acquireSessionOrReauth(args.json);
+  if (!session) return null;
 
   let flagWorkspaceId: number | undefined;
   if (args.workspace) {

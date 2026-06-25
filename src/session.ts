@@ -194,6 +194,19 @@ function envSessionActive(): boolean {
   return readSessionFromEnv() !== undefined;
 }
 
+/**
+ * Public predicate: true iff `AITCC_SESSION` env is set and carries a
+ * valid session blob. Exported so callers outside this module (e.g.
+ * `acquireSessionOrReauth` in `commands/_shared.ts`) can detect the
+ * CI/env-session mode without re-implementing the parse+validate logic.
+ *
+ * Never auto-spawn reauth when this returns true — the env path is
+ * intentionally read-only and belongs to CI / external orchestration.
+ */
+export function isEnvSessionActive(): boolean {
+  return envSessionActive();
+}
+
 function warnEnvFallbackOnce(message: string): void {
   if (envFallbackWarned) return;
   envFallbackWarned = true;
