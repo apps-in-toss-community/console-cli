@@ -319,7 +319,7 @@ describe('CLICK_DEFER_FN selection logic', () => {
 
   it('prefers the clear-variant button when multiple defer candidates exist', () => {
     const buttons: MockButton[] = [
-      { textContent: '90일 뒤에 변경', variant: undefined },
+      { textContent: '90일 뒤에 변경' },
       { textContent: '90일 뒤에 변경 (나중에)', variant: 'clear' },
       { textContent: '2차인증하고 변경하기', variant: 'fill' },
     ];
