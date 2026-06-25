@@ -3,6 +3,7 @@ import { isLoginLanding } from './commands/login.js';
 import {
   __test,
   bodyIndicatesStepUp,
+  isPasswordRotationInterstitial,
   SPOOFED_USER_AGENT,
   STEP_UP_BODY_PATTERN,
   STEP_UP_URL_PATTERN,
@@ -123,6 +124,68 @@ describe('step-up patterns are anchored to expectations', () => {
   });
 });
 
+describe('isPasswordRotationInterstitial', () => {
+  it('matches the exact interstitial URL observed in the wild', () => {
+    expect(
+      isPasswordRotationInterstitial(
+        'https://business.toss.im/change-password-for-security?redirect_url=https%3A%2F%2Fbusiness.toss.im%2Foauth2%2Fauthorize%3Fstate%3D%2Fworkspace',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches the interstitial path regardless of query string', () => {
+    expect(
+      isPasswordRotationInterstitial('https://business.toss.im/change-password-for-security'),
+    ).toBe(true);
+  });
+
+  it('is case-insensitive on the pathname', () => {
+    expect(
+      isPasswordRotationInterstitial('https://business.toss.im/Change-Password-For-Security'),
+    ).toBe(true);
+  });
+
+  it('matches when the path is a sub-path of the interstitial route', () => {
+    expect(
+      isPasswordRotationInterstitial(
+        'https://business.toss.im/change-password-for-security/confirm',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT match a different path on business.toss.im', () => {
+    expect(isPasswordRotationInterstitial('https://business.toss.im/account/sign-in')).toBe(false);
+  });
+
+  it('does NOT match a different host even if the path matches', () => {
+    expect(
+      isPasswordRotationInterstitial('https://apps-in-toss.toss.im/change-password-for-security'),
+    ).toBe(false);
+  });
+
+  it('does NOT match the workspace landing URL', () => {
+    expect(isPasswordRotationInterstitial('https://apps-in-toss.toss.im/workspace')).toBe(false);
+  });
+
+  // Regression guard: the OAuth sign-in URL has redirect_uri in its query
+  // string. The encoded value may contain path-like substrings; confirm that
+  // pathname-only matching prevents a false positive.
+  it('does NOT match the sign-in URL whose redirect_uri contains the path as encoded fragment', () => {
+    expect(
+      isPasswordRotationInterstitial(
+        'https://business.toss.im/account/sign-in' +
+          '?client_id=4uktpjgqd0cp9txybqzuxc2y6w0cuupb' +
+          '&redirect_uri=https%3A%2F%2Fapps-in-toss.toss.im%2Fsign-up' +
+          '&state=%2Fworkspace',
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false for malformed URLs instead of throwing', () => {
+    expect(isPasswordRotationInterstitial('not a url')).toBe(false);
+  });
+});
+
 describe('isLoginLanding interplay (sanity)', () => {
   // Reaffirm the rule that drives the headless poll loop's success
   // signal — it has to keep matching the workspace URL, and
@@ -188,5 +251,132 @@ describe('FILL_AND_SUBMIT_FN is robust to selector drift', () => {
   it('falls back to button text when type=submit is not set', () => {
     expect(__test.FILL_AND_SUBMIT_FN).toContain('로그인');
     expect(__test.FILL_AND_SUBMIT_FN).toContain('sign-?in');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLICK_DEFER_FN — 90-day password-rotation interstitial defer button
+// ─────────────────────────────────────────────────────────────────────────────
+// The eval string runs in-browser via CDP. To test the selection logic
+// without a DOM runtime we wrap the eval in a factory that accepts a mock
+// `document.querySelectorAll` so we can exercise it purely in Node.
+
+interface MockButton {
+  textContent: string;
+  disabled?: boolean;
+  variant?: string;
+  clicked?: boolean;
+}
+
+function runDeferFnWith(buttons: MockButton[]): {
+  ok: boolean;
+  reason?: string;
+  clickedText?: string;
+} {
+  // Build a minimal mock DOM.
+  const mockElements = buttons.map((b) => ({
+    textContent: b.textContent,
+    disabled: b.disabled ?? false,
+    getAttribute: (attr: string) =>
+      attr === 'data-tds-desktop-button-variant' ? (b.variant ?? null) : null,
+    click: () => {
+      b.clicked = true;
+    },
+  }));
+
+  const mockDoc = {
+    querySelectorAll: (_sel: string) => mockElements,
+  };
+
+  // Evaluate the inner function body with a replaced `document` reference.
+  // We inject a `document` local so `querySelectorAll` resolves correctly.
+  const src = __test.CLICK_DEFER_FN.replace(
+    /document\.querySelectorAll/g,
+    '__doc.querySelectorAll',
+  );
+
+  // eslint-disable-next-line no-new-func -- intentional: testing eval-string logic without real DOM
+  const fn = new Function('__doc', `return (${src})()`) as (d: typeof mockDoc) => {
+    ok: boolean;
+    reason?: string;
+    clickedText?: string;
+  };
+  return fn(mockDoc);
+}
+
+describe('CLICK_DEFER_FN selection logic', () => {
+  it('clicks the defer button and returns ok=true with clickedText', () => {
+    const buttons: MockButton[] = [
+      { textContent: '90일 뒤에 변경', variant: 'clear' },
+      { textContent: '2차인증하고 변경하기', variant: 'fill' },
+    ];
+    const result = runDeferFnWith(buttons);
+    expect(result.ok).toBe(true);
+    expect(result.clickedText).toContain('90일');
+    expect(buttons[0]?.clicked).toBe(true);
+    expect(buttons[1]?.clicked).toBeUndefined();
+  });
+
+  it('prefers the clear-variant button when multiple defer candidates exist', () => {
+    const buttons: MockButton[] = [
+      { textContent: '90일 뒤에 변경', variant: undefined },
+      { textContent: '90일 뒤에 변경 (나중에)', variant: 'clear' },
+      { textContent: '2차인증하고 변경하기', variant: 'fill' },
+    ];
+    const result = runDeferFnWith(buttons);
+    expect(result.ok).toBe(true);
+    expect(result.clickedText).toContain('나중에');
+    expect(buttons[1]?.clicked).toBe(true);
+    expect(buttons[0]?.clicked).toBeUndefined();
+  });
+
+  it('returns ok=false reason=only-danger-button when ONLY the danger button is present', () => {
+    const buttons: MockButton[] = [{ textContent: '2차인증하고 변경하기', variant: 'fill' }];
+    const result = runDeferFnWith(buttons);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('only-danger-button');
+    expect(buttons[0]?.clicked).toBeUndefined();
+  });
+
+  it('returns ok=false reason=defer-not-found when no buttons match at all', () => {
+    const result = runDeferFnWith([]);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defer-not-found');
+  });
+
+  it('HARD SAFETY: never selects a button whose text contains "2차인증"', () => {
+    // The eval must structurally refuse to click the danger button even
+    // when no safe defer candidate is present.
+    const danger: MockButton = { textContent: '2차인증하고 변경하기' };
+    const result = runDeferFnWith([danger]);
+    expect(result.ok).toBe(false);
+    // The danger button must NOT have been clicked.
+    expect(danger.clicked).toBeUndefined();
+  });
+
+  it('HARD SAFETY: the eval string contains the negated 2차인증 guard', () => {
+    // Pin the guard text so a future refactor can't accidentally drop it.
+    expect(__test.CLICK_DEFER_FN).toContain('2차인증');
+    expect(__test.CLICK_DEFER_FN).toContain('인증하고변경');
+  });
+
+  it('matches "뒤에 변경" text variant in addition to "90일"', () => {
+    const buttons: MockButton[] = [
+      { textContent: '뒤에 변경할게요' },
+      { textContent: '2차인증하고 변경하기' },
+    ];
+    const result = runDeferFnWith(buttons);
+    expect(result.ok).toBe(true);
+    expect(buttons[0]?.clicked).toBe(true);
+  });
+
+  it('returns ok=false reason=defer-disabled when the defer button is disabled', () => {
+    const buttons: MockButton[] = [
+      { textContent: '90일 뒤에 변경', disabled: true },
+      { textContent: '2차인증하고 변경하기' },
+    ];
+    const result = runDeferFnWith(buttons);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('defer-disabled');
   });
 });

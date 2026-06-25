@@ -800,12 +800,17 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
         message: 'No credentials available; switching to interactive login.',
       };
     }
+    // Expose the submit-observation window explicitly so A1's honest
+    // message can reference the real per-stage budget rather than the
+    // overall --timeout value.
+    const submitObservationMs = 30_000;
     let outcome: HeadlessLoginOutcome;
     try {
       outcome = await runHeadlessLogin({
         client,
         sessionId: attached.sessionId,
         credentials: { email: credentials.email, password: credentials.password },
+        submitObservationMs,
         stepUpTimeoutMs: timeoutMs,
         onStepUp: () =>
           process.stderr.write(
@@ -831,9 +836,22 @@ async function attemptLogin(opts: AttemptOptions): Promise<AttemptResult> {
       };
     }
     if (outcome.kind === 'timeout') {
+      // A1: report the actual per-stage window, not the overall --timeout.
+      const actualSec = Math.floor(outcome.observedMs / 1000);
+      if (outcome.stage === 'submit') {
+        // A3: submit-stage timeout falls back to interactive so the user
+        // can complete the login manually in a visible browser window.
+        await disposeAll();
+        return {
+          status: 'fallback-to-interactive',
+          message: `Headless login timed out after ${actualSec}s (submit), falling back to interactive.`,
+        };
+      }
+      // step-up timeout: the user was told to act in the Toss app and did
+      // not — treat as a hard failure (not a fallback).
       emitError(
-        { reason: 'login-timeout', timeoutSec: Math.floor(timeoutMs / 1000), stage: outcome.stage },
-        `Login timed out after ${Math.floor(timeoutMs / 1000)}s (${outcome.stage}).`,
+        { reason: 'login-timeout', timeoutSec: actualSec, stage: outcome.stage },
+        `Login timed out after ${actualSec}s (${outcome.stage}).`,
       );
       await disposeAll();
       return { status: 'exit', code: ExitCode.LoginTimeout };
