@@ -48,3 +48,7 @@ export function cacheDir(): string {
 export function upgradeCheckPath(): string {
   return join(cacheDir(), 'upgrade-check.json');
 }
+
+export function completionSuggestedPath(): string {
+  return join(cacheDir(), 'completion-suggested.json');
+}
