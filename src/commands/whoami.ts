@@ -6,6 +6,7 @@ import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession, sessionPathForDiagnostics } from '../session.js';
 import { maybeCheckForUpdate } from '../update-check.js';
+import { withReauthRetry } from './_shared.js';
 
 // Resolve the credential source label without loading the password from disk.
 // Returns `null` when nothing is configured so the JSON shape can stay compact.
@@ -132,14 +133,12 @@ export const whoamiCommand = defineCommand({
     }
 
     try {
-      const [infoR, gateR] = await Promise.allSettled([
-        fetchConsoleMemberUserInfo(session.cookies),
-        probeAiRiskTerms(session.cookies),
-      ]);
-      if (infoR.status === 'rejected') throw infoR.reason;
-      const info = infoR.value;
-      const gate: AiRiskTermsState =
-        gateR.status === 'fulfilled' ? gateR.value : { status: 'unknown' };
+      const info = await withReauthRetry(args.json, session, (s) =>
+        fetchConsoleMemberUserInfo(s.cookies),
+      );
+      const gate: AiRiskTermsState = await probeAiRiskTerms(session.cookies).catch(
+        () => ({ status: 'unknown' }) as AiRiskTermsState,
+      );
 
       if (args.json) {
         process.stdout.write(

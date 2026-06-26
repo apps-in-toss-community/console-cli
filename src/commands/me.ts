@@ -9,7 +9,12 @@ import {
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
 import { readSession } from '../session.js';
-import { emitFailureFromError, emitJson, emitNotAuthenticated } from './_shared.js';
+import {
+  emitFailureFromError,
+  emitJson,
+  emitNotAuthenticated,
+  withReauthRetry,
+} from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -105,9 +110,11 @@ const termsShowCommand = defineCommand({
       return exitAfterFlush(ExitCode.NotAuthenticated);
     }
     try {
-      const terms = await fetchUserTerms(session.cookies, {
-        ...(scope !== null ? { scope } : {}),
-      });
+      const terms = await withReauthRetry(args.json, session, (s) =>
+        fetchUserTerms(s.cookies, {
+          ...(scope !== null ? { scope } : {}),
+        }),
+      );
       if (args.json) {
         emitJson({ ok: true, scope, terms });
         return exitAfterFlush(ExitCode.Ok);

@@ -51,6 +51,24 @@ export class TossApiError extends Error {
   get isAuthError(): boolean {
     return this.status === 401 || this.errorCode === '4010';
   }
+
+  /**
+   * Country-bound KR-cookie rejection. The session blob is structurally valid
+   * but the origin IP is outside Korea. Re-authentication is a guaranteed
+   * no-op — the same cookies will be rejected again from a non-KR IP.
+   */
+  get isGeoBlocked(): boolean {
+    return this.errorCode === '4010';
+  }
+
+  /**
+   * Genuine expired/invalidated session (not a geo-block). This is the only
+   * case where transparent re-authentication with saved file credentials may
+   * succeed and is therefore the only trigger for `withReauthRetry`.
+   */
+  get isExpiredSession(): boolean {
+    return this.isAuthError && !this.isGeoBlocked;
+  }
 }
 
 export class NetworkError extends Error {

@@ -16,6 +16,7 @@ import {
   formatAiRiskPreflightWarning,
   printContextHeader,
   resolveWorkspaceContext,
+  withReauthRetry,
 } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
@@ -145,7 +146,9 @@ const lsCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const keys = await fetchApiKeys(workspaceId, session.cookies);
+      const keys = await withReauthRetry(args.json, session, (s) =>
+        fetchApiKeys(workspaceId, s.cookies),
+      );
       if (args.json) {
         emitJson({
           ok: true,
