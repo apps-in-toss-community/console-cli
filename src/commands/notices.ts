@@ -2,7 +2,7 @@ import { defineCommand } from 'citty';
 import { fetchNoticeCategories, fetchNoticePost, fetchNotices } from '../api/ipd-thor.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
-import { emitFailureFromError, emitJson, requireSession } from './_shared.js';
+import { emitFailureFromError, emitJson, requireSession, withReauthRetry } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
 //
@@ -77,15 +77,17 @@ const lsCommand = defineCommand({
     }
 
     try {
-      const result = await fetchNotices(
-        {
-          page: pageResult.value,
-          size: sizeResult.value,
-          ...(typeof args.search === 'string' && args.search.length > 0
-            ? { titleContains: args.search }
-            : {}),
-        },
-        session.cookies,
+      const result = await withReauthRetry(args.json, session, (s) =>
+        fetchNotices(
+          {
+            page: pageResult.value,
+            size: sizeResult.value,
+            ...(typeof args.search === 'string' && args.search.length > 0
+              ? { titleContains: args.search }
+              : {}),
+          },
+          s.cookies,
+        ),
       );
 
       if (args.json) {
@@ -150,7 +152,9 @@ const showCommand = defineCommand({
     const session = await requireSession(args.json);
     if (!session) return;
     try {
-      const notice = await fetchNoticePost(postId, session.cookies);
+      const notice = await withReauthRetry(args.json, session, (s) =>
+        fetchNoticePost(postId, s.cookies),
+      );
       if (args.json) {
         emitJson({ ok: true, id: postId, notice });
         return exitAfterFlush(ExitCode.Ok);
@@ -189,7 +193,9 @@ const categoriesCommand = defineCommand({
     const session = await requireSession(args.json);
     if (!session) return;
     try {
-      const categories = await fetchNoticeCategories(session.cookies);
+      const categories = await withReauthRetry(args.json, session, (s) =>
+        fetchNoticeCategories(s.cookies),
+      );
       if (args.json) {
         emitJson({ ok: true, categories });
         return exitAfterFlush(ExitCode.Ok);

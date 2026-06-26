@@ -263,6 +263,14 @@ export async function requireSession(json: boolean): Promise<Session | null> {
 
 // --- Dependency injection seams (for testing) ---
 
+// Single source of truth for the reauth breadcrumb text. Both
+// `acquireSessionOrReauth` (session-absent path) and `withReauthRetry`
+// (mid-flight 401 path) emit the same line so the operator sees a
+// consistent signal regardless of which path fired.
+// SECRET-HANDLING: this string must never contain cookies / credentials /
+// full URLs with query strings.
+const REAUTH_BREADCRUMB = 'Session expired — re-authenticating with saved credentials…\n';
+
 export interface AcquireSessionDeps {
   /** Override for readSession — defaults to the real fs-backed reader. */
   readonly readSession?: () => Promise<Session | null>;
@@ -337,7 +345,7 @@ export async function acquireSessionOrReauth(
   }
 
   // 5. File-sourced credentials — attempt ONE headless login.
-  process.stderr.write('Session expired — re-authenticating with saved credentials…\n');
+  process.stderr.write(REAUTH_BREADCRUMB);
 
   const result = await doHeadlessLogin({ email: cred.email, password: cred.password });
 
@@ -363,6 +371,90 @@ export async function acquireSessionOrReauth(
   emitNotAuthenticated(json);
   await exitAfterFlush(ExitCode.NotAuthenticated);
   return null;
+}
+
+/**
+ * Run a read-only API thunk and, on a genuine expired-session 401 (not a
+ * geo-block), attempt exactly ONE transparent re-authentication with saved
+ * file credentials and replay the thunk once with the fresh session.
+ *
+ * Carve-outs (same as `acquireSessionOrReauth`):
+ *   - 4010 (geo-block)    → rethrow; reauth is a guaranteed no-op.
+ *   - AITCC_SESSION active → rethrow; CI controls the session blob.
+ *   - No file credentials → rethrow; nothing to reauth with.
+ *   - Env credentials     → rethrow; single-shot CI injection.
+ *
+ * On terminal reauth failure the original TossApiError is rethrown so the
+ * caller's existing `catch → emitFailureFromError` handler prints "Session
+ * is no longer valid. Run `aitcc login` again." without any change.
+ *
+ * This function is generic over `T` and CANNOT return null on failure — it
+ * either returns `T` or throws. That keeps it a pure enhancement: wrap the
+ * live API call, leave the `catch` block alone.
+ *
+ * MUTATIONS must NOT be wrapped — a replayed mutation could double-submit.
+ * Only read operations (fetch*, list*) belong here.
+ *
+ * The `deps` parameter is an injection seam for unit tests — production
+ * callers leave it undefined and get the real implementations.
+ */
+export async function withReauthRetry<T>(
+  json: boolean,
+  session: Session,
+  run: (session: Session) => Promise<T>,
+  deps?: AcquireSessionDeps,
+): Promise<T> {
+  void json; // intentionally unused — see comment above
+  try {
+    return await run(session);
+  } catch (err) {
+    // Only intercept a genuine expired-session 401, not geo-blocks or other
+    // API / network errors — let those propagate to the caller's catch block.
+    if (!(err instanceof TossApiError) || !err.isExpiredSession) {
+      throw err;
+    }
+
+    // Carve-outs: CI / no-file-creds paths must never auto-spawn reauth.
+    const doLoadCredentials = deps?.loadCredentials ?? loadCredentials;
+
+    if (isEnvSessionActive()) {
+      throw err;
+    }
+    const cred = await doLoadCredentials();
+    if (!cred || cred.kind === 'env') {
+      throw err;
+    }
+
+    // File credentials present — attempt ONE headless login.
+    // SECRET-HANDLING: breadcrumb contains no cookie/credential/URL values.
+    process.stderr.write(REAUTH_BREADCRUMB);
+
+    const doHeadlessLogin =
+      deps?.headlessLogin ??
+      ((input: { email: string; password: string }) =>
+        headlessLoginFromCredentials({ email: input.email, password: input.password }));
+
+    const result = await doHeadlessLogin({ email: cred.email, password: cred.password });
+
+    if (result.kind === 'ok') {
+      // Replay the read exactly once with the fresh session. If the replay
+      // itself throws, propagate without a second reauth attempt.
+      return await run(result.session);
+    }
+
+    if (result.kind === 'step-up-needed') {
+      process.stderr.write(
+        'Re-authentication requires a step-up (Toss app push). ' +
+          'Run `aitcc login` to complete the sign-in interactively.\n',
+      );
+      // Rethrow the original 401 so the caller's emitFailureFromError prints
+      // "Session is no longer valid" and exits with the standard exit code.
+      throw err;
+    }
+
+    // result.kind === 'failed' — rethrow original error.
+    throw err;
+  }
 }
 
 export type ContextSource = 'flag' | 'env' | 'yaml' | 'session';

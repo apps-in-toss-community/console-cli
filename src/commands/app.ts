@@ -43,6 +43,7 @@ import {
   requireMiniAppId,
   resolveAppOrFail,
   resolveWorkspaceContext,
+  withReauthRetry,
 } from './_shared.js';
 import { runDeploy } from './app-deploy.js';
 import { runAppInit } from './app-init.js';
@@ -113,10 +114,12 @@ const lsCommand = defineCommand({
       // currently propagate (rather than being downgraded to "unknown
       // review") because they almost always indicate a shared auth/network
       // problem — if that ever stops being true we can degrade gracefully.
-      const [apps, review] = await Promise.all([
-        fetchMiniApps(workspaceId, session.cookies),
-        fetchReviewStatus(workspaceId, session.cookies),
-      ]);
+      const [apps, review] = await withReauthRetry(args.json, session, (s) =>
+        Promise.all([
+          fetchMiniApps(workspaceId, s.cookies),
+          fetchReviewStatus(workspaceId, s.cookies),
+        ]),
+      );
 
       // The workspace-level review-status entry only exposes serviceStatus +
       // a few flags — not the approvalType/current/draft trio that drives
@@ -490,10 +493,12 @@ const showCommand = defineCommand({
       // best-effort: if it fails we still want the review derivation,
       // which is authoritative on its own (see docs/api/mini-apps.md
       // "REVIEW lock 권위").
-      const [envelope, service] = await Promise.all([
-        fetchMiniAppWithDraft(workspaceId, appId, session.cookies),
-        fetchAppServiceStatus(workspaceId, appId, session.cookies).catch(() => null),
-      ]);
+      const [envelope, service] = await withReauthRetry(args.json, session, (s) =>
+        Promise.all([
+          fetchMiniAppWithDraft(workspaceId, appId, s.cookies),
+          fetchAppServiceStatus(workspaceId, appId, s.cookies).catch(() => null),
+        ]),
+      );
       const derived = deriveReviewState(envelope);
 
       if (args.diff) {
@@ -919,10 +924,12 @@ const statusCommand = defineCommand({
         // cookie and the console backend has no cross-rate-limit we've
         // observed. `service-status` is best-effort: if it fails we still
         // want the review state through.
-        const [env, service] = await Promise.all([
-          fetchMiniAppWithDraft(workspaceId, appId, session.cookies),
-          fetchAppServiceStatus(workspaceId, appId, session.cookies).catch(() => null),
-        ]);
+        const [env, service] = await withReauthRetry(args.json, session, (s) =>
+          Promise.all([
+            fetchMiniAppWithDraft(workspaceId, appId, s.cookies),
+            fetchAppServiceStatus(workspaceId, appId, s.cookies).catch(() => null),
+          ]),
+        );
         return [deriveReviewState(env), service];
       };
 
@@ -1375,17 +1382,19 @@ const bundlesLsCommand = defineCommand({
     const { session, workspaceId } = ctx;
 
     try {
-      const result = await fetchBundles(
-        {
-          workspaceId,
-          miniAppId: appId,
-          page: pageResult.value,
-          ...(tested !== undefined ? { tested } : {}),
-          ...(typeof args['deploy-status'] === 'string' && args['deploy-status'].length > 0
-            ? { deployStatus: args['deploy-status'] }
-            : {}),
-        },
-        session.cookies,
+      const result = await withReauthRetry(args.json, session, (s) =>
+        fetchBundles(
+          {
+            workspaceId,
+            miniAppId: appId,
+            page: pageResult.value,
+            ...(tested !== undefined ? { tested } : {}),
+            ...(typeof args['deploy-status'] === 'string' && args['deploy-status'].length > 0
+              ? { deployStatus: args['deploy-status'] }
+              : {}),
+          },
+          s.cookies,
+        ),
       );
 
       if (args.json) {
@@ -1455,7 +1464,9 @@ const bundlesDeployedCommand = defineCommand({
     const { session, workspaceId } = ctx;
 
     try {
-      const bundle = await fetchDeployedBundle(workspaceId, appId, session.cookies);
+      const bundle = await withReauthRetry(args.json, session, (s) =>
+        fetchDeployedBundle(workspaceId, appId, s.cookies),
+      );
       if (args.json) {
         emitJson({ ok: true, workspaceId, appId, bundle });
         return exitAfterFlush(ExitCode.Ok);

@@ -166,6 +166,24 @@ describe('requestConsoleApi', () => {
     expect(new TossApiError(500, '9999', 'x', 0).isAuthError).toBe(false);
   });
 
+  it('TossApiError.isGeoBlocked fires only for errorCode 4010', () => {
+    // 401 without 4010 → genuine expired session, not a geo-block.
+    expect(new TossApiError(401, '9999', 'x', 0).isGeoBlocked).toBe(false);
+    // 4010 → geo-block regardless of HTTP status.
+    expect(new TossApiError(403, '4010', 'x', 0).isGeoBlocked).toBe(true);
+    // Neither 401 nor 4010 → false.
+    expect(new TossApiError(403, '9999', 'x', 0).isGeoBlocked).toBe(false);
+  });
+
+  it('TossApiError.isExpiredSession is true only for genuine expired sessions (auth but not geo-blocked)', () => {
+    // 401 + no geo-block → expired session, reauth may help.
+    expect(new TossApiError(401, '9999', 'x', 0).isExpiredSession).toBe(true);
+    // 4010 (geo-block) → isAuthError true but isExpiredSession false — reauth is a no-op.
+    expect(new TossApiError(403, '4010', 'x', 0).isExpiredSession).toBe(false);
+    // 403 + unrelated error code → not an auth error at all.
+    expect(new TossApiError(403, '9999', 'x', 0).isExpiredSession).toBe(false);
+  });
+
   it('wraps thrown fetch errors in NetworkError', async () => {
     const fetchImpl: FetchLike = async () => {
       throw new Error('DNS error');

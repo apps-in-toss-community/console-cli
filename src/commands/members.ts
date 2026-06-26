@@ -8,6 +8,7 @@ import {
   parsePositiveInt,
   printContextHeader,
   resolveWorkspaceContext,
+  withReauthRetry,
 } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
@@ -52,7 +53,9 @@ const lsCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const members = await fetchWorkspaceMembers(workspaceId, session.cookies);
+      const members = await withReauthRetry(args.json, session, (s) =>
+        fetchWorkspaceMembers(workspaceId, s.cookies),
+      );
       if (args.json) {
         // `workspaceId` is omitted per-member (redundant with top level)
         // and `isAdult` is intentionally dropped — it is a Korean-specific

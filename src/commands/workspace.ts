@@ -21,6 +21,7 @@ import {
   parsePositiveInt,
   printContextHeader,
   resolveWorkspaceContext,
+  withReauthRetry,
 } from './_shared.js';
 
 // --json contract (consumed by agent-plugin):
@@ -113,7 +114,9 @@ const lsCommand = defineCommand({
       return exitAfterFlush(ExitCode.NotAuthenticated);
     }
     try {
-      const info = await fetchConsoleMemberUserInfo(session.cookies);
+      const info = await withReauthRetry(args.json, session, (s) =>
+        fetchConsoleMemberUserInfo(s.cookies),
+      );
       const current = session.currentWorkspaceId;
       if (args.json) {
         const workspaces = info.workspaces.map((w) => ({
@@ -176,7 +179,9 @@ const useCommand = defineCommand({
     // one, so a workspace added after login is visible here. Only the
     // detail endpoint (not called here) could still 403 after this check.
     try {
-      const info = await fetchConsoleMemberUserInfo(session.cookies);
+      const info = await withReauthRetry(args.json, session, (s) =>
+        fetchConsoleMemberUserInfo(s.cookies),
+      );
       const match = info.workspaces.find((w) => w.workspaceId === parsed);
       if (!match) {
         if (args.json) {
@@ -235,7 +240,9 @@ const showCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const detail = await fetchWorkspaceDetail(workspaceId, session.cookies);
+      const detail = await withReauthRetry(args.json, session, (s) =>
+        fetchWorkspaceDetail(workspaceId, s.cookies),
+      );
       if (args.json) {
         emitJson({
           ok: true,
@@ -277,7 +284,9 @@ const partnerCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const state = await fetchWorkspacePartner(workspaceId, session.cookies);
+      const state = await withReauthRetry(args.json, session, (s) =>
+        fetchWorkspacePartner(workspaceId, s.cookies),
+      );
       if (args.json) {
         emitJson({
           ok: true,
@@ -403,9 +412,11 @@ const termsShowCommand = defineCommand({
       // default) groups results by type so consumers don't have to call
       // five times. Fire them in parallel — each is an independent GET
       // and the server has no cross-bucket rate-limit we've observed.
-      const results = await Promise.all(
-        typesToQuery.map(
-          async (t) => [t, await fetchWorkspaceTerms(workspaceId, t, session.cookies)] as const,
+      const results = await withReauthRetry(args.json, session, (s) =>
+        Promise.all(
+          typesToQuery.map(
+            async (t) => [t, await fetchWorkspaceTerms(workspaceId, t, s.cookies)] as const,
+          ),
         ),
       );
 
@@ -797,14 +808,16 @@ const segmentsLsCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const page = await fetchWorkspaceSegments(
-        {
-          workspaceId,
-          ...(args.category !== undefined ? { category: String(args.category) } : {}),
-          ...(args.search !== undefined ? { search: String(args.search) } : {}),
-          page: pageNum,
-        },
-        session.cookies,
+      const page = await withReauthRetry(args.json, session, (s) =>
+        fetchWorkspaceSegments(
+          {
+            workspaceId,
+            ...(args.category !== undefined ? { category: String(args.category) } : {}),
+            ...(args.search !== undefined ? { search: String(args.search) } : {}),
+            page: pageNum,
+          },
+          s.cookies,
+        ),
       );
       const category = args.category !== undefined ? String(args.category) : '생성된 세그먼트';
       if (args.json) {
