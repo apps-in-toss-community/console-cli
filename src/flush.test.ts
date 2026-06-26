@@ -1,24 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the update-notice hook so we can assert exitAfterFlush invokes it,
-// without touching the network or a real cache.
+// Mock the update-notice hook and completion-hint hook so we can assert
+// exitAfterFlush invokes both, without touching the network or a real cache.
 const order: string[] = [];
 const runUpdateNoticeOnExit = vi.fn(async () => {
   order.push('notice');
 });
 vi.mock('./update-notice-hook.js', () => ({ runUpdateNoticeOnExit }));
 
-// Import AFTER the mock is registered.
+const maybeSuggestCompletionOnExit = vi.fn(async () => {
+  order.push('completion-hint');
+});
+vi.mock('./completion-hint.js', () => ({ maybeSuggestCompletionOnExit }));
+
+// Import AFTER the mocks are registered.
 const { exitAfterFlush } = await import('./flush.js');
 
 describe('exitAfterFlush', () => {
   afterEach(() => {
     order.length = 0;
     runUpdateNoticeOnExit.mockClear();
+    maybeSuggestCompletionOnExit.mockClear();
     vi.restoreAllMocks();
   });
 
-  it('runs the update notice, then exits with the given code', async () => {
+  it('runs the update notice, then the completion hint, then exits with the given code', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       order.push(`exit:${code}`);
       // Throw to unwind the never-returning function so the test can continue.
@@ -27,10 +33,10 @@ describe('exitAfterFlush', () => {
 
     await expect(exitAfterFlush(7)).rejects.toThrow('__exit_7__');
 
-    // The notice must run, and it must run BEFORE process.exit so its stderr
-    // write isn't truncated by the exiting process.
+    // Both hooks must run, in order, BEFORE process.exit.
     expect(runUpdateNoticeOnExit).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(['notice', 'exit:7']);
+    expect(maybeSuggestCompletionOnExit).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['notice', 'completion-hint', 'exit:7']);
     expect(exitSpy).toHaveBeenCalledWith(7);
   });
 
@@ -43,5 +49,6 @@ describe('exitAfterFlush', () => {
     }) as never);
     await expect(exitAfterFlush(0)).rejects.toThrow('__exit_0__');
     expect(runUpdateNoticeOnExit).toHaveBeenCalledTimes(1);
+    expect(maybeSuggestCompletionOnExit).toHaveBeenCalledTimes(1);
   });
 });
