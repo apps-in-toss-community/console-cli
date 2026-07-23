@@ -2,13 +2,16 @@
 
 `<base>` = `https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole`
 
-미니앱의 인앱 광고(IAA) 지면(placement group) 목록과 어뷰징/노출차단 상태 조회 endpoint 묶음. 앱-scope라는 점에서 [`in-app-purchase.md`](./in-app-purchase.md)와 같은 축이고, 워크스페이스 레벨의 "프로모션 머니"([`workspaces.md`](./workspaces.md) "promotion-money")와는 다른 도메인이다 — 프로모션 머니는 워크스페이스가 **자사 앱을 홍보하려고 지출**하는 예산, IAA는 **인앱 광고를 노출해 벌어들이는 수익** 축이다.
+미니앱의 인앱 광고(IAA) 지면(placement group) 목록·생성과 어뷰징/노출차단 상태 조회 endpoint 묶음. 앱-scope라는 점에서 [`in-app-purchase.md`](./in-app-purchase.md)와 같은 축이고, 워크스페이스 레벨의 "프로모션 머니"([`workspaces.md`](./workspaces.md) "promotion-money")와는 다른 도메인이다 — 프로모션 머니는 워크스페이스가 **자사 앱을 홍보하려고 지출**하는 예산, IAA는 **인앱 광고를 노출해 벌어들이는 수익** 축이다.
+
+**Toss 자동 미디에이션**: 인앱광고 지면 생성에는 개발자의 Google AdMob 계정이 필요 없다 — 미디에이션/waterfall 구성을 Toss가 앱 카테고리 기준으로 자동으로 해 준다(공식문서 + 콘솔 SPA 정적 분석 교차 확인, 2026-07-24, issue #229). 생성 바디에 `mediationGroupId`/`adUnitId`/`spaceUnitId`/`spaceUnitName` 류의 AdMob 키가 전혀 없는 것도 이 때문이다.
 
 ## 색인
 
 | Method | Path | 용도 | 상태 |
 |---|---|---|---|
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/placement-groups` | 광고 지면 목록 | ✅ confirmed |
+| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/placement-group` | 광고 지면 생성 (단수형 path 주의) | ⚠️ inferred (body) |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/abuse-status` | 어뷰징/노출차단 상태 | ✅ confirmed |
 
 ## `GET .../in-app-ads-v2/placement-groups` — 광고 지면 목록
@@ -24,6 +27,38 @@
 ```
 
 지면이 등록된 이후의 entry shape은 미관측 — CLI는 각 항목을 opaque `Record<string, unknown>`로 통과시키고, 사람이 읽는 출력은 `id`/`name`/`status` 필드가 있으면 그것만 best-effort로 뽑아 보여준다 (없으면 `-`).
+
+## `POST .../in-app-ads-v2/placement-group` — 광고 지면 생성
+
+- **Used by**: [`src/api/in-app-ads.ts#createAdsPlacementGroup`](../../src/api/in-app-ads.ts), `aitcc app ads placement-groups create`
+- **Capture status**: ⚠️ inferred — request body는 콘솔 SPA의 지면 생성 위저드 폼→바디 직렬화 로직 + 공식문서(`developers-apps-in-toss.toss.im/ads/*`) 교차 확인으로 복원(issue #229). **응답은 물론 request 자체도 라이브로 호출된 적이 없다** (SECRET-HANDLING: 이 endpoint는 read-only가 아니라 실제 광고 지면을 생성하는 mutation이라, 메인테이너 승인 게이트(`--confirm`) 뒤에서만 실행된다).
+- **경로 주의**: 목록(`placement-groups`, 복수형)과 달리 생성은 **단수형** `placement-group` path.
+
+### placement-group create — inferred body shape
+
+```ts
+{
+  displayName: string,                 // 지면 이름, <=40자, 필수
+  adFormat: 'BANNER' | 'INTERSTITIAL' | 'REWARDED',   // 필수
+  categoryId?: number,                 // adFormat !== 'BANNER'일 때만 필수 (category.id)
+  rewardSettings?: { unitType: string, unitAmount: number },  // adFormat === 'REWARDED'일 때만
+  adStyles?: ['NORMAL' | 'NATIVE_IMAGE'],  // adFormat === 'BANNER'일 때만, 1개짜리 배열
+}
+```
+
+- **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 상태는 `state: "REGISTERING"`이고, 구글 광고 시스템 반영까지 **최대 2시간** 걸리는 비동기 처리다.
+- **실서빙 게이트**: 지면을 만들었다고 바로 광고가 노출되는 게 아니다 — 사업자 등록·정산 승인이 인앱광고의 선행조건이다(`aitcc workspace business-verification show`로 확인). CLI는 생성 성공 메시지에 이 게이트를 함께 안내한다.
+- **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인).
+
+### category 후보 조회 — 미해결 (issue #229)
+
+`adFormat !== 'BANNER'`일 때 필요한 `categoryId`의 **유효 후보 목록을 반환하는 GET 엔드포인트를 아직 찾지 못했다**. 시도한 경로:
+
+- 공식 개발자 문서(`developers-apps-in-toss.toss.im/ads/intro.html`, `/ads/develop.html`, `IntegratedAd.html` bedrock reference)를 WebFetch로 확인: 광고 정책·유형별 가이드·테스트 ID는 문서화돼 있지만 categoryId 후보 목록/조회 API는 언급이 없다.
+- issue #229의 create 계약 확정 작업(콘솔 SPA 생성 위저드 직렬화 로직 정적 분석)은 body 필드명 복원이 목적이라 별도 category-list GET route까지는 훑지 않았다 — 전용 정적 분석이 필요한 남은 작업.
+- 미니앱 등록용 `impression/category-list`([`impression.md`](./impression.md))는 **다른 도메인**이다 — 그건 미니앱 자체의 노출 카테고리(`impression.categoryIds`)고, 광고 지면의 `categoryId`와는 별개 taxonomy로 보인다(혼동 주의).
+
+라이브 콘솔에 인증된 API 호출을 넣어 이 경로를 탐색하는 건 이번 작업 범위 밖(SECRET-HANDLING 정책상 mutation 인접 탐색은 메인테이너 승인 흐름을 거친다)이라, **CLI는 `--category`를 항상 필수 입력으로 요구**하고 `--help` 텍스트에 "콘솔의 지면 생성 화면에서 유효 category id를 확인하라"는 안내를 붙였다. 후속 세션이 콘솔 SPA를 category-list 관점으로 재분석하거나, 콘솔 UI에서 직접 확인하거나, 라이브 생성 첫 시도의 에러 메시지로 후보를 역추적하면 이 섹션을 갱신한다.
 
 ## `GET .../in-app-ads-v2/abuse-status` — 어뷰징/노출차단 상태
 
@@ -50,5 +85,7 @@
 
 ## 짝 문서
 
-- [`in-app-purchase.md`](./in-app-purchase.md) — 같은 앱-scope 패턴(`workspaces/<wid>/mini-app/<mini_app_id>/...`)을 쓰는 인앱결제 도메인.
+- [`in-app-purchase.md`](./in-app-purchase.md) — 같은 앱-scope 패턴(`workspaces/<wid>/mini-app/<mini_app_id>/...`)을 쓰는 인앱결제 도메인. `products create`도 이번 `placement-groups create`와 같은 "⚠️ inferred body + `--confirm` mutation 게이트" 패턴.
 - [`workspaces.md`](./workspaces.md) "promotion-money" — 워크스페이스 레벨의 자사 앱 홍보 지출 축(IAA 수익과는 다른 축이니 혼동 주의).
+- [`impression.md`](./impression.md) — 미니앱 등록용 노출 카테고리(`impression.categoryIds`) 조회. 광고 지면의 `categoryId`와는 다른 taxonomy(위 "category 후보 조회" 참고).
+- [`workspaces.md`](./workspaces.md) "business-verification" (`aitcc workspace business-verification show`) — 인앱광고 실서빙의 선행조건인 사업자·정산 승인 상태 확인.
