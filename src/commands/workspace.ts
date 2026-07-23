@@ -1,6 +1,11 @@
 import { defineCommand } from 'citty';
+import { fetchBusinessVerificationLicense } from '../api/business-verification.js';
 import { NetworkError, TossApiError } from '../api/http.js';
 import { fetchConsoleMemberUserInfo } from '../api/me.js';
+import {
+  fetchPromotionMoneyBalance,
+  fetchPromotionMoneyHistories,
+} from '../api/promotion-money.js';
 import {
   agreeWorkspaceTerms,
   fetchWorkspaceDetail,
@@ -85,6 +90,28 @@ import {
 //     { ok: false, reason: 'invalid-page', message }                                exit 2
 //     { ok: false, reason: 'no-workspace-selected' }                                exit 2
 //     { ok: false, reason: 'invalid-id', message }                                  exit 2
+//
+//   workspace promotion-money show [--page N] [--workspace <id>]:
+//     { ok: true, workspaceId, balance, availableBalance,
+//       page, totalPage, currentPage, histories: [...] }                            exit 0
+//     { ok: false, reason: 'invalid-page', message }                                exit 2
+//     { ok: false, reason: 'no-workspace-selected' }                                exit 2
+//     { ok: false, reason: 'invalid-id', message }                                  exit 2
+//
+//   Promotion money is spend the workspace commits to promoting its OWN
+//   apps — a different axis from IAA ad revenue (`aitcc app ads`). Do not
+//   confuse the two when reading `balance`.
+//
+//   workspace business-verification show [--workspace <id>]:
+//     { ok: true, workspaceId,
+//       businessLicense: { registered, errorCode },
+//       partner: { registered, approvalType, rejectMessage } }                       exit 0
+//     { ok: false, reason: 'no-workspace-selected' }                                exit 2
+//     { ok: false, reason: 'invalid-id', message }                                  exit 2
+//
+//   `businessLicense.errorCode: 500` means "license not registered yet" — a
+//   business-level diagnostic embedded in a SUCCESS envelope, not a
+//   transport failure (see src/api/business-verification.ts).
 //
 // Every workspace subcommand inherits the standard auth failure modes from
 // whoami: { ok: true, authenticated: false } exit 10, network-error exit 11,
@@ -913,6 +940,184 @@ const segmentsCommand = defineCommand({
   },
 });
 
+// --- promotion-money ---
+//
+// "프로모션 머니" — the budget a workspace spends promoting its OWN apps
+// inside Toss. This is a DIFFERENT axis from `aitcc app ads` (IAA, revenue
+// earned by serving ads inside a mini-app) — the command description below
+// says so explicitly so the two are never conflated at the CLI surface.
+
+const promotionMoneyShowCommand = defineCommand({
+  meta: {
+    name: 'show',
+    description:
+      '워크스페이스의 프로모션 머니(자사 앱 홍보 지출 예산) 잔액과 사용 내역을 조회한다. ' +
+      'IAA 광고수익(`aitcc app ads`, 인앱 광고 노출로 벌어들이는 수익)과는 다른 축이니 혼동 주의.',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID to inspect. Defaults to the selected workspace.',
+    },
+    page: {
+      type: 'string',
+      description: 'History page number (0-indexed).',
+      default: '0',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const pageRaw = String(args.page);
+    const pageNum = Number(pageRaw);
+    if (!Number.isFinite(pageNum) || !Number.isInteger(pageNum) || pageNum < 0) {
+      const message = `--page must be a non-negative integer (got ${JSON.stringify(pageRaw)})`;
+      if (args.json) emitJson({ ok: false, reason: 'invalid-page', message });
+      else process.stderr.write(`${message}\n`);
+      return exitAfterFlush(ExitCode.Usage);
+    }
+
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
+
+    try {
+      const [balance, historyPage] = await withReauthRetry(args.json, session, (s) =>
+        Promise.all([
+          fetchPromotionMoneyBalance(workspaceId, s.cookies),
+          fetchPromotionMoneyHistories({ workspaceId, page: pageNum }, s.cookies),
+        ]),
+      );
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          balance: balance.balance,
+          availableBalance: balance.availableBalance,
+          page: pageNum,
+          totalPage: historyPage.totalPage,
+          currentPage: historyPage.currentPage,
+          histories: historyPage.contents,
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      process.stdout.write(
+        `Workspace ${workspaceId} promotion money (자사 앱 홍보 지출 축 — IAA 광고수익과는 다름):\n`,
+      );
+      process.stdout.write(`  balance: ${balance.balance}\n`);
+      process.stdout.write(`  availableBalance: ${balance.availableBalance}\n`);
+      if (historyPage.contents.length === 0) {
+        process.stdout.write('  histories: (none)\n');
+      } else {
+        process.stdout.write(
+          `  histories: ${historyPage.contents.length} entr${historyPage.contents.length === 1 ? 'y' : 'ies'} (page ${historyPage.currentPage + 1}/${Math.max(historyPage.totalPage, 1)})\n`,
+        );
+        for (const h of historyPage.contents) {
+          process.stdout.write(`    ${JSON.stringify(h)}\n`);
+        }
+      }
+      if (balance.availableBalance === 0) {
+        process.stdout.write(
+          '자사 앱 홍보 캠페인을 운영하려면 콘솔에서 프로모션 머니를 충전하세요.\n',
+        );
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const promotionMoneyCommand = defineCommand({
+  meta: {
+    name: 'promotion-money',
+    description:
+      '워크스페이스의 프로모션 머니(자사 앱 홍보 지출 축 — IAA 광고수익과는 다름) 상태를 조회한다.',
+  },
+  subCommands: {
+    show: promotionMoneyShowCommand,
+  },
+});
+
+// --- business-verification ---
+
+const businessVerificationShowCommand = defineCommand({
+  meta: {
+    name: 'show',
+    description:
+      '워크스페이스의 사업자 라이선스 인증 상태를 조회하고, 파트너(빌링/정산 주체) 등록 상태와 묶어 하나의 리포트로 보여준다.',
+  },
+  args: {
+    workspace: {
+      type: 'string',
+      description: 'Workspace ID to inspect. Defaults to the selected workspace.',
+    },
+    json: { type: 'boolean', description: 'Emit machine-readable JSON to stdout.', default: false },
+  },
+  async run({ args }) {
+    const ctx = await resolveWorkspaceContext(args);
+    if (!ctx) return;
+    const { session, workspaceId } = ctx;
+    printContextHeader(ctx, { json: args.json });
+
+    try {
+      const [license, isRegistered] = await withReauthRetry(args.json, session, (s) =>
+        Promise.all([
+          fetchBusinessVerificationLicense(workspaceId, s.cookies),
+          fetchWorkspacePartnerIsRegistered(workspaceId, s.cookies),
+        ]),
+      );
+
+      if (args.json) {
+        emitJson({
+          ok: true,
+          workspaceId,
+          businessLicense: { registered: license.registered, errorCode: license.errorCode },
+          partner: {
+            registered: isRegistered.registered,
+            approvalType: isRegistered.approvalType,
+            rejectMessage: isRegistered.rejectMessage,
+          },
+        });
+        return exitAfterFlush(ExitCode.Ok);
+      }
+
+      process.stdout.write(`Workspace ${workspaceId} business verification:\n`);
+      if (license.registered) {
+        process.stdout.write('  business license: 등록됨\n');
+      } else {
+        process.stdout.write(
+          `  business license: 미등록 (errorCode ${license.errorCode ?? 'unknown'} — 사업자 라이선스 미등록)\n`,
+        );
+      }
+      process.stdout.write(
+        `  partner: registered=${isRegistered.registered}, approvalType=${isRegistered.approvalType ?? 'null'}\n`,
+      );
+      if (!license.registered) {
+        process.stdout.write('콘솔에서 사업자 라이선스 인증 절차를 먼저 진행하세요.\n');
+      }
+      if (!isRegistered.registered) {
+        process.stdout.write('`aitcc workspace partner`로 파트너 등록 상태를 자세히 확인하세요.\n');
+      }
+      return exitAfterFlush(ExitCode.Ok);
+    } catch (err) {
+      return emitFailureFromError(args.json, err);
+    }
+  },
+});
+
+const businessVerificationCommand = defineCommand({
+  meta: {
+    name: 'business-verification',
+    description: '워크스페이스의 사업자 라이선스 인증 + 파트너 등록 상태를 조회한다.',
+  },
+  subCommands: {
+    show: businessVerificationShowCommand,
+  },
+});
+
 export const workspaceCommand = defineCommand({
   meta: {
     name: 'workspace',
@@ -925,5 +1130,7 @@ export const workspaceCommand = defineCommand({
     partner: partnerCommand,
     terms: termsCommand,
     segments: segmentsCommand,
+    'promotion-money': promotionMoneyCommand,
+    'business-verification': businessVerificationCommand,
   },
 });

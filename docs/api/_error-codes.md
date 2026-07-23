@@ -40,7 +40,7 @@ CLI는 이 코드들을 만나면 별도 redirect 자동화 없이 사용자에�
 | code | 의미 |
 |---|---|
 | `4010` | 인증 만료/없음. HTTP 401과 동치. CLI: `TossApiError.isAuthError === true` → `aitcc login` 재실행 유도. [`src/api/http.ts`](../../src/api/http.ts) 참조. |
-| `500` | 권한 부족(서버측). HTTP 500이 아니라 envelope의 `errorCode: '500'`인 경우가 있다 — 응답 시간이 빠른데 코드만 500이 떨어지면 timeout이 아니라 의도적 거부일 수 있음. mini-app DELETE 케이스에서 관측됨 ([`mini-apps.md`](./mini-apps.md) "DELETE permissions"). |
+| `500` | 권한 부족(서버측). HTTP 500이 아니라 envelope의 `errorCode: '500'`인 경우가 있다 — 응답 시간이 빠른데 코드만 500이 떨어지면 timeout이 아니라 의도적 거부일 수 있음. mini-app DELETE 케이스에서 관측됨 ([`mini-apps.md`](./mini-apps.md) "DELETE permissions"). **다른 계열과 혼동 주의**: `GET /workspaces/<wid>/business-verification/license/data`도 숫자 `500`을 쓰지만 이건 transport-level FAIL envelope이 아니라 **SUCCESS envelope 안에 nest된 business-level 필드**(`{errorCode: 500}` = 사업자 라이선스 미등록)다 — 이 표의 다른 항목들과 도착 경로 자체가 다르니 같은 코드로 뭉뚱그리지 말 것. 상세: [`workspaces.md`](./workspaces.md) "business-verification". |
 
 ### Validation
 

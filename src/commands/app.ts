@@ -46,9 +46,11 @@ import {
   resolveWorkspaceContext,
   withReauthRetry,
 } from './_shared.js';
+import { adsCommand } from './app-ads.js';
 import { runDeploy } from './app-deploy.js';
 import { iapCommand } from './app-iap.js';
 import { runAppInit } from './app-init.js';
+import { payConfigCommand } from './app-pay-config.js';
 import { runRegister } from './register.js';
 
 // --json contract (consumed by agent-plugin):
@@ -3424,6 +3426,8 @@ export const appCommand = defineCommand({
     bundles: bundlesCommand,
     certs: certsCommand,
     iap: iapCommand,
+    ads: adsCommand,
+    'pay-config': payConfigCommand,
     metrics: metricsCommand,
     'share-rewards': shareRewardsCommand,
     messages: messagesCommand,
