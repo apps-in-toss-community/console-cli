@@ -108,41 +108,77 @@ export async function fetchReviewStatus(
   return { hasPolicyViolation, miniApps };
 }
 
-export interface MiniAppWithDraft {
-  readonly current: Record<string, unknown> | null;
-  readonly draft: Record<string, unknown> | null;
-  // Top-level envelope fields (not inside current/draft). Present on every
-  // with-draft response. `approvalType` distinguishes REVIEW-submitted apps
-  // from drafts that haven't been sent for review; `rejectedMessage` is
-  // non-null iff the review came back rejected. Together with `current`
-  // (null until an approved record exists) they derive the UI banner state.
+// `GET /workspaces/:wid/mini-app/:aid/with-draft` 404s as of 2026-07-23
+// (issue #219 — upstream console API path drift; `app ls`/`service-status`/
+// `workspace terms` were unaffected, so this was a targeted move of just the
+// draft-view/review-state read path). The replacement is the plain
+// `GET /workspaces/:wid/mini-app/:aid` endpoint — same path `app ls`'s
+// docs once called "current view", but its response envelope grew richer:
+// instead of returning the app record directly as `success`, it now wraps
+// a `miniApp` record alongside summary flags AND ALSO re-flattens most of
+// that same record's fields directly onto `success` (server-side
+// duplication — `success.miniAppId === success.miniApp.miniAppId`, etc.).
+// Live-confirmed 2026-07-23 on workspace 3095 / app 31146 (APPROVED, no
+// pending draft) — trimmed to the fields we read:
+//
+//   { resultType: "SUCCESS", success: {
+//       isBeforeFirstReview: false, hasApproved: true, hasInReview: false,
+//       hasDraft: false,
+//       miniApp: { miniAppId, title, titleEn, appName, status: "PREPARE",
+//         impression: {...}, images: [...], ... /* no approvalType here */ },
+//       // flat siblings of `miniApp`, NOT inside it:
+//       miniAppId, appName, ... (duplicates of miniApp's own fields),
+//       draft: null, review: null, savedAt: null, datingCheckListPdfUrl: null,
+//       approvalType: "APPROVED", rejectedMessage: null,
+//   } }
+//
+// `approvalType` / `rejectedMessage` live at the top level of `success`,
+// as siblings of `miniApp` — NOT nested inside `miniApp` itself. (An
+// earlier draft of this fix assumed they were nested; a second live probe
+// during verification caught the mistake before it shipped — `ma?.approvalType`
+// would have silently read `undefined` forever.) `hasApproved` plays the
+// role the old `current !== null` check played (only confirmed for the
+// APPROVED case above; not yet observed against a REVIEW/REJECTED app).
+// See docs/api/mini-apps.md for the full capture + the drift history.
+export interface MiniAppDetail {
+  readonly miniApp: Record<string, unknown> | null;
+  readonly isBeforeFirstReview: boolean;
+  readonly hasApproved: boolean;
+  readonly hasInReview: boolean;
+  readonly hasDraft: boolean;
   readonly approvalType: string | null;
   readonly rejectedMessage: string | null;
 }
 
-export async function fetchMiniAppWithDraft(
+export async function fetchMiniAppDetail(
   workspaceId: number,
   miniAppId: number,
   cookies: readonly CdpCookie[],
   opts: { fetchImpl?: FetchLike } = {},
-): Promise<MiniAppWithDraft> {
-  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}/with-draft`;
+): Promise<MiniAppDetail> {
+  const url = `${BASE}/workspaces/${workspaceId}/mini-app/${miniAppId}`;
   const raw = await requestConsoleApi<unknown>({
     url,
     cookies,
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
   });
   if (raw === null || typeof raw !== 'object') {
-    throw new Error(`Unexpected with-draft shape for mini-app=${miniAppId}`);
+    throw new Error(`Unexpected mini-app detail shape for mini-app=${miniAppId}`);
   }
   const rec = raw as Record<string, unknown>;
-  const current = isRecordOrNull(rec.current)
-    ? (rec.current as Record<string, unknown> | null)
+  const miniApp = isRecordOrNull(rec.miniApp)
+    ? (rec.miniApp as Record<string, unknown> | null)
     : null;
-  const draft = isRecordOrNull(rec.draft) ? (rec.draft as Record<string, unknown> | null) : null;
-  const approvalType = typeof rec.approvalType === 'string' ? rec.approvalType : null;
-  const rejectedMessage = typeof rec.rejectedMessage === 'string' ? rec.rejectedMessage : null;
-  return { current, draft, approvalType, rejectedMessage };
+  return {
+    miniApp,
+    isBeforeFirstReview: Boolean(rec.isBeforeFirstReview),
+    hasApproved: Boolean(rec.hasApproved),
+    hasInReview: Boolean(rec.hasInReview),
+    hasDraft: Boolean(rec.hasDraft),
+    // Flat siblings of `miniApp` on `success` — see the doc comment above.
+    approvalType: typeof rec.approvalType === 'string' ? rec.approvalType : null,
+    rejectedMessage: typeof rec.rejectedMessage === 'string' ? rec.rejectedMessage : null,
+  };
 }
 
 function isRecordOrNull(v: unknown): v is Record<string, unknown> | null {

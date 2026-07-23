@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   augmentCertExpiry,
-  compareMiniAppViews,
   deriveDaysUntilExpiry,
   deriveLsStatus,
   deriveReviewState,
@@ -9,6 +8,7 @@ import {
   pickCertById,
   pickMiniAppView,
   reviewStateFor,
+  reviewStateInputFrom,
   serviceStatusFor,
 } from './app.js';
 
@@ -75,62 +75,42 @@ describe('reviewStateFor', () => {
   });
 });
 
-// `pickMiniAppView` is the little helper that decides which side of the
-// /with-draft envelope gets rendered. It matters because until an app is
-// approved, `current` is null while `draft` holds every field the user
-// entered — picking the wrong view is exactly what led us to believe
-// `register` was dropping fields in the first place.
+// `pickMiniAppView` decides what `aitcc app show --view <x>` renders. Up
+// through 0.1.45 this picked between two independently-fetched `current`/
+// `draft` payloads off the `/with-draft` envelope. That endpoint 404s as of
+// issue #219 (upstream path drift) — its replacement (`fetchMiniAppDetail`)
+// returns a single mini-app record plus an envelope-level `hasApproved`
+// flag, so there's no separate draft/current payload to pick between
+// anymore. `draft`/`merged` both resolve to the one available record;
+// `current` reuses `hasApproved` to preserve the old "empty until first
+// approval" contract (so agent-plugin can still tell "not reviewed" apart
+// from "reviewed and published" via `view`).
 describe('pickMiniAppView', () => {
-  const currentSide = { miniApp: { title: 'published', description: 'p' } };
-  const draftSide = { miniApp: { title: 'editing', detailDescription: 'd' } };
+  const miniApp = { title: 'the record', description: 'd' };
 
-  it('returns draft when asked (draft is the safe default)', () => {
-    expect(pickMiniAppView({ current: currentSide, draft: draftSide }, 'draft')).toEqual(
-      draftSide.miniApp,
-    );
+  it('draft (default) returns the record regardless of approval state', () => {
+    expect(pickMiniAppView({ miniApp, hasApproved: false }, 'draft')).toEqual(miniApp);
+    expect(pickMiniAppView({ miniApp, hasApproved: true }, 'draft')).toEqual(miniApp);
   });
 
-  it('returns current when asked', () => {
-    expect(pickMiniAppView({ current: currentSide, draft: draftSide }, 'current')).toEqual(
-      currentSide.miniApp,
-    );
+  it('current returns the record when hasApproved is true', () => {
+    expect(pickMiniAppView({ miniApp, hasApproved: true }, 'current')).toEqual(miniApp);
   });
 
-  it('falls back to draft for current-of-unreviewed-app so callers can tell the two apart via view', () => {
-    expect(pickMiniAppView({ current: null, draft: draftSide }, 'current')).toBeNull();
-    // Explicit: asking for `current` when it's null returns null (not draft)
-    // so agent-plugin can distinguish "not reviewed" from "reviewed and published".
+  it('current returns null when hasApproved is false (not reviewed yet)', () => {
+    // Explicit: asking for `current` on an unreviewed app returns null (not
+    // the record) so agent-plugin can distinguish "not reviewed" from
+    // "reviewed and published".
+    expect(pickMiniAppView({ miniApp, hasApproved: false }, 'current')).toBeNull();
   });
 
-  it("draft view on an app that has not been drafted (shouldn't happen in practice) returns null", () => {
-    expect(pickMiniAppView({ current: null, draft: null }, 'draft')).toBeNull();
+  it('draft view when miniApp itself is null returns null', () => {
+    expect(pickMiniAppView({ miniApp: null, hasApproved: false }, 'draft')).toBeNull();
   });
 
-  it('merged: draft overrides current field-by-field', () => {
-    const merged = pickMiniAppView({ current: currentSide, draft: draftSide }, 'merged');
-    expect(merged).toEqual({
-      title: 'editing',
-      description: 'p',
-      detailDescription: 'd',
-    });
-  });
-
-  it('merged: falls back to the present side when only one exists', () => {
-    expect(pickMiniAppView({ current: currentSide, draft: null }, 'merged')).toEqual(
-      currentSide.miniApp,
-    );
-    expect(pickMiniAppView({ current: null, draft: draftSide }, 'merged')).toEqual(
-      draftSide.miniApp,
-    );
-  });
-
-  it('handles envelopes whose miniApp field is missing or wrong-typed', () => {
-    // A side with no `miniApp` (or with a non-object value) is normalised to null
-    // rather than crashing. Protects against a future schema change where the
-    // server swaps the nested key but we haven't caught up yet.
-    expect(pickMiniAppView({ current: {}, draft: null }, 'draft')).toBeNull();
-    expect(pickMiniAppView({ current: { miniApp: 'oops' }, draft: null }, 'current')).toBeNull();
-    expect(pickMiniAppView({ current: { miniApp: [] }, draft: null }, 'current')).toBeNull();
+  it('merged returns the record regardless of approval state (only one snapshot exists)', () => {
+    expect(pickMiniAppView({ miniApp, hasApproved: true }, 'merged')).toEqual(miniApp);
+    expect(pickMiniAppView({ miniApp, hasApproved: false }, 'merged')).toEqual(miniApp);
   });
 });
 
@@ -138,15 +118,22 @@ describe('pickMiniAppView', () => {
 // has a single place to evolve when the rejected / approved shapes come in
 // from a real review cycle. Documented combinations live in app.ts above
 // the function; these tests pin each one.
+//
+// Up through 0.1.45 this took `{current, draft}` nullable records straight
+// off the `/with-draft` envelope. That endpoint 404s as of issue #219; its
+// replacement (`fetchMiniAppDetail`) already exposes `hasApproved`/`hasDraft`
+// as booleans, so the function (and these tests) now take `hasCurrent`/
+// `hasDraft` directly instead of re-deriving them from `!== null` checks.
+// The state-machine logic under test is otherwise unchanged.
 describe('deriveReviewState', () => {
-  const base = { current: null, draft: { miniApp: {} }, approvalType: null, rejectedMessage: null };
+  const base = { hasCurrent: false, hasDraft: true, approvalType: null, rejectedMessage: null };
 
   it('not-submitted when approvalType is null', () => {
     expect(deriveReviewState({ ...base }).state).toBe('not-submitted');
   });
 
-  it('under-review when approvalType=REVIEW and current is null', () => {
-    expect(deriveReviewState({ ...base, approvalType: 'REVIEW', current: null }).state).toBe(
+  it('under-review when approvalType=REVIEW and hasCurrent is false', () => {
+    expect(deriveReviewState({ ...base, approvalType: 'REVIEW', hasCurrent: false }).state).toBe(
       'under-review',
     );
   });
@@ -155,29 +142,29 @@ describe('deriveReviewState', () => {
     const s = deriveReviewState({
       ...base,
       approvalType: 'REVIEW',
-      current: null,
+      hasCurrent: false,
       rejectedMessage: 'violates policy X',
     });
     expect(s.state).toBe('rejected');
     expect(s.rejectedMessage).toBe('violates policy X');
   });
 
-  it('approved when current row exists and there is no fresh draft', () => {
+  it('approved when hasCurrent is true and there is no fresh draft', () => {
     expect(
       deriveReviewState({
-        current: { miniApp: { status: 'LIVE' } },
-        draft: null,
+        hasCurrent: true,
+        hasDraft: false,
         approvalType: 'REVIEW',
         rejectedMessage: null,
       }).state,
     ).toBe('approved');
   });
 
-  it('approved-with-edits when both current and draft exist', () => {
+  it('approved-with-edits when both hasCurrent and hasDraft are true', () => {
     expect(
       deriveReviewState({
-        current: { miniApp: { status: 'LIVE' } },
-        draft: { miniApp: { status: 'PREPARE' } },
+        hasCurrent: true,
+        hasDraft: true,
         approvalType: 'REVIEW',
         rejectedMessage: null,
       }).state,
@@ -191,15 +178,15 @@ describe('deriveReviewState', () => {
       deriveReviewState({
         ...base,
         approvalType: 'FUTURE_TYPE',
-        current: null,
+        hasCurrent: false,
       }).state,
     ).toBe('unknown');
   });
 
   it('reports hasCurrent/hasDraft flags truthfully so JSON consumers have the raw signal too', () => {
     const s = deriveReviewState({
-      current: { miniApp: {} },
-      draft: { miniApp: {} },
+      hasCurrent: true,
+      hasDraft: true,
       approvalType: 'REVIEW',
       rejectedMessage: null,
     });
@@ -210,21 +197,21 @@ describe('deriveReviewState', () => {
   // `locked` reflects the authoritative update-lock signal. The derived `state`
   // ladder isn't a reliable proxy: a `approved-with-edits` app can still be
   // locked (4046) because review is queued for the in-flight draft. Single
-  // source of truth is `with-draft.success.approvalType === 'REVIEW'`.
+  // source of truth is `approvalType === 'REVIEW'`.
   it('locked when approvalType is REVIEW (under-review case)', () => {
     const s = deriveReviewState({
       ...base,
       approvalType: 'REVIEW',
-      current: null,
+      hasCurrent: false,
     });
     expect(s.locked).toBe(true);
     expect(s.lockReason).toBe('review-pending');
   });
 
-  it('locked when approvalType is REVIEW even with current row + draft (approved-with-edits)', () => {
+  it('locked when approvalType is REVIEW even with hasCurrent + hasDraft (approved-with-edits)', () => {
     const s = deriveReviewState({
-      current: { miniApp: { status: 'LIVE' } },
-      draft: { miniApp: { status: 'PREPARE' } },
+      hasCurrent: true,
+      hasDraft: true,
       approvalType: 'REVIEW',
       rejectedMessage: null,
     });
@@ -243,28 +230,106 @@ describe('deriveReviewState', () => {
     const s = deriveReviewState({
       ...base,
       approvalType: 'APPROVED',
-      current: { miniApp: {} },
-      draft: null,
+      hasCurrent: true,
+      hasDraft: false,
     });
     expect(s.locked).toBe(false);
     expect(s.lockReason).toBeNull();
   });
 
   // `state` and `locked` are intentionally decoupled — see docs/api/mini-apps.md
-  // "REVIEW lock 권위". An app can read as `state: 'approved'` (current row,
-  // no draft) while envelope `approvalType` is still `REVIEW` because the
+  // "REVIEW lock 권위". An app can read as `state: 'approved'` (hasCurrent
+  // true, no draft) while `approvalType` is still `REVIEW` because the
   // server flips it asynchronously. Pin the combo so a future refactor that
   // tries to "fix" the apparent inconsistency doesn't break the contract.
   it('keeps state and locked decoupled when approvalType=REVIEW with no fresh draft', () => {
     const s = deriveReviewState({
-      current: { miniApp: { status: 'LIVE' } },
-      draft: null,
+      hasCurrent: true,
+      hasDraft: false,
       approvalType: 'REVIEW',
       rejectedMessage: null,
     });
     expect(s.state).toBe('approved');
     expect(s.locked).toBe(true);
     expect(s.lockReason).toBe('review-pending');
+  });
+});
+
+// `reviewStateInputFrom` bridges `MiniAppDetail` (the `fetchMiniAppDetail`
+// response) to `deriveReviewState`'s input shape — the glue that replaced
+// the direct `/with-draft` envelope consumption after issue #219.
+//
+// `approvalType`/`rejectedMessage` are flat fields on `MiniAppDetail`
+// itself (siblings of `miniApp`, not nested inside it) — a second live
+// probe during verification caught an earlier draft's wrong assumption
+// that they were nested, which would have silently derived `not-submitted`
+// for every real app. These tests exercise the flat shape directly, since
+// `fetchMiniAppDetail` (see mini-apps.test.ts) is what owns normalising the
+// raw envelope down to this shape.
+describe('reviewStateInputFrom', () => {
+  it('passes approvalType/rejectedMessage through from the flat MiniAppDetail fields', () => {
+    const input = reviewStateInputFrom({
+      miniApp: { title: 'whatever' },
+      isBeforeFirstReview: false,
+      hasApproved: true,
+      hasInReview: false,
+      hasDraft: false,
+      approvalType: 'APPROVED',
+      rejectedMessage: null,
+    });
+    expect(input).toEqual({
+      hasCurrent: true,
+      hasDraft: false,
+      approvalType: 'APPROVED',
+      rejectedMessage: null,
+    });
+  });
+
+  it('passes through null approvalType/rejectedMessage untouched', () => {
+    const input = reviewStateInputFrom({
+      miniApp: null,
+      isBeforeFirstReview: true,
+      hasApproved: false,
+      hasInReview: false,
+      hasDraft: false,
+      approvalType: null,
+      rejectedMessage: null,
+    });
+    expect(input.approvalType).toBeNull();
+    expect(input.rejectedMessage).toBeNull();
+    expect(input.hasCurrent).toBe(false);
+  });
+
+  it('surfaces a non-null rejectedMessage', () => {
+    const input = reviewStateInputFrom({
+      miniApp: { title: 'whatever' },
+      isBeforeFirstReview: false,
+      hasApproved: false,
+      hasInReview: true,
+      hasDraft: true,
+      approvalType: 'REVIEW',
+      rejectedMessage: 'violates policy X',
+    });
+    expect(input.rejectedMessage).toBe('violates policy X');
+    expect(input.hasDraft).toBe(true);
+  });
+
+  it('does not read approvalType/rejectedMessage from miniApp even if present there', () => {
+    // Regression guard for the exact bug the second live probe caught: a
+    // stray approvalType/rejectedMessage nested inside miniApp (e.g. from a
+    // stale fixture copy-pasted from the wrong shape) must NOT leak through
+    // — the flat MiniAppDetail fields are the only source of truth.
+    const input = reviewStateInputFrom({
+      miniApp: { approvalType: 'REJECTED', rejectedMessage: 'nested, should be ignored' },
+      isBeforeFirstReview: false,
+      hasApproved: true,
+      hasInReview: false,
+      hasDraft: false,
+      approvalType: 'APPROVED',
+      rejectedMessage: null,
+    });
+    expect(input.approvalType).toBe('APPROVED');
+    expect(input.rejectedMessage).toBeNull();
   });
 });
 
@@ -372,135 +437,15 @@ describe('deriveLsStatus', () => {
   });
 });
 
-// `compareMiniAppViews` is the engine behind `aitcc app show --diff`. It
-// runs a fixed whitelist of fields a user actually edits via `app register`
-// (title, description, iconUri, …) plus two shallow `impression` signals.
-// Deep recursive diffs are intentionally out of scope — the goal is
-// "scannable in a terminal", not "round-trippable".
-describe('compareMiniAppViews', () => {
-  it('returns no changes when both sides match across the whitelist', () => {
-    const same = { title: 'A', titleEn: 'A-en', appName: 'a', description: 'sub' };
-    const result = compareMiniAppViews(same, { ...same });
-    expect(result.changed).toEqual([]);
-    expect(result.hasDraft).toBe(true);
-    expect(result.hasCurrent).toBe(true);
-    expect(result.unchangedCount).toBe(4);
-  });
-
-  it('emits a {field, draft, current} entry for each top-level diff', () => {
-    const draft = { title: '새 제목', description: '새 설명' };
-    const current = { title: '이전 제목', description: '새 설명' };
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([{ field: 'title', draft: '새 제목', current: '이전 제목' }]);
-    expect(result.unchangedCount).toBe(1);
-  });
-
-  it('treats undefined-on-both as "field not present" (not unchanged) so absent fields do not pad the count', () => {
-    // Neither side has any whitelisted field → no changes, no "unchanged"
-    // either. Pads otherwise.
-    const result = compareMiniAppViews({}, {});
-    expect(result.changed).toEqual([]);
-    expect(result.unchangedCount).toBe(0);
-  });
-
-  it('arrays diff structurally — element order matters', () => {
-    const draft = { impression: { keywordList: ['a', 'b'] } };
-    const current = { impression: { keywordList: ['a'] } };
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([
-      { field: 'impression.keywordList', draft: ['a', 'b'], current: ['a'] },
-    ]);
-  });
-
-  it('arrays compare equal when element-wise equal (no false positives from object identity)', () => {
-    const draft = { impression: { keywordList: ['x', 'y'] } };
-    const current = { impression: { keywordList: ['x', 'y'] } };
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([]);
-    expect(result.unchangedCount).toBe(1);
-  });
-
-  it('reduces categoryPath to a single "group > category > subCategory" string', () => {
-    // Only the first path is compared — keeps the diff readable. Full
-    // path objects would dominate output without adding signal.
-    const draft = {
-      impression: {
-        categoryPaths: [
-          {
-            group: { name: '생활' },
-            category: { name: '정보' },
-            subCategory: { name: '생활/정보' },
-          },
-        ],
-      },
-    };
-    const current = {
-      impression: {
-        categoryPaths: [
-          {
-            group: { name: '엔터테인먼트' },
-            category: { name: '게임' },
-            subCategory: { name: '캐주얼' },
-          },
-        ],
-      },
-    };
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([
-      {
-        field: 'impression.categoryPath',
-        draft: '생활 > 정보 > 생활/정보',
-        current: '엔터테인먼트 > 게임 > 캐주얼',
-      },
-    ]);
-  });
-
-  it('hasDraft=false when draft is null — returns empty changed list (no diff possible)', () => {
-    const result = compareMiniAppViews(null, { title: 'A' });
-    expect(result.hasDraft).toBe(false);
-    expect(result.hasCurrent).toBe(true);
-    expect(result.changed).toEqual([]);
-    expect(result.unchangedCount).toBe(0);
-  });
-
-  it('hasCurrent=false when current is null — returns empty changed list', () => {
-    const result = compareMiniAppViews({ title: 'A' }, null);
-    expect(result.hasDraft).toBe(true);
-    expect(result.hasCurrent).toBe(false);
-    expect(result.changed).toEqual([]);
-  });
-
-  it('both sides null — both flags false, empty changed', () => {
-    const result = compareMiniAppViews(null, null);
-    expect(result.hasDraft).toBe(false);
-    expect(result.hasCurrent).toBe(false);
-    expect(result.changed).toEqual([]);
-  });
-
-  it('skips impression fields when impression is missing or wrong-typed (no crash)', () => {
-    // A guard against the schema regressing to a non-object impression.
-    const draft = { title: 'A', impression: 'oops' };
-    const current = { title: 'B', impression: null };
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([{ field: 'title', draft: 'A', current: 'B' }]);
-  });
-
-  // The skip-rule for "field absent on both sides" is `d === undefined &&
-  // c === undefined`. A field that is explicit `null` on one side and
-  // `undefined` (absent) on the other shows up as a real change, not a
-  // pad. Pin the behavior so a future "treat null and undefined as the
-  // same" simplification doesn't silently flip it — the API does
-  // distinguish the two (e.g. `darkModeIconUri` is `null` for "user
-  // cleared it" and `undefined` for "field never set"), and a diff that
-  // hides the transition would mislead the operator.
-  it('treats explicit null vs absent as a real change (not collapsed)', () => {
-    const draft = { darkModeIconUri: null };
-    const current = {};
-    const result = compareMiniAppViews(draft, current);
-    expect(result.changed).toEqual([{ field: 'darkModeIconUri', draft: null, current: undefined }]);
-    expect(result.unchangedCount).toBe(0);
-  });
-});
+// `compareMiniAppViews` (the engine behind the old `aitcc app show --diff`
+// field-by-field comparison) was removed in issue #219 — the `/with-draft`
+// endpoint it depended on for two independent draft/current payloads 404s,
+// and the replacement (`fetchMiniAppDetail`) only exposes a single `miniApp`
+// snapshot. Diffing that snapshot against itself would produce a misleading
+// "no changes" result even when `hasDraft` is true, so `--diff` now reports
+// the boolean flags plus `diffAvailable: false` instead (see app.ts
+// `showCommand`). No replacement tests needed here — the flags are already
+// covered by the `deriveReviewState`/`reviewStateInputFrom` blocks above.
 
 describe('deriveDaysUntilExpiry', () => {
   // Anchor `now` to a fixed point so the floor() boundaries are deterministic.

@@ -10,6 +10,7 @@ import {
   fetchConversionMetrics,
   fetchDeployedBundle,
   fetchImpressionCategoryList,
+  fetchMiniAppDetail,
   fetchMiniAppRatings,
   fetchMiniApps,
   fetchReviewStatus,
@@ -145,6 +146,169 @@ describe('fetchReviewStatus', () => {
       );
     await expect(fetchReviewStatus(36577, cookies, { fetchImpl })).rejects.toThrow(
       /miniApps is not an array/,
+    );
+  });
+});
+
+// Replaces the old `/with-draft` read path (issue #219 — that suffix 404s
+// as of 2026-07-23). Hits the plain `mini-app/:id` endpoint instead, which
+// wraps a single `miniApp` record plus four summary flags PLUS
+// `approvalType`/`rejectedMessage` as flat siblings of `miniApp` on the
+// same `success` object (the server also re-flattens most of `miniApp`'s
+// own fields onto `success` — irrelevant duplication we ignore; fixtures
+// below omit it for brevity since `fetchMiniAppDetail` never reads it).
+describe('fetchMiniAppDetail', () => {
+  it('hits /workspaces/:wid/mini-app/:aid (no /with-draft suffix) and normalises the envelope', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: false,
+            hasApproved: true,
+            hasInReview: false,
+            hasDraft: false,
+            miniApp: { miniAppId: 31146, appName: 'aitc-sdk-example', status: 'PREPARE' },
+            approvalType: 'APPROVED',
+            rejectedMessage: null,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/mini-app/31146',
+    );
+    expect(got).toEqual({
+      miniApp: { miniAppId: 31146, appName: 'aitc-sdk-example', status: 'PREPARE' },
+      isBeforeFirstReview: false,
+      hasApproved: true,
+      hasInReview: false,
+      hasDraft: false,
+      approvalType: 'APPROVED',
+      rejectedMessage: null,
+    });
+  });
+
+  // Pins the exact bug a second live probe caught during verification: an
+  // earlier draft of `fetchMiniAppDetail` assumed `approvalType`/
+  // `rejectedMessage` were nested inside `miniApp` (mirroring where the old
+  // `/with-draft` envelope put them, one level up). They are not — they are
+  // flat siblings of `miniApp` on `success`. A fixture with the fields
+  // present ONLY inside `miniApp` (never at the flat level) must normalise
+  // to `null`, not silently pick up the nested value.
+  it('reads approvalType/rejectedMessage as flat siblings of miniApp, not nested inside it', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: false,
+            hasApproved: true,
+            hasInReview: false,
+            hasDraft: false,
+            // Only nested inside miniApp — must NOT be picked up.
+            miniApp: { miniAppId: 31146, approvalType: 'REJECTED', rejectedMessage: 'nope' },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(got.approvalType).toBeNull();
+    expect(got.rejectedMessage).toBeNull();
+  });
+
+  it('coerces the four summary flags to booleans even if the server sends non-boolean truthy/falsy values', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: 1,
+            hasApproved: 0,
+            hasInReview: 'yes',
+            hasDraft: null,
+            miniApp: {},
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(got.isBeforeFirstReview).toBe(true);
+    expect(got.hasApproved).toBe(false);
+    expect(got.hasInReview).toBe(true);
+    expect(got.hasDraft).toBe(false);
+  });
+
+  it('falls back to null for approvalType/rejectedMessage when absent or wrong-typed', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: true,
+            hasApproved: false,
+            hasInReview: false,
+            hasDraft: false,
+            miniApp: {},
+            approvalType: 42,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(got.approvalType).toBeNull();
+    expect(got.rejectedMessage).toBeNull();
+  });
+
+  it('normalises miniApp to null when absent (never fabricates an empty object)', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: true,
+            hasApproved: false,
+            hasInReview: false,
+            hasDraft: false,
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(got.miniApp).toBeNull();
+  });
+
+  it('normalises miniApp to null when it is a wrong-typed (non-object) value', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: {
+            isBeforeFirstReview: false,
+            hasApproved: false,
+            hasInReview: false,
+            hasDraft: false,
+            miniApp: 'oops',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl });
+    expect(got.miniApp).toBeNull();
+  });
+
+  it('throws when the response body is not an object', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: 'nope' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchMiniAppDetail(3095, 31146, cookies, { fetchImpl })).rejects.toThrow(
+      /Unexpected mini-app detail shape/,
     );
   });
 });

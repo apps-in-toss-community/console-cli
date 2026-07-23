@@ -9,8 +9,9 @@
 | Method | Path | 용도 | 상태 |
 |---|---|---|---|
 | GET | `/workspaces/<wid>/mini-app` | 워크스페이스 앱 목록 | ✅ |
-| GET | `/workspaces/<wid>/mini-app/<mini_app_id>` | 앱 상세 (current view) | ✅ |
-| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/with-draft` | 앱 상세 + draft (편집 진입 시) | ✅ |
+| GET | `/workspaces/<wid>/mini-app/<mini_app_id>` | 앱 상세 — single snapshot(`miniApp`) + summary flags(`hasApproved`/`hasInReview`/`hasDraft`/`isBeforeFirstReview`). `app show`/`app status`의 주 read path (2026-07-23~) | ✅ |
+| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/with-draft` | ~~앱 상세 + draft (편집 진입 시)~~ — **404 (issue #219, 2026-07-23 확인)**. 위 plain path로 대체됨 | ❌ |
+| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/draft` | draft 전용 조회 | ⚠️ (존재는 확인, populated shape 미보유) |
 | POST | `/workspaces/<wid>/mini-app/review` | 앱 등록 + 심사 제출 (원샷) — `miniApp.miniAppId` 포함 시 update mode | ✅ |
 | POST | `/workspaces/<wid>/mini-app/pre-review` | AI 사전 검토 (옵션) | ❌ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/review-status` | 개별 앱 심사 상태 | ✅ |
@@ -81,7 +82,7 @@
 { "resultType": "SUCCESS", "success": { "miniAppId": 29397 } }
 ```
 
-표준 envelope의 `success` 안에 `miniAppId` 하나만. 다른 필드는 없다. 응답이 검수 진입 여부를 직접 알려주지 않으므로, 등록 직후 상태를 알고 싶으면 [`/with-draft`](#-get-workspaceswidmini-appmini_app_idwith-draft--앱-상세--draft) 또는 [`/review-status`](#-get-workspaceswidmini-appmini_app_idreview-status--개별-앱-심사-상태)를 별도 호출한다 (UI도 그렇게 동작).
+표준 envelope의 `success` 안에 `miniAppId` 하나만. 다른 필드는 없다. 응답이 검수 진입 여부를 직접 알려주지 않으므로, 등록 직후 상태를 알고 싶으면 [`GET /mini-app/<mini_app_id>`](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot) 또는 [`/review-status`](#-get-workspaceswidmini-appmini_app_idreview-status--개별-앱-심사-상태)를 별도 호출한다 (UI도 그렇게 동작). (2026-07-23 이전엔 `/with-draft`를 가리켰으나 해당 경로는 404 — 아래 "Drift history" 5번 참조.)
 
 ### CLI `--json` output
 
@@ -131,7 +132,8 @@
 2. **0.1.7**: `{flat...}` + `categoryList: [{id}]`로 회귀. ❌ 4000 발생.
    - 원인: `GET /mini-app/<id>` (current view)를 draft view로 오해해 "필드가 안 들어갔다"고 판단 → payload shape 의심 → 잘못된 회귀.
 3. **0.1.8**: 0.1.6 shape으로 복원. ✅ 검수 진입까지 확인 (29397, 29405).
-4. 결론: **읽기는 항상 `/with-draft`로**. payload는 위 shape 그대로.
+4. (당시 결론, 2026-05-01~2026-07-22 유효했음): **읽기는 `/with-draft`로**. payload는 위 shape 그대로.
+5. **issue #219 (2026-07-23)**: 위 결론이 깨짐 — `GET /mini-app/<mini_app_id>/with-draft`가 **404**로 전환됐다(업스트림 콘솔 API path drift, `app ls`/`service-status`/`workspace terms` 등 다른 경로는 영향 없음). 대체 경로는 plain `GET /mini-app/<mini_app_id>` — 같은 path인데 응답 envelope이 `{miniApp, isBeforeFirstReview, hasApproved, hasInReview, hasDraft}`로 확장됐다 (구 `current`/`draft` 두 record 대신 단일 `miniApp` snapshot + summary flags). `app show`/`app status`는 이 새 shape으로 마이그레이션했고, draft-vs-current 필드 단위 비교(`app show --diff`)는 더 이상 서버가 두 개의 독립된 payload를 안 주므로 `diffAvailable: false`로 격하됐다. 상세 캡처는 아래 새 섹션 참조.
 
 ### Update mode (2026-05-01 확정)
 
@@ -139,7 +141,7 @@ create payload에 `miniApp.miniAppId`를 추가하면 update mode가 된다. 같
 
 #### 동작 (`approvalType` 별)
 
-`approvalType`은 envelope의 `success.approvalType` (앱 객체 내부 X). `/with-draft` 응답의 `success`에서 직접 읽는다.
+`approvalType`은 envelope의 `success.approvalType` (앱 객체 내부 X). 2026-07-22까지는 `/with-draft` 응답의 `success`에서 직접 읽었고, 그 경로가 404가 된 이후(issue #219)로는 [`GET /mini-app/<mini_app_id>`](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot-2026-07-23) 응답의 `success.approvalType`이 같은 위치(여전히 flat, `miniApp` 형제 필드)에서 같은 역할을 한다.
 
 ```mermaid
 stateDiagram-v2
@@ -195,7 +197,7 @@ stateDiagram-v2
 
 #### Update payload 작성 패턴
 
-콘솔 UI의 `/mini-app/<id>/meta/edit` form은 background save XHR 없이 submit 시점에 form state 전체를 그대로 보낸다. 외부에서도 동일 패턴: **`/with-draft` 응답에서 `draft ?? current`의 `miniApp` + `impression`을 그대로 떠다 변경 필드만 덮어 보낸다.** 부분 update(특정 필드만 보내기)는 미검증 — 안전하게 풀 payload로 보내라.
+콘솔 UI의 `/mini-app/<id>/meta/edit` form은 background save XHR 없이 submit 시점에 form state 전체를 그대로 보낸다. 외부에서도 동일 패턴: **읽어온 `miniApp` + `impression`을 그대로 떠다 변경 필드만 덮어 보낸다.** (2026-07-22까지는 `/with-draft` 응답의 `draft ?? current`에서 떠 왔고, 그 경로가 404가 된 이후로는 [`GET /mini-app/<mini_app_id>`](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot-2026-07-23) 응답의 단일 `miniApp`에서 뜬다 — 어느 쪽이든 떠오는 `miniApp`/`impression`의 shape 자체는 동일.) 부분 update(특정 필드만 보내기)는 미검증 — 안전하게 풀 payload로 보내라.
 
 `impression.categoryIds`는 응답엔 없는 필드라 만들어야 한다 — `impression.categoryPaths[].category.id`를 모아서 array로:
 
@@ -210,9 +212,11 @@ const categoryIds = source.impression.categoryPaths.map(p => p.category.id);
 - **`miniApp.impression`은 stripped해야 한다.** `/with-draft` 응답의 `success.draft.miniApp`에는 `impression` nested object가 들어있지만(read-side convenience), update payload에 그대로 두면 envelope의 `{miniApp, impression}` 래퍼와 충돌해 `errorCode: 4000` "잘못된 요청입니다." 또는 "카테고리는 2개 이상 설정할 수 없어요." 로 거부된다.
 - **`categoryIds`는 leaf 한 단계 위(`category.id`)까지만.** `subCategory.id`(예: 56 = "뉴스")를 넣으면 `errorCode: null`, `reason: "카테고리 정보가 없음: <id>"`로 거부. 즉 트리 leaf가 아니라 mid-level만 허용. `categoryPaths[].category.id` (예: 3882 = "정보") 가 정답.
 
-##### REVIEW lock 권위 — `app status` state 값 vs `with-draft.success.approvalType`
+##### REVIEW lock 권위 — `app status` state 값 vs `approvalType`
 
-`aitcc app status <id>`의 `state: approved-with-edits` 같은 derived 라벨은 **REVIEW lock 해제 여부의 권위가 아니다**. 2026-05-02 dog-food: 4개 앱이 각각 `approved-with-edits`(29349/29356) / `under-review`(29397/29405)로 보였지만 update 호출 결과 **4개 모두 `errorCode: 4046`**. 권위는 `with-draft.success.approvalType` 한 곳뿐 — 그 값이 `REVIEW`이면 lock. CLI가 lock 추정으로 분기하지 말고 항상 시도해서 4046을 받는 패턴이 안전하다.
+`aitcc app status <id>`의 `state: approved-with-edits` 같은 derived 라벨은 **REVIEW lock 해제 여부의 권위가 아니다**. 2026-05-02 dog-food: 4개 앱이 각각 `approved-with-edits`(29349/29356) / `under-review`(29397/29405)로 보였지만 update 호출 결과 **4개 모두 `errorCode: 4046`**. 권위는 `approvalType` 한 곳뿐 — 그 값이 `REVIEW`이면 lock. CLI가 lock 추정으로 분기하지 말고 항상 시도해서 4046을 받는 패턴이 안전하다.
+
+> **경로 갱신 (issue #219, 2026-07-23)**: 이 `approvalType`을 읽던 endpoint가 바뀌었다. 2026-07-22까지는 `with-draft.success.approvalType`(envelope-level)이었으나, 그 경로가 404가 된 뒤로는 [`GET /mini-app/<mini_app_id>`](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot-2026-07-23) 응답의 `success.approvalType`이 같은 권위를 대신한다 — **`miniApp` 안으로 옮겨간 게 아니라 여전히 `miniApp`의 형제 필드**다(위 새 섹션의 "핵심" 첫 항목 참조). 값 자체의 의미(`REVIEW`=lock)는 변하지 않았다.
 
 `aitcc app status`가 이 권위 신호를 직접 surface한다: JSON 모드에 `locked: boolean` + `lockReason: 'review-pending' | null`, plain 모드에 locked일 때 `⚠️ update locked` 한 줄. 다른 lock 사유는 현재 미발견 — 새 값 발견 시 `LockReason` union 확장.
 
@@ -296,21 +300,111 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 }
 ```
 
-**중요**: `PREPARE` 상태 앱들은 위처럼 대부분 필드가 `null`/`[]`인 채로 나타난다. 등록 시 보낸 값을 보려면 `/with-draft`를 사용해야 한다 (아래).
+**중요**: `PREPARE` 상태 앱들은 위처럼 대부분 필드가 `null`/`[]`인 채로 나타난다. 등록 시 보낸 값을 보려면 아래 [`GET /mini-app/<mini_app_id>`](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot-2026-07-23)를 사용해야 한다 (2026-07-22까지는 `/with-draft`였음 — 아래 "Drift history" 5번).
 
-## `GET /workspaces/<wid>/mini-app/<mini_app_id>` — 앱 상세 (current view)
+## `GET /workspaces/<wid>/mini-app/<mini_app_id>` — 앱 상세 (single snapshot, 2026-07-23~)
 
-- **Used by**: [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts) (`aitcc app show`의 read path 일부)
-- **Capture status**: ✅ confirmed
-- **Response**: 단일 앱 객체. `success`는 객체 (배열 X). shape은 위 list와 동일.
+- **Used by**: [`src/api/mini-apps.ts#fetchMiniAppDetail`](../../src/api/mini-apps.ts), `aitcc app show`, `aitcc app status`, `aitcc app ls` (per-app fan-out for review state).
+- **Capture status**: ✅ confirmed (2026-07-23, workspace 3095 / miniAppId 31146, `APPROVED` / no pending draft — issue #219 fix)
+- **Response shape** (fields we actually read; the server also re-flattens most of `miniApp`'s own fields directly onto `success` as duplicates — that duplication is ignored, not documented field-by-field):
 
-이 endpoint는 **검수 통과해 published된 마지막 상태**만 반환한다. 등록 직후 검수 전까지는 대부분 필드가 `null`. 편집/조회 목적이면 `/with-draft`를 우선해야 한다.
+```jsonc
+{
+  "resultType": "SUCCESS",
+  "success": {
+    "isBeforeFirstReview": false,
+    "hasApproved": true,
+    "hasInReview": false,
+    "hasDraft": false,
+    // Flat siblings of `miniApp` below — NOT nested inside it. This is the
+    // one field placement easy to get wrong (see callout below the shape).
+    "approvalType": "APPROVED",      // "APPROVED" | "REVIEW" | "REJECTED" — same authority as the old with-draft envelope-level field, still flat here.
+    "rejectedMessage": null,          // approvalType === "REJECTED"일 때만 string.
+    "draft": null,                    // 관찰상 always null so far when hasDraft:false — populated shape not yet captured (미검증).
+    "review": null,                   // 미검증 — 검수 이력 record로 추정.
+    "savedAt": null,
+    "datingCheckListPdfUrl": null,
+    "miniApp": {
+      "miniAppId": 31146,
+      "workspaceId": 3095,
+      "appName": "<app_name>",
+      "title": "<app_title_ko>",
+      "titleEn": "<app_title_en>",
+      "status": "PREPARE",           // 항상 "PREPARE" — published 여부는 firstReleaseDate로 판단.
+      "minAge": 19,
+      "maxAge": 99,
+      "iconUri": "https://static.toss.im/appsintoss/3095/<image_uuid>.png",
+      "darkModeIconUri": null,
+      "homePageUri": "<home_page_uri>",
+      "description": "<app_subtitle>",
+      "detailDescription": "<app_description>",
+      "csEmail": "<email>",
+      "csContract": null,
+      "csChatUri": null,
+      "gameInfo": null,
+      "appType": "NON_GAME",
+      "loginClientId": null,
+      "isContest": false,
+      "impression": {
+        "id": 17645,
+        "categoryPaths": [
+          {
+            "categoryGroup": { "id": 7, "name": "생활", "isSelectable": true, "isGameCategory": false },
+            "category":       { "id": 3882, "name": "정보", "isSelectable": true },
+            "subCategory":    { "id": 56, "name": "뉴스", "isSelectable": true },
+            "isGameCategory": false
+          }
+        ],
+        "keywordList": ["<keyword>", "<keyword>"]
+      },
+      "specialCategory": null,
+      "hasHarmfulContent": false,
+      "firstReleaseDate": null,       // null = 한 번도 출시 안 함.
+      "images": [
+        { "imageUrl": "https://static.toss.im/appsintoss/3095/<image_uuid>.png", "imageType": "THUMBNAIL", "orientation": "HORIZONTAL", "displayOrder": 0, "backgroundColor": "#F4F4F4", "backgroundTheme": "LIGHT" },
+        { "imageUrl": "https://static.toss.im/appsintoss/3095/<image_uuid>.png", "imageType": "PREVIEW",   "orientation": "VERTICAL",   "displayOrder": 1, "backgroundColor": "#F2F2F2", "backgroundTheme": "LIGHT" }
+        // ... 나머지 PREVIEW 2장 생략
+      ],
+      "isApptech": null,
+      "isStatusOpen": false,
+      "isGameCategory": false
+    }
+  }
+}
+```
 
-## `GET /workspaces/<wid>/mini-app/<mini_app_id>/with-draft` — 앱 상세 + draft
+**핵심**:
 
-- **Used by**: `aitcc app status`, `aitcc app show` (review lock + draft view를 같이 surface; `--diff`로 draft↔current 비교), `aitcc app ls`.
-- **Capture status**: ✅ confirmed (2026-04-22, miniAppId 29349; 2026-05-01 envelope 필드 보강)
-- **Response shape**:
+- **`approvalType` / `rejectedMessage`는 `miniApp` 밖, `success` 바로 아래의 flat 필드다.** 얼핏 "이제 `miniApp` 안에 들어갔겠지"로 짐작하기 쉬운데(구 `/with-draft`가 envelope-level에 두던 걸 새 envelope이 `miniApp`을 감싸는 형태로 바뀌었으니) 실측 결과는 그렇지 않다 — `miniApp` 옆의 형제 필드로 남아 있다. 이 문서의 초안도 이 가정을 틀리게 했다가 검증 단계의 2차 실측(live probe)에서 잡혔다: `MiniAppDetail.miniApp.approvalType`을 읽는 코드는 항상 `undefined`만 받아 `app status`가 실제로는 검수 통과된 앱도 조용히 `not-submitted`로 보고했을 것 — 배포 전에 잡힌 회귀다. 구현은 `src/api/mini-apps.ts#fetchMiniAppDetail`이 `success.approvalType`/`success.rejectedMessage`를 직접 읽어 `MiniAppDetail`의 top-level 필드로 노출한다.
+- `hasApproved`/`hasInReview`/`hasDraft`/`isBeforeFirstReview`는 예전 `current !== null`/`draft !== null` 두 record 존재 여부 체크를 대신하는 boolean 요약이다. `hasApproved`가 옛 `current !== null`, `hasDraft`가 옛 `draft !== null` 역할 (APPROVED 케이스 1건에서만 확인 — REVIEW/REJECTED 앱 실측 시 재검증 필요).
+- **`draft`/`draft ?? current` 스타일의 두 독립 payload는 이제 없다.** 단일 `miniApp` snapshot뿐이라 필드 단위 draft↔current 비교(`aitcc app show --diff`가 예전에 하던 일)는 이 endpoint만으론 재현 불가능 — `app show --diff`는 `diffAvailable: false` + 위 flag들만 보고하도록 낮췄다 (아래 "Drift history" 5번, `src/commands/app.ts` `showCommand` 참조).
+- `miniApp` 자신의 필드들은 위 shape이 `success` 바로 아래에도 그대로 복제돼 있다(서버 측 중복) — `fetchMiniAppDetail`은 이 중복을 읽지 않고 `success.miniApp`만 신뢰한다.
+
+## `GET /workspaces/<wid>/mini-app/<mini_app_id>/draft` — draft 전용 조회
+
+- **Used by**: 아직 CLI에서 사용 안 함 (issue #219 조사 중 존재만 확인).
+- **Capture status**: ⚠️ partial — populated draft가 없는 상태(31146, draft 없음)에서 구조화된 에러만 확인. draft가 실제로 존재하는 앱에서의 success shape은 미보유.
+- **Error response (draft 없음, 2026-07-23 확인)**:
+
+```json
+{
+  "resultType": "FAIL",
+  "success": null,
+  "error": { "errorType": 0, "errorCode": "mini-app-draft.NotFound", "reason": "MiniAppDraft not found. serviceId=<mini_app_id>", "data": {} }
+}
+```
+
+구조화된 `mini-app-draft.NotFound` errorCode로 응답한다는 건 이 경로 자체는 살아있다는 뜻 — `/with-draft`처럼 route 자체가 없어진 404가 아니다. `hasDraft: true`인 앱으로 재현되면 populated shape을 이 섹션에 추가한다.
+
+---
+
+### (역사적 기록, 2026-04-22 ~ 2026-07-22) `GET /workspaces/<wid>/mini-app/<mini_app_id>/with-draft` — 앱 상세 + draft
+
+> ⚠️ **DEPRECATED — 이 경로는 2026-07-23부터 404다** (issue #219, "Drift history" 5번). 아래는 그 이전 기간 동안 실제로 동작했던 캡처를 역사적 기록으로 남긴 것 — 새 코드가 이 경로를 다시 호출하지 않도록, 그리고 `current`/`draft`/`approvalType`이 위 새 endpoint의 `hasApproved`/`hasDraft`/`approvalType`(flat)으로 어떻게 대응되는지 참고하기 위해 보존한다. **현재 read path는 위 섹션**이다.
+
+- **Used by (당시)**: `aitcc app status`, `aitcc app show` (review lock + draft view를 같이 surface; `--diff`로 draft↔current 비교), `aitcc app ls`.
+- **Capture status**: 🗄️ historical (2026-04-22, miniAppId 29349; 2026-05-01 envelope 필드 보강) — 더 이상 재현 불가 (404).
+- **Response shape (당시)**:
 
 ```jsonc
 {
@@ -386,6 +480,10 @@ CLI는 아직 update mode를 노출하지 않는다 (`aitcc app register`는 항
 - `approvalType: "APPROVED" && current.firstReleaseDate != null` → "출시 중"
 
 서버 권위 상태가 필요하면 별도로 [`/review-status`](#-get-workspaceswidmini-appmini_app_idreview-status--개별-앱-심사-상태)를 호출한다.
+
+> (2026-07-23 갱신) 위 "계획"은 `/with-draft`가 살아있던 시절 문서다. 현재 `aitcc app status` 구현은 같은 아이디어를 [새 `GET /mini-app/<mini_app_id>` endpoint](#-get-workspaceswidmini-appmini_app_id--앱-상세-single-snapshot-2026-07-23)의 `approvalType`/`hasApproved`/`hasDraft`로 derive한다 — `src/commands/app.ts`의 `deriveReviewState`/`reviewStateInputFrom` 참조.
+
+---
 
 ## `GET /workspaces/<wid>/mini-app/<mini_app_id>/review-status` — 개별 앱 심사 상태
 
@@ -489,5 +587,6 @@ CLI에 `aitcc app delete`를 추가하더라도 stub으로만(`exit 16`, `reason
 
 **중요 메모**:
 - 현재 출시(`serviceStatus: OPENED`)된 앱은 **0개**. 31146은 앱 등록 검수를 통과했지만(`reviewState: approved`) 번들 출시 검수를 한 번도 제출하지 않아 `PREPARE`다 (위 "추적 대상" 표 아래 설명 참조).
-- 31146의 lock 해제 여부는 `app status`(`/with-draft`의 `reviewState`)와 `app service-status`(`/review-status`)가 일치한다 — 2026-05-22 실측 둘 다 `approved`/`locked:false`. 과거 메모는 `approvalType === REVIEW`를 권위로 봤는데, 현재 CLI는 그 신호를 `reviewState`/`locked`로 정규화해 노출한다. 둘이 어긋나면 server-authoritative한 `service-status`를 믿는다.
+- 31146의 lock 해제 여부는 `app status`(당시 `/with-draft`의 `reviewState`)와 `app service-status`(`/review-status`)가 일치한다 — 2026-05-22 실측 둘 다 `approved`/`locked:false`. 과거 메모는 `approvalType === REVIEW`를 권위로 봤는데, 현재 CLI는 그 신호를 `reviewState`/`locked`로 정규화해 노출한다. 둘이 어긋나면 server-authoritative한 `service-status`를 믿는다.
 - **새 앱 등록 금지**. 31146 등록으로 dog-food 사이클 종료 — update mode에서 REVIEW lock(4046) 걸려도 새 앱 만들지 말고 운영팀 처리 대기.
+- **재검증 (issue #219, 2026-07-23)**: `/with-draft` 404 전환 이후 새 read path(`GET /mini-app/<mini_app_id>`)로 31146을 다시 실측 — `aitcc app status`/`aitcc app show` 모두 이전과 동일하게 `state: approved` / `locked: false` / `serviceStatus: PREPARE`를 보고한다. 회귀 없음.
