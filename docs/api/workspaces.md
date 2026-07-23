@@ -14,6 +14,10 @@
 | GET | `/workspaces/<wid>/partner` | 파트너(빌링/정산 주체) 정보 | ✅ |
 | GET | `/workspaces/<wid>/partner/is-registered` | 파트너 등록 여부 | ✅ |
 | GET | `/workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=` | 사업자번호 조회 | ⚠️ |
+| GET | `/workspaces/<wid>/business-verification/license/data` | 사업자 라이선스 인증 상태 | ✅ |
+| GET | `/workspaces/<wid>/configs` | 토스페이 키 설정 상태 (마스킹) | ✅ |
+| GET | `/workspaces/<wid>/promotion-money` | 프로모션 머니 잔액 | ✅ |
+| GET | `/workspaces/<wid>/promotion-money/histories` | 프로모션 머니 사용 내역 | ⚠️ mixed (빈 목록 ✅, 항목 shape 미관측) |
 | GET | `/workspaces/<wid>/segments/list` | 세그먼트 목록 (page/category/search) | ⚠️ |
 | GET | `/workspaces/<wid>/console-workspace-terms/<type>/skip-permission` | 약관 동의 필요 여부 | ⚠️ |
 | POST | `/workspaces/<wid>/console-workspace-terms` | 약관 동의 제출 (`agreedList`) | ✅ |
@@ -105,6 +109,95 @@
 - **Capture status**: ⚠️ inferred (path만 정적 분석으로 확인, 응답은 관측했으나 shape 미확정)
 - **관측** (2026-07-23, workspace 3095, 미등록 상태): `resultType: FAIL, errorCode: "500"`. 미등록 워크스페이스에서 review 상세를 조회하려는 시도 자체가 서버 오류로 이어지는 것으로 보인다 — 파트너 등록 후 재관측 필요.
 - CLI는 이 endpoint를 아직 사용하지 않는다 (`aitcc workspace partner`는 `/partner` + `/partner/is-registered`만 호출).
+
+## `GET /workspaces/<wid>/business-verification/license/data` — 사업자 라이선스 인증 상태
+
+- **Used by**: [`src/api/business-verification.ts#fetchBusinessVerificationLicense`](../../src/api/business-verification.ts), `aitcc workspace business-verification show`
+- **Capture status**: ✅ confirmed (2026-07-24, workspace 3095, 미등록 상태)
+- **Auth**: 세션 쿠키
+
+### Response (관측 — 미등록 상태)
+
+```json
+{
+  "resultType": "SUCCESS",
+  "success": { "errorCode": 500 }
+}
+```
+
+**중요**: 이건 HTTP 레벨 실패가 아니다 — envelope의 `resultType`은 여전히 `SUCCESS`고, `success` payload **안에** 비즈니스 레벨 `errorCode: 500`이 들어 있는 형태다. `TossApiError`는 `resultType: FAIL`에서만 던져지므로(`src/api/http.ts`), 이 응답은 정상적으로 unwrap되어 호출자에게 `{errorCode: 500}` 객체로 전달된다. `errorCode`가 없으면(= 라이선스 인증 완료) `registered: true`로, 있으면 `registered: false`로 CLI가 normalize한다. 이 500은 [`_error-codes.md`](./_error-codes.md)의 전송-레벨 `500`(FAIL envelope으로 오는 권한 부족)과 **다른 코드 계열**이니 혼동하지 말 것 — 같은 숫자값이지만 도착 경로가 다르다.
+
+`aitcc workspace business-verification show`는 이 상태를 `GET /partner/is-registered`(위 참조)와 함께 병렬 조회해 하나의 리포트로 합친다 — 사업자 라이선스와 파트너(빌링/정산) 등록은 서로 다른 게이트이지만 워크스페이스가 수익화 기능을 켜기 전에 둘 다 확인해야 하는 축이라 함께 보여준다.
+
+## `GET /workspaces/<wid>/configs` — 토스페이 키 설정 상태
+
+- **Used by**: [`src/api/pay-config.ts#fetchPayConfigStatus`](../../src/api/pay-config.ts), `aitcc app pay-config show`
+- **Capture status**: ✅ confirmed (2026-07-24, workspace 3095) — 모든 필드 미설정(`null`/빈 문자열) 상태
+- **Auth**: 세션 쿠키
+
+### Response (관측 — 전부 미설정)
+
+```jsonc
+{
+  "resultType": "SUCCESS",
+  "success": {
+    "workspaceId": 3095,
+    "payApiKey": null,
+    "testPayApiKey": null,
+    "billingPayApiKey": null,
+    "testBillingPayApiKey": null,
+    "tossCertClientId": null
+    // 값이 설정되면 문자열이 온다고 추정 — 실제 SET 상태의 라이브 캡처는 아직 없음
+  }
+}
+```
+
+### ★ 값 마스킹 관례 (SECRET-HANDLING) ★
+
+이 다섯 필드는 인앱결제/정산에 쓰이는 자격증명이라 [`_redaction.md`](./_redaction.md) + Deploy Key(`api-keys.md` "보안 노트")와 동일한 취급 원칙을 따른다 — **평문 값은 어떤 출력 경로(사람이 읽는 텍스트, `--json`, 로그, 에러 메시지)에도 노출하지 않는다.** `api-keys.md`의 Deploy Key와 달리 "발급 직후 1회 노출" 같은 예외 창구도 없다 — 이건 기왕에 설정돼 있는 워크스페이스 구성값이라 CLI가 값을 보여줘야 할 정당한 시점 자체가 없다.
+
+masking은 API 레이어(`fetchPayConfigStatus`)에서 응답을 받자마자 수행된다 — 커맨드 레이어에 원시 값이 아예 도달하지 않는다. 노출되는 건 `'SET' | 'UNSET'` 두 값뿐:
+
+```jsonc
+{
+  "ok": true,
+  "workspaceId": 3095,
+  "payApiKey": "UNSET",
+  "testPayApiKey": "UNSET",
+  "billingPayApiKey": "UNSET",
+  "testBillingPayApiKey": "UNSET",
+  "tossCertClientId": "UNSET"
+}
+```
+
+## `GET /workspaces/<wid>/promotion-money` — 프로모션 머니 잔액
+
+- **Used by**: [`src/api/promotion-money.ts#fetchPromotionMoneyBalance`](../../src/api/promotion-money.ts), `aitcc workspace promotion-money show`
+- **Capture status**: ✅ confirmed (2026-07-24, workspace 3095) — 캠페인 미집행 상태라 양쪽 다 0
+- **Auth**: 세션 쿠키
+- **개념 축**: "프로모션 머니"는 워크스페이스가 **자사 앱을 홍보하려고 지출**하는 예산이다. [`in-app-ads.md`](./in-app-ads.md)의 IAA(인앱 광고 노출로 **벌어들이는** 수익)와는 정반대 축이니 혼동하지 말 것 — CLI 명령 설명(`aitcc workspace promotion-money show --help`)에도 이 구분을 명시해 뒀다.
+
+### Response (관측)
+
+```json
+{ "resultType": "SUCCESS", "success": { "balance": 0, "availableBalance": 0 } }
+```
+
+`balance`/`availableBalance` 외 서버가 더 보내는 필드가 있으면 `extra`로 보존한다.
+
+## `GET /workspaces/<wid>/promotion-money/histories` — 프로모션 머니 사용 내역
+
+- **Used by**: [`src/api/promotion-money.ts#fetchPromotionMoneyHistories`](../../src/api/promotion-money.ts), `aitcc workspace promotion-money show`
+- **Capture status**: ⚠️ mixed — 빈 목록 응답은 ✅ confirmed(2026-07-24, workspace 3095), 항목이 있을 때의 wrapper shape(bare array vs `{contents, totalPage, currentPage}` page-object)과 개별 entry 필드는 미관측
+- **Query**: `?page=<int>` (다른 목록 endpoint와 동일 관례로 추정)
+
+### Response (관측 — 빈 목록)
+
+```json
+{ "resultType": "SUCCESS", "success": [] }
+```
+
+CLI(`normalizeHistoryResponse`)는 이 endpoint가 이 API 계열의 다른 목록들처럼 page-object로 바뀌어도, 지금처럼 bare array로 남아도 둘 다 받아들이도록 방어적으로 파싱한다 — 실제 항목이 들어오는 첫 라이브 캡처에서 이 문서와 파서를 확정 shape으로 갱신할 것.
 
 ## `GET /workspaces/<wid>/segments/list` — 세그먼트 목록
 

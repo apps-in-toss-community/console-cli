@@ -41,8 +41,18 @@ const TOP_LEVEL: readonly string[] = [
 
 // Subcommands per namespace. Order is for display (alpha).
 const SUB_COMMANDS: Record<string, readonly string[]> = {
-  workspace: ['ls', 'partner', 'segments', 'show', 'terms', 'use'],
+  workspace: [
+    'business-verification',
+    'ls',
+    'partner',
+    'promotion-money',
+    'segments',
+    'show',
+    'terms',
+    'use',
+  ],
   app: [
+    'ads',
     'bundles',
     'categories',
     'certs',
@@ -51,6 +61,7 @@ const SUB_COMMANDS: Record<string, readonly string[]> = {
     'ls',
     'messages',
     'metrics',
+    'pay-config',
     'ratings',
     'register',
     'reports',

@@ -16,13 +16,14 @@
 | Error code 카탈로그 | [`_error-codes.md`](./_error-codes.md) | — |
 | Redaction 정책 | [`_redaction.md`](./_redaction.md) | — |
 | Auth · Session | [`auth-session.md`](./auth-session.md) | ✅ confirmed |
-| Workspaces | [`workspaces.md`](./workspaces.md) | ✅ confirmed |
+| Workspaces (partner/pay-config/promotion-money/business-verification 포함) | [`workspaces.md`](./workspaces.md) | ✅ confirmed |
 | Members · Invites | [`members.md`](./members.md) | ⚠️ mixed (`GET /members` ✅, invite/remove inferred) |
 | Mini-apps (등록·조회) | [`mini-apps.md`](./mini-apps.md) | ✅ confirmed |
 | Mini-apps · 이미지 업로드 | [`mini-app-images.md`](./mini-app-images.md) | ✅ confirmed |
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
 | Mini-apps · 기타 (certs/params/analytics/logs) | [`mini-app-misc.md`](./mini-app-misc.md) | ⚠️ inferred (정적 분석) |
 | In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate ✅, 목록/상세/생성 shape inferred) |
+| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ✅ confirmed |
 | API Keys | [`api-keys.md`](./api-keys.md) | ✅ confirmed |
 | Impression (카테고리) | [`impression.md`](./impression.md) | ✅ confirmed |
 | Notices (별도 호스트) | [`notices.md`](./notices.md) | ⚠️ inferred |
@@ -58,6 +59,10 @@
 | Members · Invites | [`src/api/members.ts`](../../src/api/members.ts), [`src/commands/members.ts`](../../src/commands/members.ts) |
 | Mini-apps | [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/register.ts`](../../src/commands/register.ts), [`src/commands/register-payload.ts`](../../src/commands/register-payload.ts) |
 | In-app purchase | [`src/api/in-app-purchase.ts`](../../src/api/in-app-purchase.ts), [`src/commands/app-iap.ts`](../../src/commands/app-iap.ts) |
+| In-app advertising | [`src/api/in-app-ads.ts`](../../src/api/in-app-ads.ts), [`src/commands/app-ads.ts`](../../src/commands/app-ads.ts) |
+| Pay config (마스킹) | [`src/api/pay-config.ts`](../../src/api/pay-config.ts), [`src/commands/app-pay-config.ts`](../../src/commands/app-pay-config.ts) |
+| Promotion money | [`src/api/promotion-money.ts`](../../src/api/promotion-money.ts), [`src/commands/workspace.ts`](../../src/commands/workspace.ts) |
+| Business verification | [`src/api/business-verification.ts`](../../src/api/business-verification.ts), [`src/commands/workspace.ts`](../../src/commands/workspace.ts) |
 | API Keys | [`src/api/api-keys.ts`](../../src/api/api-keys.ts), [`src/commands/keys.ts`](../../src/commands/keys.ts) |
 | Notices | [`src/api/ipd-thor.ts`](../../src/api/ipd-thor.ts), [`src/commands/notices.ts`](../../src/commands/notices.ts) |
 
