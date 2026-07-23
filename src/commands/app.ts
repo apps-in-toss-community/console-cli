@@ -11,14 +11,15 @@ import {
   fetchConversionMetrics,
   fetchDeployedBundle,
   fetchImpressionCategoryList,
+  fetchMiniAppDetail,
   fetchMiniAppRatings,
   fetchMiniApps,
-  fetchMiniAppWithDraft,
   fetchReviewStatus,
   fetchShareRewards,
   fetchSmartMessageCampaigns,
   fetchUserReports,
   type MetricsTimeUnit,
+  type MiniAppDetail,
   postBundleMemo,
   postBundleRelease,
   postBundleReview,
@@ -122,18 +123,20 @@ const lsCommand = defineCommand({
       );
 
       // The workspace-level review-status entry only exposes serviceStatus +
-      // a few flags — not the approvalType/current/draft trio that drives
-      // the "approved-with-edits" vs "under-review" distinction. So per-app
-      // /with-draft is the only authority. Fan out in parallel and degrade
-      // a single failure to `unknown` so one stale id doesn't block the
-      // rest of the list.
+      // a few flags — not the approvalType/hasApproved/hasDraft trio that
+      // drives the "approved-with-edits" vs "under-review" distinction. So
+      // per-app mini-app detail is the only authority (see
+      // docs/api/mini-apps.md — the old `/with-draft` path 404s as of
+      // issue #219; this is its replacement). Fan out in parallel and
+      // degrade a single failure to `unknown` so one stale id doesn't block
+      // the rest of the list.
       const drafts = await Promise.all(
         apps.map(async (app) => {
           const numericId = typeof app.id === 'number' ? app.id : Number(app.id);
           if (!Number.isFinite(numericId)) return null;
           try {
-            const env = await fetchMiniAppWithDraft(workspaceId, numericId, session.cookies);
-            return deriveReviewState(env);
+            const detail = await fetchMiniAppDetail(workspaceId, numericId, session.cookies);
+            return deriveReviewState(reviewStateInputFrom(detail));
           } catch {
             return null;
           }
@@ -203,203 +206,64 @@ const lsCommand = defineCommand({
 //   app show <id> [--workspace <id>] [--view draft|current|merged]:
 //     { ok: true, workspaceId, appId, view, miniApp: {...},
 //       reviewState, locked, lockReason,
+//       hasApproved, hasInReview, hasDraft, isBeforeFirstReview,
 //       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt }   exit 0
 //     { ok: false, reason: 'no-workspace-selected' }                    exit 2
 //     { ok: false, reason: 'invalid-id', message }                      exit 2
 //     missing/inaccessible app: { ok: false, reason: 'api-error', ... } exit 17
-//       (fetchMiniAppWithDraft throws TossApiError — surfaces via the
+//       (fetchMiniAppDetail throws TossApiError — surfaces via the
 //        shared api-error handler, not a dedicated app-not-found shape)
 //
 //   app show <id> --diff:
-//     { ok: true, workspaceId, appId, diffMode: true,
+//     { ok: true, workspaceId, appId, diffMode: true, diffAvailable: false,
 //       reviewState, locked, lockReason,
-//       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt,
-//       diff: { hasDraft, hasCurrent, changed: [{field, draft, current}], unchangedCount } }  exit 0
+//       hasApproved, hasInReview, hasDraft, isBeforeFirstReview,
+//       serviceStatus, shutdownCandidateStatus, scheduledShutdownAt }   exit 0
 //
-// `view` picks which part of the with-draft envelope to surface:
-// - `draft` (default) — the editor's latest state, populated as soon as
-//   the app is created. This is what `app register` just wrote; it's the
-//   only reliable view until the app is approved and published.
-// - `current` — the published/reviewed record end users see. Empty until
-//   the app's first approval, so defaulting here would hide almost every
-//   field we care about — hence the default is `draft`.
-// - `merged` — current with draft overlaid on top (draft wins per field).
-//   Useful once both exist and the user wants the "authoritative" snapshot.
+// `view` picks which value to surface from the single mini-app record the
+// console now returns (see docs/api/mini-apps.md — the old `/with-draft`
+// call that separately returned `current`/`draft` 404s as of issue #219;
+// its replacement folds both into one `miniApp` record plus summary flags):
+// - `draft` (default) — the record as returned by the endpoint. Always
+//   populated once the app exists, reviewed or not — the same role the old
+//   `draft` view played.
+// - `current` — the same record, but only surfaced once the app has been
+//   approved at least once (`hasApproved`); otherwise `null`, preserving
+//   the old "empty until first approval" contract so agent-plugin can
+//   still tell "not reviewed" from "reviewed and published" via `view`.
+// - `merged` — same as `draft` (there's only one snapshot to merge now).
 //
 // The `--view` flag intentionally never falls back on its own. If the
 // caller asks for `current` on an unreviewed app they get `miniApp: null`
-// with `view: 'current'` so agent-plugin can tell the two cases apart.
+// with `view: 'current'`.
 //
-// `reviewState`/`locked`/`lockReason` are derived from the envelope-level
-// `approvalType` + `current`/`draft`/`rejectedMessage` combo (same shape as
-// `app status`). `serviceStatus`/`shutdownCandidateStatus`/`scheduledShutdownAt`
-// come from the `/review-status` endpoint and may be `null` if that call
-// fails (we still return the review derivation since it's authoritative on
-// its own — see docs/api/mini-apps.md "REVIEW lock 권위").
+// `reviewState`/`locked`/`lockReason` are derived from `approvalType` +
+// `rejectedMessage` (flat siblings of `miniApp` on the envelope — the same
+// fields the old `/with-draft` envelope exposed at the top level, still at
+// the top level here, just under a differently-shaped envelope) combined
+// with the `hasApproved`/`hasDraft` flags — see `reviewStateInputFrom`
+// below and docs/api/mini-apps.md "REVIEW lock 권위". `serviceStatus`/
+// `shutdownCandidateStatus`/`scheduledShutdownAt` come from the separate
+// `/review-status` endpoint
+// (unaffected by this drift) and may be `null` if that call fails — we
+// still return the review derivation since it's authoritative on its own.
+//
+// `--diff` (a draft-vs-current field comparison) is no longer possible from
+// this endpoint: it returns one mini-app snapshot, not two independent
+// draft/current payloads. A dedicated `/mini-app/:id/draft` endpoint exists
+// (confirmed via a structured `mini-app-draft.NotFound` error when no draft
+// is pending) but its populated shape hasn't been observed live, so wiring
+// it up is deferred rather than guessed at. `--diff` still runs but reports
+// `diffAvailable: false` plus the raw `hasApproved`/`hasDraft` flags instead
+// of fabricating a field list that could silently read as "no changes" when
+// the server says a draft does exist.
 export function pickMiniAppView(
-  envelope: { current: Record<string, unknown> | null; draft: Record<string, unknown> | null },
+  detail: { readonly miniApp: Record<string, unknown> | null; readonly hasApproved: boolean },
   view: 'draft' | 'current' | 'merged',
 ): Record<string, unknown> | null {
-  const extract = (side: Record<string, unknown> | null): Record<string, unknown> | null => {
-    if (side === null) return null;
-    const ma = side.miniApp;
-    if (ma !== null && typeof ma === 'object' && !Array.isArray(ma)) {
-      return ma as Record<string, unknown>;
-    }
-    return null;
-  };
-  const draft = extract(envelope.draft);
-  const current = extract(envelope.current);
-  if (view === 'draft') return draft;
-  if (view === 'current') return current;
-  if (current !== null && draft !== null) return { ...current, ...draft };
-  return draft ?? current;
-}
-
-// Whitelist + shallow comparison for `app show --diff`. Deep recursive
-// diffs over arbitrary console payloads aren't useful here — most fields
-// are server-controlled and noisy. We pick the top-level fields the user
-// actually edits via `app register`, plus two shallow `impression`
-// signals (keywordList, first categoryPath name).
-//
-// Each entry maps a stable diff field name (the key surfaced in JSON +
-// printed to stdout) to a getter that pulls the value out of the
-// `miniApp` view returned by `pickMiniAppView` (which already has
-// `impression` nested as a read-side convenience — see docs/api/mini-apps.md
-// "Update-mode payload" for why we don't strip it on read).
-type DiffGetter = (m: Record<string, unknown>) => unknown;
-const DIFF_FIELDS: ReadonlyArray<readonly [string, DiffGetter]> = [
-  ['title', (m) => m.title],
-  ['titleEn', (m) => m.titleEn],
-  ['appName', (m) => m.appName],
-  ['description', (m) => m.description],
-  ['detailDescription', (m) => m.detailDescription],
-  ['homePageUri', (m) => m.homePageUri],
-  ['csEmail', (m) => m.csEmail],
-  ['iconUri', (m) => m.iconUri],
-  ['darkModeIconUri', (m) => m.darkModeIconUri],
-  [
-    'impression.keywordList',
-    (m) => {
-      const imp = m.impression;
-      if (imp === null || typeof imp !== 'object' || Array.isArray(imp)) return undefined;
-      const kw = (imp as Record<string, unknown>).keywordList;
-      return Array.isArray(kw) ? kw : undefined;
-    },
-  ],
-  [
-    'impression.categoryPath',
-    (m) => {
-      // Just the first path's name parts joined "group > category > subCategory".
-      // Single string keeps the diff readable; full path objects are noisy.
-      const imp = m.impression;
-      if (imp === null || typeof imp !== 'object' || Array.isArray(imp)) return undefined;
-      const paths = (imp as Record<string, unknown>).categoryPaths;
-      if (!Array.isArray(paths) || paths.length === 0) return undefined;
-      const first = paths[0];
-      if (first === null || typeof first !== 'object') return undefined;
-      const fp = first as Record<string, unknown>;
-      const parts: string[] = [];
-      for (const key of ['group', 'category', 'subCategory']) {
-        const node = fp[key];
-        if (node !== null && typeof node === 'object') {
-          const nm = (node as Record<string, unknown>).name;
-          if (typeof nm === 'string') parts.push(nm);
-        }
-      }
-      return parts.join(' > ');
-    },
-  ],
-];
-
-export interface DiffEntry {
-  readonly field: string;
-  readonly draft: unknown;
-  readonly current: unknown;
-}
-
-export interface MiniAppDiff {
-  readonly hasDraft: boolean;
-  readonly hasCurrent: boolean;
-  readonly changed: readonly DiffEntry[];
-  readonly unchangedCount: number;
-}
-
-// Equality used by the diff: structural for arrays/objects, strict for
-// primitives. Arrays compare element-by-element with the same predicate;
-// objects key-by-key. Cycles aren't a concern — the with-draft response is
-// JSON, no self-references.
-function diffEquals(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === undefined || b === undefined) return false;
-  if (a === null || b === null) return false;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (!diffEquals(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  if (typeof a === 'object' && typeof b === 'object') {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const ak = Object.keys(ao);
-    const bk = Object.keys(bo);
-    if (ak.length !== bk.length) return false;
-    for (const k of ak) {
-      if (!diffEquals(ao[k], bo[k])) return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-export function compareMiniAppViews(
-  draft: Record<string, unknown> | null,
-  current: Record<string, unknown> | null,
-): MiniAppDiff {
-  const hasDraft = draft !== null;
-  const hasCurrent = current !== null;
-  if (!hasDraft || !hasCurrent) {
-    return { hasDraft, hasCurrent, changed: [], unchangedCount: 0 };
-  }
-  const changed: DiffEntry[] = [];
-  let unchangedCount = 0;
-  for (const [field, getter] of DIFF_FIELDS) {
-    // We pass the non-null branches so getters don't have to re-check.
-    const d = getter(draft);
-    const c = getter(current);
-    if (d === undefined && c === undefined) continue;
-    if (diffEquals(d, c)) {
-      unchangedCount++;
-    } else {
-      changed.push({ field, draft: d, current: c });
-    }
-  }
-  return { hasDraft, hasCurrent, changed, unchangedCount };
-}
-
-// Plain-mode rendering of a single diff value. Long strings collapse to
-// `<N> chars`; arrays show the count. Goal is "scannable in a terminal",
-// not "round-trippable" — the JSON path keeps the raw values for that.
-function formatDiffValue(v: unknown): string {
-  if (v === null) return 'null';
-  if (v === undefined) return '-';
-  if (typeof v === 'string') {
-    // Codepoint count (not UTF-16 length) on both the threshold and the
-    // label — otherwise a string with surrogate-pair emoji could trip the
-    // threshold but report a count that looks too small.
-    const cp = [...v].length;
-    if (cp > 60) return `${cp} chars`;
-    return JSON.stringify(v);
-  }
-  if (Array.isArray(v)) {
-    return `[${v.length} items]`;
-  }
-  if (typeof v === 'object') {
-    return '<object>';
-  }
-  return String(v);
+  if (view === 'current') return detail.hasApproved ? detail.miniApp : null;
+  // 'draft' and 'merged' both resolve to the only snapshot available.
+  return detail.miniApp;
 }
 
 // Service-status string → human label. Unknown values pass through verbatim
@@ -493,32 +357,38 @@ const showCommand = defineCommand({
       // best-effort: if it fails we still want the review derivation,
       // which is authoritative on its own (see docs/api/mini-apps.md
       // "REVIEW lock 권위").
-      const [envelope, service] = await withReauthRetry(args.json, session, (s) =>
+      const [appDetail, service] = await withReauthRetry(args.json, session, (s) =>
         Promise.all([
-          fetchMiniAppWithDraft(workspaceId, appId, s.cookies),
+          fetchMiniAppDetail(workspaceId, appId, s.cookies),
           fetchAppServiceStatus(workspaceId, appId, s.cookies).catch(() => null),
         ]),
       );
-      const derived = deriveReviewState(envelope);
+      const derived = deriveReviewState(reviewStateInputFrom(appDetail));
+      const flags = {
+        hasApproved: appDetail.hasApproved,
+        hasInReview: appDetail.hasInReview,
+        hasDraft: appDetail.hasDraft,
+        isBeforeFirstReview: appDetail.isBeforeFirstReview,
+      };
 
       if (args.diff) {
-        const draftMini = pickMiniAppView(envelope, 'draft');
-        const currentMini = pickMiniAppView(envelope, 'current');
-        const diff = compareMiniAppViews(draftMini, currentMini);
-
         if (args.json) {
           emitJson({
             ok: true,
             workspaceId,
             appId,
             diffMode: true,
+            // Field-level draft↔current comparison is not available from
+            // this endpoint anymore — see the `--diff` note above
+            // `pickMiniAppView`. Flags are the honest substitute.
+            diffAvailable: false,
             reviewState: derived.state,
             locked: derived.locked,
             lockReason: derived.lockReason,
+            ...flags,
             serviceStatus: service?.serviceStatus ?? null,
             shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
             scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
-            diff,
           });
           return exitAfterFlush(ExitCode.Ok);
         }
@@ -532,54 +402,26 @@ const showCommand = defineCommand({
         if (service !== null) {
           process.stdout.write(`Service        ${describeServiceStatus(service.serviceStatus)}\n`);
         }
-        process.stdout.write('\n');
-
-        // Both null is unreachable in practice — `app show` would have
-        // 4xx-failed before reaching this branch — but we keep the guard
-        // so the message ladder reads top-to-bottom rather than relying
-        // on the next two branches to cover the both-null shape.
-        if (!diff.hasDraft && !diff.hasCurrent) {
-          process.stdout.write('App has neither a draft nor a current view yet.\n');
-          return exitAfterFlush(ExitCode.Ok);
-        }
-        if (!diff.hasCurrent) {
-          process.stdout.write('no current view yet — draft is the only state\n');
-          return exitAfterFlush(ExitCode.Ok);
-        }
-        if (!diff.hasDraft) {
-          process.stdout.write('no draft pending — current is the only state\n');
-          return exitAfterFlush(ExitCode.Ok);
-        }
-        if (diff.changed.length === 0) {
-          process.stdout.write('No changes between draft and current.\n');
-          return exitAfterFlush(ExitCode.Ok);
-        }
-
-        // Align field column to the widest changed name for readability.
-        // Cap at 24 so a stray long field name doesn't push the values off
-        // the right edge of an 80-col terminal.
-        const fieldWidth = Math.min(24, Math.max(...diff.changed.map((c) => c.field.length)) + 2);
-        process.stdout.write('Changed:\n');
-        for (const entry of diff.changed) {
-          const name = entry.field.padEnd(fieldWidth);
-          process.stdout.write(
-            `  ${name} ${formatDiffValue(entry.draft)} → ${formatDiffValue(entry.current)}\n`,
-          );
-        }
-        if (diff.unchangedCount > 0) {
-          process.stdout.write(`\nUnchanged: ${diff.unchangedCount} fields\n`);
-        }
+        process.stdout.write(
+          `Flags          hasApproved=${flags.hasApproved} hasInReview=${flags.hasInReview} ` +
+            `hasDraft=${flags.hasDraft} isBeforeFirstReview=${flags.isBeforeFirstReview}\n`,
+        );
+        process.stdout.write(
+          '\nField-level draft↔current diff is not available from the console API anymore ' +
+            '(upstream endpoint drift, see docs/api/mini-apps.md). Use the flags above and ' +
+            '`app show` (no --diff) to inspect the current record.\n',
+        );
         return exitAfterFlush(ExitCode.Ok);
       }
 
-      const miniApp = pickMiniAppView(envelope, view);
+      const miniApp = pickMiniAppView(appDetail, view);
 
       // Emit a one-line stderr hint when `--view current` comes back
-      // empty but a draft exists — this is the most common confusion
-      // (unreviewed apps have a populated draft and an empty current).
+      // empty but the app has data — this is the most common confusion
+      // (unreviewed apps have a populated record but an empty `current`).
       // stderr so both JSON and plain callers see it without the JSON
       // shape changing.
-      if (miniApp === null && view === 'current' && envelope.draft !== null) {
+      if (miniApp === null && view === 'current' && appDetail.miniApp !== null) {
         process.stderr.write(
           `App ${appId} has no \`current\` view yet (not reviewed). Re-run with \`--view draft\` to see the pending record.\n`,
         );
@@ -595,6 +437,7 @@ const showCommand = defineCommand({
           reviewState: derived.state,
           locked: derived.locked,
           lockReason: derived.lockReason,
+          ...flags,
           serviceStatus: service?.serviceStatus ?? null,
           shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
           scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
@@ -605,7 +448,7 @@ const showCommand = defineCommand({
       if (miniApp === null) {
         // Plain-text path keeps the stdout summary (the stderr hint is
         // already out of the way). Avoid duplicating it here.
-        if (view === 'current' && envelope.draft !== null) {
+        if (view === 'current' && appDetail.miniApp !== null) {
           process.stdout.write(`App ${appId} has no \`current\` view yet.\n`);
         } else {
           process.stdout.write(`App ${appId} has no data for view=${view}.\n`);
@@ -643,6 +486,10 @@ const showCommand = defineCommand({
       if (service !== null) {
         process.stdout.write(`Service        ${describeServiceStatus(service.serviceStatus)}\n`);
       }
+      process.stdout.write(
+        `Flags          hasApproved=${flags.hasApproved} hasInReview=${flags.hasInReview} ` +
+          `hasDraft=${flags.hasDraft} isBeforeFirstReview=${flags.isBeforeFirstReview}\n`,
+      );
       process.stdout.write(`Home page      ${pick('homePageUri')}\n`);
       process.stdout.write(`CS email       ${pick('csEmail')}\n`);
       process.stdout.write(`Logo           ${pick('iconUri')}\n`);
@@ -677,17 +524,17 @@ const showCommand = defineCommand({
 });
 
 // Derived review state. The console UI's "검토 중" banner is not a single
-// API field — it's composed from the /with-draft envelope. We surface the
-// derivation so `aitcc app status` is the one place the rule lives.
+// API field — it's composed from the mini-app detail response. We surface
+// the derivation so `aitcc app status` is the one place the rule lives.
 //
 // Observed combinations (2026-04-23 on workspace 3095, apps 29349/29356/
-// 29397/29405 all under review):
+// 29397/29405 all under review, captured via the old `/with-draft` path):
 //
-//   approvalType=REVIEW current=null  rejectedMessage=null   → under-review
-//   approvalType=REVIEW current=null  rejectedMessage=STR    → rejected
-//   approvalType=REVIEW current=ROW   (draft is edits-in-flight) → approved (with pending edits)
-//   approvalType=REVIEW current=ROW   draft=null or equal    → approved
-//   approvalType=null                                         → not-submitted (edit draft only)
+//   approvalType=REVIEW hasCurrent=false rejectedMessage=null   → under-review
+//   approvalType=REVIEW hasCurrent=false rejectedMessage=STR    → rejected
+//   approvalType=REVIEW hasCurrent=true  hasDraft=true (edits-in-flight) → approved-with-edits
+//   approvalType=REVIEW hasCurrent=true  hasDraft=false          → approved
+//   approvalType=null                                            → not-submitted (draft only)
 //
 // Unknown combinations fall through to `unknown` so callers can log and
 // we can extend the ladder as new signals come in.
@@ -716,14 +563,22 @@ export interface DerivedStatus {
   readonly lockReason: LockReason | null;
 }
 
+// `deriveReviewState` takes plain booleans/strings rather than nested
+// records — up through 0.1.45 this took `{current, draft}` records straight
+// off the `/with-draft` envelope and derived `hasCurrent`/`hasDraft` from
+// `!== null`. That endpoint 404s as of issue #219; its replacement
+// (`fetchMiniAppDetail`) already hands back `hasApproved`/`hasDraft` as
+// booleans, so this function now takes the booleans directly instead of
+// re-deriving them from nullable records. The state-machine logic below is
+// otherwise unchanged from the original `/with-draft`-era derivation.
 export function deriveReviewState(env: {
-  current: Record<string, unknown> | null;
-  draft: Record<string, unknown> | null;
+  hasCurrent: boolean;
+  hasDraft: boolean;
   approvalType: string | null;
   rejectedMessage: string | null;
 }): DerivedStatus {
-  const hasCurrent = env.current !== null;
-  const hasDraft = env.draft !== null;
+  const hasCurrent = env.hasCurrent;
+  const hasDraft = env.hasDraft;
   const approvalType = env.approvalType;
   const rejectedMessage = env.rejectedMessage;
 
@@ -749,10 +604,39 @@ export function deriveReviewState(env: {
   return { state, approvalType, rejectedMessage, hasCurrent, hasDraft, locked, lockReason };
 }
 
-// Status column for `app ls`. Composes the with-draft-derived `ReviewState`
-// with the workspace review-status entry's `serviceStatus` so a published,
-// running app shows `in-service` instead of the bare `approved`. lock is
-// authoritative on `approvalType === 'REVIEW'` (see docs/api/mini-apps.md
+// Bridges `MiniAppDetail` (the `fetchMiniAppDetail` response) to
+// `deriveReviewState`'s input shape. `approvalType`/`rejectedMessage` are
+// flat siblings of `miniApp` on the envelope, not nested inside it — same
+// fields the old `/with-draft` envelope exposed at its top level, just
+// under a differently-shaped envelope now (live-confirmed 2026-07-23,
+// workspace 3095 / app 31146: `success.approvalType: "APPROVED"`,
+// `success.rejectedMessage: null`, both siblings of `success.miniApp`).
+// `hasCurrent` is sourced from the envelope-level `hasApproved` flag — only
+// confirmed equivalent to the old `current !== null` check for the
+// APPROVED case so far; revisit if a REVIEW/REJECTED capture disagrees.
+export function reviewStateInputFrom(detail: MiniAppDetail): {
+  hasCurrent: boolean;
+  hasDraft: boolean;
+  approvalType: string | null;
+  rejectedMessage: string | null;
+} {
+  // `approvalType`/`rejectedMessage` are flat siblings of `miniApp` on the
+  // `success` envelope, not nested inside `miniApp` itself — confirmed via
+  // a second live probe during verification (see the doc comment on
+  // `MiniAppDetail` in src/api/mini-apps.ts). `fetchMiniAppDetail` already
+  // normalises them onto `detail` directly.
+  return {
+    hasCurrent: detail.hasApproved,
+    hasDraft: detail.hasDraft,
+    approvalType: detail.approvalType,
+    rejectedMessage: detail.rejectedMessage,
+  };
+}
+
+// Status column for `app ls`. Composes the mini-app-detail-derived
+// `ReviewState` with the workspace review-status entry's `serviceStatus` so
+// a published, running app shows `in-service` instead of the bare
+// `approved`. lock is authoritative on `approvalType === 'REVIEW'` (see docs/api/mini-apps.md
 // "REVIEW lock 권위") — derived ladder labels like `approved-with-edits`
 // imply lock but are not the gate themselves.
 export type AppLsStatus =
@@ -889,8 +773,9 @@ const statusCommand = defineCommand({
           appId,
           ...status,
           // `null` only in the unlikely case the service-status endpoint
-          // failed but with-draft succeeded — we fall through rather than
-          // hard-failing, because the derived review state is still useful.
+          // failed but the mini-app detail call succeeded — we fall through
+          // rather than hard-failing, because the derived review state is
+          // still useful.
           serviceStatus: service?.serviceStatus ?? null,
           shutdownCandidateStatus: service?.shutdownCandidateStatus ?? null,
           scheduledShutdownAt: service?.scheduledShutdownAt ?? null,
@@ -924,13 +809,13 @@ const statusCommand = defineCommand({
         // cookie and the console backend has no cross-rate-limit we've
         // observed. `service-status` is best-effort: if it fails we still
         // want the review state through.
-        const [env, service] = await withReauthRetry(args.json, session, (s) =>
+        const [appDetail, service] = await withReauthRetry(args.json, session, (s) =>
           Promise.all([
-            fetchMiniAppWithDraft(workspaceId, appId, s.cookies),
+            fetchMiniAppDetail(workspaceId, appId, s.cookies),
             fetchAppServiceStatus(workspaceId, appId, s.cookies).catch(() => null),
           ]),
         );
-        return [deriveReviewState(env), service];
+        return [deriveReviewState(reviewStateInputFrom(appDetail)), service];
       };
 
       if (!args.watch) {
