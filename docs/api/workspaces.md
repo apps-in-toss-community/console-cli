@@ -11,8 +11,8 @@
 | GET | `/workspaces` | 사용자 워크스페이스 목록 (앱 inline 포함) | ✅ |
 | GET | `/workspaces/invited` | 받은 초대 목록 | ✅ |
 | GET | `/workspaces/<wid>` | 워크스페이스 상세 | ✅ |
-| GET | `/workspaces/<wid>/partner` | 파트너(빌링/정산 주체) 정보 | ⚠️ |
-| GET | `/workspaces/<wid>/partner/is-registered` | 파트너 등록 여부 | ⚠️ |
+| GET | `/workspaces/<wid>/partner` | 파트너(빌링/정산 주체) 정보 | ✅ |
+| GET | `/workspaces/<wid>/partner/is-registered` | 파트너 등록 여부 | ✅ |
 | GET | `/workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=` | 사업자번호 조회 | ⚠️ |
 | GET | `/workspaces/<wid>/segments/list` | 세그먼트 목록 (page/category/search) | ⚠️ |
 | GET | `/workspaces/<wid>/console-workspace-terms/<type>/skip-permission` | 약관 동의 필요 여부 | ⚠️ |
@@ -58,6 +58,53 @@
   }
 }
 ```
+
+## `GET /workspaces/<wid>/partner/is-registered` — 파트너 등록 여부
+
+- **Used by**: [`src/api/workspaces.ts#fetchWorkspacePartnerIsRegistered`](../../src/api/workspaces.ts), `aitcc workspace partner`
+- **Capture status**: ✅ confirmed (2026-07-23, workspace 3095, 미등록 상태)
+- **Auth**: 세션 쿠키
+- `/partner`보다 가벼운 전용 상태 체크 endpoint. 같은 `registered`/`approvalType`/`rejectMessage` 트리오를 반환하지만 `partner` 상세 블록은 없다.
+
+### Response
+
+```json
+{
+  "resultType": "SUCCESS",
+  "success": { "registered": false, "approvalType": "DRAFT", "rejectMessage": null }
+}
+```
+
+## `GET /workspaces/<wid>/partner` — 파트너(빌링/정산 주체) 정보
+
+- **Used by**: [`src/api/workspaces.ts#fetchWorkspacePartner`](../../src/api/workspaces.ts), `aitcc workspace partner`
+- **Capture status**: ✅ confirmed (2026-07-23, workspace 3095, 미등록 상태)
+- **Auth**: 세션 쿠키
+- `registered: false`일 때 `partner`는 `null`. 승인된 이후의 `partner` 상세 블록 shape은 아직 미관측.
+
+### Response
+
+```json
+{
+  "resultType": "SUCCESS",
+  "success": {
+    "registered": false,
+    "approvalType": "DRAFT",
+    "rejectMessage": null,
+    "partner": null
+  }
+}
+```
+
+### `aitcc workspace partner`의 병합
+
+`aitcc workspace partner`는 이 두 endpoint(`/partner`, `/partner/is-registered`)를 병렬로 호출해 하나의 상태 뷰로 합친다(`src/commands/workspace.ts#mergePartnerStates`). 지금까지의 유일한 라이브 관측(workspace 3095, 미등록 상태)에서는 두 endpoint가 정확히 일치했다 — 서로 다른 값을 반환하는 사례는 아직 없다. 병합 규칙: `registered`는 둘 중 하나라도 `true`면 `true`(이미 등록된 상태를 숨기지 않는 쪽으로 fail), `approvalType`/`rejectMessage`는 `/partner` 값을 우선하고 `null`일 때만 `/partner/is-registered` 값으로 fallback.
+
+### `GET /workspaces/<wid>/partner/review` — 미등록 상태에서 500
+
+- **Capture status**: ⚠️ inferred (path만 정적 분석으로 확인, 응답은 관측했으나 shape 미확정)
+- **관측** (2026-07-23, workspace 3095, 미등록 상태): `resultType: FAIL, errorCode: "500"`. 미등록 워크스페이스에서 review 상세를 조회하려는 시도 자체가 서버 오류로 이어지는 것으로 보인다 — 파트너 등록 후 재관측 필요.
+- CLI는 이 endpoint를 아직 사용하지 않는다 (`aitcc workspace partner`는 `/partner` + `/partner/is-registered`만 호출).
 
 ## `GET /workspaces/<wid>/segments/list` — 세그먼트 목록
 
@@ -135,7 +182,6 @@ shape은 [`auth-session.md`](./auth-session.md)의 `/console-user-terms/me`와 �
 
 ## 미캡처 endpoint
 
-- `GET /workspaces/<wid>/partner`, `/partner/is-registered`: 파트너 등록 흐름. CLI 미사용. 코드의 `fetchWorkspacePartner`는 inferred shape.
 - `GET /workspaces/<wid>/business-number/verify/by-biz-reg-no?bizRegNo=`: 사업자번호 조회. 콘솔 등록 마법사에서 호출됨.
 - `POST /workspaces`, `PATCH /workspaces/<wid>/edit`: 워크스페이스 생성/수정. CLI scope 밖.
 - `POST /workspaces/<wid>/owner-delegations`, `/owner-delegations/complete`: 소유권 위임. CLI scope 밖.

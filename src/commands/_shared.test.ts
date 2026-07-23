@@ -148,6 +148,13 @@ describe('hintForErrorCode', () => {
     expect(hintForErrorCode('4010')).toBeUndefined();
     expect(hintForErrorCode(undefined)).toBeUndefined();
   });
+
+  it('5002 hint points to aitcc workspace partner', () => {
+    const hint = hintForErrorCode('5002');
+    expect(hint).toBeDefined();
+    expect(hint).toContain('거래처 등록');
+    expect(hint).toContain('aitcc workspace partner');
+  });
 });
 
 describe('formatAiRiskPreflightWarning', () => {

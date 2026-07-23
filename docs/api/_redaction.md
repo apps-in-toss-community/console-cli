@@ -29,7 +29,7 @@
 | `description`, `detailDescription` | `<app_subtitle>`, `<app_description>` | 사용자 입력 본문. shape 보존을 위해 길이는 짧게 |
 | `keywordList` 항목들 | `["<keyword>", ...]` | 갯수만 보존, 내용은 placeholder |
 | 이미지 CDN URL의 UUID | `<image_uuid>` | `https://static.toss.im/appsintoss/<wid>/<image_uuid>.png` 형태로 host/path는 유지 |
-| `miniAppId`(특정 사용자의 앱 id) | 그대로 두되 본 inventory 작성에 사용된 sdk-example dog-food 앱들(29349, 29356, 29397, 29405)은 공개 식별자로 취급 |
+| `miniAppId`(특정 사용자의 앱 id) | 그대로 두되 본 inventory 작성에 사용된 sdk-example dog-food 앱들(29349, 29356, 29397, 29405 — trail, 더 이상 touch 안 함) 및 현재 메인 dog-food 앱(`31146` `aitcc-sdk-example`)은 공개 식별자로 취급 |
 
 ## 유지하는 것 (redact 안 함)
 

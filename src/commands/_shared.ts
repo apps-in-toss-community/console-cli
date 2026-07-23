@@ -120,6 +120,9 @@ export function hintForErrorCode(errorCode: string | undefined): string | undefi
       '비대화형/--json 환경에서는 --yes로 확인).'
     );
   }
+  if (errorCode === '5002') {
+    return '거래처 등록이 필요합니다 — `aitcc workspace partner`로 상태를 확인하세요.';
+  }
   return undefined;
 }
 

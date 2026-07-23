@@ -82,6 +82,36 @@ export async function fetchWorkspacePartner(
   return { registered, approvalType, rejectMessage, partner };
 }
 
+// `partner/is-registered` is a lighter-weight sibling of `partner` — same
+// `registered`/`approvalType`/`rejectMessage` trio, no `partner` detail
+// blob. `aitcc workspace partner` calls both in parallel and merges them
+// into a single status view (see src/commands/workspace.ts).
+export interface WorkspacePartnerIsRegisteredState {
+  readonly registered: boolean;
+  readonly approvalType: string | null;
+  readonly rejectMessage: string | null;
+}
+
+export async function fetchWorkspacePartnerIsRegistered(
+  workspaceId: number,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<WorkspacePartnerIsRegisteredState> {
+  const url = `${WORKSPACES_BASE}/workspaces/${workspaceId}/partner/is-registered`;
+  const raw = await requestConsoleApi<Record<string, unknown>>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  const registered = raw.registered;
+  if (typeof registered !== 'boolean') {
+    throw new Error(`Unexpected workspace partner/is-registered shape for id=${workspaceId}`);
+  }
+  const approvalType = typeof raw.approvalType === 'string' ? raw.approvalType : null;
+  const rejectMessage = typeof raw.rejectMessage === 'string' ? raw.rejectMessage : null;
+  return { registered, approvalType, rejectMessage };
+}
+
 // `console-workspace-terms/:type/skip-permission` returns the terms a
 // workspace owner must agree to before the feature gated by `:type`
 // becomes available. The supported types are enumerated here verbatim

@@ -46,6 +46,7 @@ import {
   withReauthRetry,
 } from './_shared.js';
 import { runDeploy } from './app-deploy.js';
+import { iapCommand } from './app-iap.js';
 import { runAppInit } from './app-init.js';
 import { runRegister } from './register.js';
 
@@ -3537,6 +3538,7 @@ export const appCommand = defineCommand({
     reports: reportsCommand,
     bundles: bundlesCommand,
     certs: certsCommand,
+    iap: iapCommand,
     metrics: metricsCommand,
     'share-rewards': shareRewardsCommand,
     messages: messagesCommand,

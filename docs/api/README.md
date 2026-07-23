@@ -22,6 +22,7 @@
 | Mini-apps · 이미지 업로드 | [`mini-app-images.md`](./mini-app-images.md) | ✅ confirmed |
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
 | Mini-apps · 기타 (certs/params/analytics/logs) | [`mini-app-misc.md`](./mini-app-misc.md) | ⚠️ inferred (정적 분석) |
+| In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate ✅, 목록/상세/생성 shape inferred) |
 | API Keys | [`api-keys.md`](./api-keys.md) | ✅ confirmed |
 | Impression (카테고리) | [`impression.md`](./impression.md) | ✅ confirmed |
 | Notices (별도 호스트) | [`notices.md`](./notices.md) | ⚠️ inferred |
@@ -56,6 +57,7 @@
 | Workspaces | [`src/api/workspaces.ts`](../../src/api/workspaces.ts) |
 | Members · Invites | [`src/api/members.ts`](../../src/api/members.ts), [`src/commands/members.ts`](../../src/commands/members.ts) |
 | Mini-apps | [`src/api/mini-apps.ts`](../../src/api/mini-apps.ts), [`src/commands/register.ts`](../../src/commands/register.ts), [`src/commands/register-payload.ts`](../../src/commands/register-payload.ts) |
+| In-app purchase | [`src/api/in-app-purchase.ts`](../../src/api/in-app-purchase.ts), [`src/commands/app-iap.ts`](../../src/commands/app-iap.ts) |
 | API Keys | [`src/api/api-keys.ts`](../../src/api/api-keys.ts), [`src/commands/keys.ts`](../../src/commands/keys.ts) |
 | Notices | [`src/api/ipd-thor.ts`](../../src/api/ipd-thor.ts), [`src/commands/notices.ts`](../../src/commands/notices.ts) |
 
@@ -66,7 +68,6 @@
 **우선순위 1 — 빈 워크스페이스에서도 가능 (가장 빨리 해소 가능)**:
 
 - `GET /workspaces/<wid>/members/me` — workspace landing 시 자동 호출, `.playwright-mcp/xhr-captures/`에 raw 있을 가능성. ([`members.md`](./members.md))
-- `GET /workspaces/<wid>/partner/is-registered` — 동일. ([`workspaces.md`](./workspaces.md))
 - `GET /workspaces/<wid>/console-workspace-terms/<type>/skip-permission` — 등록 마법사 진입 시 호출. ([`workspaces.md`](./workspaces.md))
 - `GET /workspaces/129/posts`, `/categories` (notices) — 사이드바 자동 호출. ([`notices.md`](./notices.md))
 - `GET /workspaces/129/posts/<post_id>` — 공지 상세 1개 클릭. ([`notices.md`](./notices.md))
@@ -76,6 +77,9 @@
 - `POST /workspaces/<wid>/mini-app/pre-review` — AI 사전 검토 버튼. ([`mini-apps.md`](./mini-apps.md))
 - `mini-app-bundles.md` 전체 — `app deploy` 흐름 (initialize → upload → complete → review → release) E2E. ([`mini-app-bundles.md`](./mini-app-bundles.md))
 - `app reports` cursor pagination shape — 한 번이라도 신고 들어오면 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
+- `GET .../in-app-purchase/catalogs` 실제 목록/`catalog/<productId>` 상세 SUCCESS shape — 현재는 파트너 미등록 5002 gate만 관측됨. 거래처 등록 후 재관측 필요. ([`in-app-purchase.md`](./in-app-purchase.md))
+- `POST .../in-app-purchase/product/inspection` (products create) 실제 request/response — 메인테이너 승인 게이트 뒤에서만 실행 (issue #220 SECRET-HANDLING). ([`in-app-purchase.md`](./in-app-purchase.md))
+- `GET .../in-app-purchase/orders`, `/refunds` 실제 목록 shape. ([`in-app-purchase.md`](./in-app-purchase.md))
 
 **우선순위 3 — 운영 데이터 누적 후**:
 

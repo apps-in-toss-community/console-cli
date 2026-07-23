@@ -5,9 +5,12 @@ import {
   agreeWorkspaceTerms,
   fetchWorkspaceDetail,
   fetchWorkspacePartner,
+  fetchWorkspacePartnerIsRegistered,
   fetchWorkspaceSegments,
   fetchWorkspaceTerms,
   WORKSPACE_TERM_TYPES,
+  type WorkspacePartnerIsRegisteredState,
+  type WorkspacePartnerState,
   type WorkspaceTerm,
   type WorkspaceTermType,
 } from '../api/workspaces.js';
@@ -265,6 +268,38 @@ const showCommand = defineCommand({
   },
 });
 
+export interface CombinedPartnerState {
+  readonly registered: boolean;
+  readonly approvalType: string | null;
+  readonly rejectMessage: string | null;
+  readonly partner: Readonly<Record<string, unknown>> | null;
+}
+
+// `GET .../partner` (detail, carries the `partner` blob once approved) and
+// `GET .../partner/is-registered` (a lighter dedicated status check) both
+// answer the same registered/approvalType/rejectMessage question — issue
+// #220 asks `workspace partner` to call both and merge them into one status
+// view instead of only reading the detail endpoint. The only live
+// observation we have (workspace 3095, unregistered) shows them agreeing
+// exactly: {registered:false, approvalType:'DRAFT', rejectMessage:null}.
+// We don't have a live example of them disagreeing, so the merge picks a
+// conservative default: `registered` is true if EITHER endpoint reports it
+// (fail toward "already registered" rather than masking a registration one
+// endpoint hasn't caught up on yet), and approvalType/rejectMessage prefer
+// the detail endpoint's value, falling back to the is-registered endpoint's
+// when the detail endpoint's is null.
+export function mergePartnerStates(
+  partner: WorkspacePartnerState,
+  isRegistered: WorkspacePartnerIsRegisteredState,
+): CombinedPartnerState {
+  return {
+    registered: partner.registered || isRegistered.registered,
+    approvalType: partner.approvalType ?? isRegistered.approvalType,
+    rejectMessage: partner.rejectMessage ?? isRegistered.rejectMessage,
+    partner: partner.partner,
+  };
+}
+
 const partnerCommand = defineCommand({
   meta: {
     name: 'partner',
@@ -284,9 +319,13 @@ const partnerCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
 
     try {
-      const state = await withReauthRetry(args.json, session, (s) =>
-        fetchWorkspacePartner(workspaceId, s.cookies),
+      const [partnerState, isRegisteredState] = await withReauthRetry(args.json, session, (s) =>
+        Promise.all([
+          fetchWorkspacePartner(workspaceId, s.cookies),
+          fetchWorkspacePartnerIsRegistered(workspaceId, s.cookies),
+        ]),
       );
+      const state = mergePartnerStates(partnerState, isRegisteredState);
       if (args.json) {
         emitJson({
           ok: true,
