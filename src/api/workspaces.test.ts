@@ -5,6 +5,7 @@ import {
   agreeWorkspaceTerms,
   fetchWorkspaceDetail,
   fetchWorkspacePartner,
+  fetchWorkspacePartnerIsRegistered,
   fetchWorkspaceSegments,
   fetchWorkspaceTerms,
 } from './workspaces.js';
@@ -152,6 +153,53 @@ describe('fetchWorkspacePartner', () => {
     expect(got.approvalType).toBeNull();
     expect(got.rejectMessage).toBeNull();
     expect(got.partner).toBeNull();
+  });
+});
+
+describe('fetchWorkspacePartnerIsRegistered', () => {
+  it('hits /workspaces/:id/partner/is-registered and returns the normalised state', async () => {
+    let calledUrl = '';
+    const fetchImpl: FetchLike = async (input) => {
+      calledUrl = input instanceof URL ? input.toString() : String(input);
+      return new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { registered: false, approvalType: 'DRAFT', rejectMessage: null },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const got = await fetchWorkspacePartnerIsRegistered(3095, cookies, { fetchImpl });
+    expect(calledUrl).toBe(
+      'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole/workspaces/3095/partner/is-registered',
+    );
+    expect(got).toEqual({ registered: false, approvalType: 'DRAFT', rejectMessage: null });
+  });
+
+  it('rejects a response missing registered', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(JSON.stringify({ resultType: 'SUCCESS', success: { approvalType: 'DRAFT' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    await expect(fetchWorkspacePartnerIsRegistered(3095, cookies, { fetchImpl })).rejects.toThrow(
+      /Unexpected workspace partner\/is-registered shape/,
+    );
+  });
+
+  it('nulls approvalType and rejectMessage when they are the wrong type', async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          resultType: 'SUCCESS',
+          success: { registered: true, approvalType: 42, rejectMessage: 123 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const got = await fetchWorkspacePartnerIsRegistered(3095, cookies, { fetchImpl });
+    expect(got.registered).toBe(true);
+    expect(got.approvalType).toBeNull();
+    expect(got.rejectMessage).toBeNull();
   });
 });
 

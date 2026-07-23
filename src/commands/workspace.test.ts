@@ -10,6 +10,7 @@ import {
   blocksFor,
   describeAgreeError,
   formatBlocksHint,
+  mergePartnerStates,
   processAgreeBuckets,
   TERM_BLOCKS,
   validateAgreeArgs,
@@ -338,5 +339,48 @@ describe('describeAgreeError', () => {
 
   it('coerces non-Error values to a string', () => {
     expect(describeAgreeError('weird')).toBe('weird');
+  });
+});
+
+describe('mergePartnerStates', () => {
+  it('reproduces the observed fresh-workspace state when both endpoints agree (workspace 3095)', () => {
+    const merged = mergePartnerStates(
+      { registered: false, approvalType: 'DRAFT', rejectMessage: null, partner: null },
+      { registered: false, approvalType: 'DRAFT', rejectMessage: null },
+    );
+    expect(merged).toEqual({
+      registered: false,
+      approvalType: 'DRAFT',
+      rejectMessage: null,
+      partner: null,
+    });
+  });
+
+  it('treats registered as true if either endpoint reports it', () => {
+    const merged = mergePartnerStates(
+      { registered: false, approvalType: 'DRAFT', rejectMessage: null, partner: null },
+      { registered: true, approvalType: 'APPROVED', rejectMessage: null },
+    );
+    expect(merged.registered).toBe(true);
+  });
+
+  it('falls back to is-registered fields only when the detail endpoint field is null', () => {
+    const merged = mergePartnerStates(
+      { registered: true, approvalType: null, rejectMessage: null, partner: { id: 1 } },
+      { registered: true, approvalType: 'APPROVED', rejectMessage: 'nope' },
+    );
+    expect(merged.approvalType).toBe('APPROVED');
+    expect(merged.rejectMessage).toBe('nope');
+    // partner detail blob always comes from the /partner endpoint — the
+    // is-registered endpoint doesn't carry one.
+    expect(merged.partner).toEqual({ id: 1 });
+  });
+
+  it('prefers the detail endpoint value when both are non-null', () => {
+    const merged = mergePartnerStates(
+      { registered: true, approvalType: 'APPROVED', rejectMessage: null, partner: null },
+      { registered: true, approvalType: 'DRAFT', rejectMessage: null },
+    );
+    expect(merged.approvalType).toBe('APPROVED');
   });
 });
