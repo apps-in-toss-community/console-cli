@@ -205,26 +205,52 @@ function normalizeListPage(raw: unknown, label: string): IapListPage {
 // POST .../mini-app/:aid/in-app-purchase/product/inspection — create AND
 // submit for inspection in one call, the same "one POST does both" shape
 // already confirmed for mini-app registration (`POST .../mini-app/review`,
-// see docs/api/mini-apps.md "Update mode"). ⚠️ Inferred: recovered by
-// tracing the shared `IAPProductEditor` form component's `handleSubmit`
-// composition (`IAPProductEditor.BQeOKeLb.js`) through to the create page's
-// wrapper (`index.C6av4Lke.js`) — never live-confirmed, and per
-// SECRET-HANDLING policy this function is never invoked against the real
-// console API outside of a maintainer-approved live registration.
+// see docs/api/mini-apps.md "Update mode"). ✅ Body shape confirmed via
+// console SPA serialization-logic measurement (issue #232, 2026-07-25),
+// high confidence — recovered by tracing the shared `IAPProductEditor` form
+// component's `handleSubmit` composition (`IAPProductEditor.BQeOKeLb.js`)
+// through to the create page's wrapper (`index.C6av4Lke.js`). Per
+// SECRET-HANDLING policy this function is still never invoked against the
+// real console API in this repo — this is a "confirmed contract, not yet
+// live-executed" state (create = review submission, gated on an APPROVED
+// deployment + the IAP 위탁매매 약관 (errorCode 5001) — see
+// docs/api/in-app-purchase.md "products create — confirmed body shape").
+// The real first call happens behind a maintainer-approved `--confirm`
+// invocation, likely after those preconditions are satisfied.
 //
 // Field-level rules mirrored from the form's react-hook-form `rules`
-// (see docs/api/in-app-purchase.md "products create — inferred body shape"
+// (see docs/api/in-app-purchase.md "products create — confirmed body shape"
 // for the exact source lines):
 //   - name: required, <=30 chars
 //   - description: required, <=45 chars
-//   - price: required, 400 <= price <= 1,400,000 (KRW, integer)
-//   - renewalCycle: required iff type === 'SUBSCRIPTION', absent otherwise
-//   - discountPolicies: only meaningful for SUBSCRIPTION, [] otherwise
+//   - price: required, 400 <= price <= 1,400,000 (KRW, integer, 10-KRW steps
+//     — the console UI snaps to the nearest multiple of 10; the CLI mirrors
+//     this client-side, see `validateCreateIapProductArgs` in
+//     src/commands/app-iap.ts)
+//   - minDeploymentId: required, must reference an APPROVED-status
+//     deployment (server-side hard precondition — see the `--min-deployment`
+//     flag comment in src/commands/app-iap.ts for why the CLI does not yet
+//     verify this client-side)
+//   - renewalCycle: required iff type === 'SUBSCRIPTION', rejected otherwise
+//   - discountPolicies: only meaningful for SUBSCRIPTION (checked-entry
+//     array, see `IapDiscountPolicyInput` below), forced `[]` otherwise
 //   - currency / defaultLocale: hardcoded 'KRW' / 'KO_KR' by the form itself
+export const IAP_DISCOUNT_TYPES = ['FREE_TRIAL', 'NEW_SUBSCRIPTION', 'RETURNING'] as const;
+export type IapDiscountType = (typeof IAP_DISCOUNT_TYPES)[number];
+
+// FREE_TRIAL's `period` is a fixed enum of trial lengths (not a numeric
+// day count) — confirmed via the same SPA serialization measurement as the
+// rest of this body shape.
+export const IAP_FREE_TRIAL_PERIODS = ['THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH'] as const;
+export type IapFreeTrialPeriod = (typeof IAP_FREE_TRIAL_PERIODS)[number];
+
 export interface IapDiscountPolicyInput {
-  readonly discountType: 'FREE_TRIAL' | 'NEW_SUBSCRIPTION' | 'RETURNING';
-  readonly period?: number;
+  readonly discountType: IapDiscountType;
+  /** FREE_TRIAL only. */
+  readonly period?: IapFreeTrialPeriod;
+  /** NEW_SUBSCRIPTION / RETURNING only, <=12. */
   readonly durationMonths?: number;
+  /** NEW_SUBSCRIPTION / RETURNING only. */
   readonly discountedNetPrice?: number;
 }
 

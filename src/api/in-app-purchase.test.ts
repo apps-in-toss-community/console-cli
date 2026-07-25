@@ -240,14 +240,14 @@ describe('createIapProduct', () => {
         minDeploymentId: 7,
         postInspectionStatus: 'INACTIVE',
         renewalCycle: 'MONTHLY',
-        discountPolicies: [{ discountType: 'FREE_TRIAL', period: 7 }],
+        discountPolicies: [{ discountType: 'FREE_TRIAL', period: 'ONE_WEEK' }],
       },
       cookies,
       { fetchImpl },
     );
     const parsed = calledBody ? JSON.parse(calledBody) : null;
     expect(parsed.renewalCycle).toBe('MONTHLY');
-    expect(parsed.discountPolicies).toEqual([{ discountType: 'FREE_TRIAL', period: 7 }]);
+    expect(parsed.discountPolicies).toEqual([{ discountType: 'FREE_TRIAL', period: 'ONE_WEEK' }]);
   });
 
   it('throws TossApiError on FAIL envelope', async () => {
