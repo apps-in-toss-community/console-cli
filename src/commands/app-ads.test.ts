@@ -3,9 +3,14 @@ import { validateCreateAdsPlacementGroupArgs } from './app-ads.js';
 
 // Field-level rules are pinned against the create contract confirmed in
 // issue #229 (console SPA placement-group wizard serialization logic +
-// public developer docs, 2026-07-24): displayName<=40, categoryId required
-// iff adFormat!==BANNER, rewardSettings required iff adFormat===REWARDED,
-// adStyles (1-entry array) only for BANNER.
+// public developer docs, 2026-07-24): displayName<=40, rewardSettings
+// required iff adFormat===REWARDED, adStyles (1-entry array) only for
+// BANNER. `--category` is validated here only as a *shape* check (positive
+// integer) when provided — issue #231 (2026-07-24) made it optional for
+// non-BANNER formats, auto-resolving from the app's own category when
+// omitted. That live-call resolution path is exercised in
+// src/api/in-app-ads.test.ts (`resolveAdCategoryId`), not here — this file
+// stays a pure-function suite with no fetch mocking.
 
 describe('validateCreateAdsPlacementGroupArgs', () => {
   it('accepts a well-formed BANNER input (default banner-style NORMAL)', () => {
@@ -87,8 +92,8 @@ describe('validateCreateAdsPlacementGroupArgs', () => {
     expect(exact.ok).toBe(true);
   });
 
-  it('requires --category when --format is INTERSTITIAL', () => {
-    const missing = validateCreateAdsPlacementGroupArgs({
+  it('allows --category to be omitted when --format is INTERSTITIAL (auto-resolved later, issue #231)', () => {
+    const omitted = validateCreateAdsPlacementGroupArgs({
       name: 'Full screen',
       format: 'INTERSTITIAL',
       category: undefined,
@@ -96,8 +101,14 @@ describe('validateCreateAdsPlacementGroupArgs', () => {
       rewardAmount: undefined,
       bannerStyle: undefined,
     });
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.field).toBe('category');
+    expect(omitted.ok).toBe(true);
+    if (omitted.ok) {
+      expect(omitted.value).toEqual({
+        displayName: 'Full screen',
+        adFormat: 'INTERSTITIAL',
+      });
+      expect(omitted.value.categoryId).toBeUndefined();
+    }
 
     const provided = validateCreateAdsPlacementGroupArgs({
       name: 'Full screen',
@@ -141,7 +152,7 @@ describe('validateCreateAdsPlacementGroupArgs', () => {
     if (!nonInt.ok) expect(nonInt.field).toBe('category');
   });
 
-  it('requires --category, --reward-unit, and --reward-amount when --format is REWARDED', () => {
+  it('allows --category to be omitted when --format is REWARDED (auto-resolved later, issue #231) but still requires --reward-unit/--reward-amount', () => {
     const missingCategory = validateCreateAdsPlacementGroupArgs({
       name: 'Reward video',
       format: 'REWARDED',
@@ -150,8 +161,11 @@ describe('validateCreateAdsPlacementGroupArgs', () => {
       rewardAmount: '10',
       bannerStyle: undefined,
     });
-    expect(missingCategory.ok).toBe(false);
-    if (!missingCategory.ok) expect(missingCategory.field).toBe('category');
+    expect(missingCategory.ok).toBe(true);
+    if (missingCategory.ok) {
+      expect(missingCategory.value.categoryId).toBeUndefined();
+      expect(missingCategory.value.rewardSettings).toEqual({ unitType: 'coin', unitAmount: 10 });
+    }
 
     const missingUnit = validateCreateAdsPlacementGroupArgs({
       name: 'Reward video',
