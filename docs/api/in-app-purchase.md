@@ -4,7 +4,7 @@
 
 미니앱의 인앱결제 상품 카탈로그·주문·환불 조회 + 상품 등록 endpoint 묶음. 워크스페이스 파트너(빌링/정산 주체) 등록 여부는 별도 도메인([`workspaces.md`](./workspaces.md) "partner")이 다루지만, IAP의 거의 모든 endpoint가 그 등록 여부에 게이트돼 있어(`errorCode: 5002`) 두 문서를 함께 봐야 한다.
 
-> **Capture status note**: endpoint 경로 자체는 콘솔 SPA의 route 등록 테이블(`M(D.path("...").method("get"|"post"|"put").create())`)에서 직접 읽어 확정했다 — 22개 in-app-purchase 하위 endpoint 전수를 정적 분석으로 나열([issue #220](https://github.com/apps-in-toss-community/console-cli/issues/220) "정적 분석 inventory"). 다만 이 워크스페이스(3095)가 아직 파트너 미등록 상태라 `catalogs`(목록)를 포함한 거의 모든 GET이 `errorCode: 5002`로 막히고, 실제 SUCCESS 응답 shape은 미관측이다. 유일한 예외는 `products create`의 request body — 콘솔 SPA의 공유 `IAPProductEditor` 폼 컴포넌트를 정적 분석해 필드명·검증 규칙을 복원했다(아래 "products create — inferred body shape"). 파트너 등록 후 재관측이 필요한 항목은 각 섹션에 명시.
+> **Capture status note**: endpoint 경로 자체는 콘솔 SPA의 route 등록 테이블(`M(D.path("...").method("get"|"post"|"put").create())`)에서 직접 읽어 확정했다 — 22개 in-app-purchase 하위 endpoint 전수를 정적 분석으로 나열([issue #220](https://github.com/apps-in-toss-community/console-cli/issues/220) "정적 분석 inventory"). 다만 이 워크스페이스(3095)가 아직 파트너 미등록 상태라 `catalogs`(목록)를 포함한 거의 모든 GET이 `errorCode: 5002`로 막히고, 실제 SUCCESS 응답 shape은 미관측이다. 예외는 `products create`의 request body — 콘솔 SPA의 공유 `IAPProductEditor` 폼 컴포넌트를 정적 분석해 필드명·검증 규칙을 복원했고, [issue #232](https://github.com/apps-in-toss-community/console-cli/issues/232) (2026-07-25) 재측정으로 discount policy 서브구조까지 포함해 high confidence로 확정했다(아래 "products create — confirmed body shape"). 파트너 등록 후 재관측이 필요한 항목은 각 섹션에 명시.
 
 ## 색인
 
@@ -14,7 +14,7 @@
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/catalog/<product_id>` | 상품 상세 | ⚠️ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/orders` | 주문 목록 | ⚠️ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/refunds` | 환불 목록 | ⚠️ |
-| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/product/inspection` | 상품 등록 + 검수 제출 (원샷) | ⚠️ |
+| POST | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/product/inspection` | 상품 등록 + 검수 제출 (원샷) | ✅ (body shape — request 자체는 미실행) |
 
 **Out of scope 항목** (issue #220 명시 — 정적 분석으로 경로만 확보, 이 문서에선 인벤토리만 유지하고 명령/문서 상세화 안 함):
 
@@ -99,10 +99,11 @@ CLI는 이 shape을 강제하지 않고 응답을 그대로(opaque) 통과시킨
 ## `POST .../in-app-purchase/product/inspection` — 상품 등록 + 검수 제출 (원샷)
 
 - **Used by**: [`src/api/in-app-purchase.ts#createIapProduct`](../../src/api/in-app-purchase.ts), `aitcc app iap products create`
-- **Capture status**: ⚠️ inferred — request body는 정적 분석으로 복원, **응답은 물론 request 자체도 라이브로 호출된 적이 없다** (SECRET-HANDLING: 이 endpoint는 read-only가 아니라 실제 상품을 등록하고 검수 큐에 올리는 mutation이라, 메인테이너 승인 게이트(`--confirm`) 뒤에서만 실행된다).
+- **Capture status**: ✅ body shape confirmed — 콘솔 SPA 직렬화 로직 정적 분석 + 재측정([issue #232](https://github.com/apps-in-toss-community/console-cli/issues/232), 2026-07-25, high confidence). **응답은 물론 request 자체도 라이브로 호출된 적이 없다** — 이건 "계약은 확정, 라이브 미실행" 상태다(SECRET-HANDLING: read-only가 아니라 실제 상품을 등록하고 검수 큐에 올리는 mutation이라, 메인테이너 승인 게이트(`--confirm`) 뒤에서만 실행된다).
 - 미니앱 등록(`POST /mini-app/review`, [`mini-apps.md`](./mini-apps.md) "Update mode")과 같은 패턴 — **등록과 검수 제출이 분리된 두 endpoint가 아니라 단일 POST**. dual-mode(create vs update)는 이 endpoint가 아니라 `PUT .../product/<productId>/inspection`(수정)으로 나뉘어 있다는 점만 미니앱과 다르다.
+- **게이트: 광고 지면 생성(`app ads placement-groups create`)보다 강하다.** ⚠️ 승인 전(사전-승인) create는 광고와 달리 **막힐 개연성이 높다** — (1) `minDeploymentId`는 **APPROVED 상태 배포에서만** 유효한데 dog-food 앱 31146은 아직 승인된 배포가 0개, (2) create = 심사 제출이라 IAP 위탁매매 약관(`errorCode: 5001`) 미동의 시 서버가 거부할 개연성이 있다. 그래서 `aitcc app iap products create`는 실제 POST 전에 **read-only preflight**로 `catalogs`를 먼저 호출해, 그 GET이 5001로 실패하면 POST를 시도하지도 않고 `aitcc workspace terms --type IAP`를 가리키는 힌트로 중단한다(`hintForErrorCode('5001')`, [`_error-codes.md`](./_error-codes.md) `5001` 참고 — 이 워크스페이스(3095)는 실제로 이 약관이 미동의 상태다, [`mini-app-bundles.md`](./mini-app-bundles.md)의 `app deploy --dry-run` terms-blocker 캡처에서 확인). 약관 동의는 법적 결정이라 CLI가 대신 처리하지 않는다.
 
-### products create — inferred body shape
+### products create — confirmed body shape
 
 콘솔 SPA의 상품 등록/수정 공용 폼 컴포넌트 `IAPProductEditor`(`IAPProductEditor.BQeOKeLb.js`)의 `handleSubmit` 조립부와, 등록 페이지 wrapper(`index.C6av4Lke.js`)를 추적해 복원:
 
@@ -113,22 +114,37 @@ CLI는 이 shape을 강제하지 않고 응답을 그대로(opaque) 통과시킨
   type: 'CONSUMABLE' | 'NON_CONSUMABLE' | 'SUBSCRIPTION',
   name: string,                 // <=30 chars (공백 포함), react-hook-form validate: `length>30`
   description: string,          // <=45 chars, validate: `length>45`
-  price: number,                // 400..1,400,000 KRW, validate: `<400||>14e5` — "공급가", GET 응답의 `netPrice`와 동일 개념
-  iconImgUrl: string,            // 이미 업로드된 이미지 URL (별도 업로드 endpoint 필요 — 미확인)
-  minDeploymentId: number,       // 최소 지원 번들 deploymentId
+  price: number,                // 400..1,400,000 KRW, 10원 단위 스냅 — "공급가", GET 응답의 `netPrice`와 동일 개념
+  iconImgUrl: string,            // 이미 업로드된 이미지 URL (별도 업로드 endpoint 필요 — 미확인, follow-up)
+  minDeploymentId: number,       // 최소 지원 번들 deploymentId — APPROVED 상태 배포만 유효 (서버 hard precondition)
   postInspectionStatus: 'ACTIVE' | 'INACTIVE',  // 검수 통과 후 즉시노출(ACTIVE) 여부, 기본 INACTIVE
-  renewalCycle?: 'WEEKLY' | 'MONTHLY' | 'YEARLY',  // type===SUBSCRIPTION일 때만 필수, 폼에 아예 안 보임
+  renewalCycle?: 'WEEKLY' | 'MONTHLY' | 'YEARLY',  // type===SUBSCRIPTION일 때만 필수, 그 외 거부
   discountPolicies: Array<{...}>,  // type===SUBSCRIPTION이 아니면 항상 []
   currency: 'KRW',               // 폼이 하드코딩 (`Ve="KRW"`)
   defaultLocale: 'KO_KR',        // 폼이 하드코딩 (`_e="KO_KR"`)
 }
 ```
 
+`workspaceId`/`miniAppId`는 path param이고 body엔 들어가지 않는다.
+
+**CLI 플래그 매핑**: `--type` `--name` `--description` `--price` `--icon`(→`iconImgUrl`) `--min-deployment`(→`minDeploymentId`) `--expose`(불리언, true면 `postInspectionStatus: ACTIVE`, 기본 false→`INACTIVE`) `--renewal-cycle` `--discount`. `--price`는 400~1,400,000 범위 검증을 **10원 단위로 스냅한 뒤의 값**에 대해 수행하고, 원래 입력이 10원 단위가 아니면 stderr(비-json) 또는 `warnings`(json)로 경고한다. `--renewal-cycle`/`--discount`는 `--type SUBSCRIPTION`이 아니면 값이 와도 조용히 버리지 않고 **거부**한다(issue #232 "type-conditional fields... fail fast").
+
+**`--discount` spec 포맷**: 이 repo가 고정한 citty 0.2.2는 반복 플래그를 배열로 모으는 `multiple` 옵션이 없다(node:util `parseArgs`를 `strict:false`로 감싸기만 하고 `multiple`을 설정하지 않음 — 직접 확인: 같은 문자열 플래그를 두 번 주면 마지막 값만 남는다). 그래서 "repeatable"의 실용적 대체로 **`;`-구분 다중 entry를 담는 단일 `--discount` 플래그**를 쓴다(entry 내부는 `,`-구분 `key=value` — `products ls`의 `--type`/`--catalog-status`가 쓰는 `splitCommaList` 관례의 확장):
+
+```
+--discount "type=FREE_TRIAL,period=ONE_WEEK"
+--discount "type=FREE_TRIAL,period=ONE_WEEK;type=RETURNING,durationMonths=1,discountedNetPrice=2000"
+```
+
+`type`은 `FREE_TRIAL`(→`period`: `THREE_DAYS`\|`ONE_WEEK`\|`TWO_WEEKS`\|`ONE_MONTH`) 또는 `NEW_SUBSCRIPTION`/`RETURNING`(→`durationMonths`≤12 + `discountedNetPrice`)이고, entry당 type 하나(콘솔 UI가 3개 고정 슬롯 체크박스라 중복 거부), 미확인 키는 거부. 구현·테스트는 [`src/commands/app-iap.ts#parseDiscountPoliciesSpec`](../../src/commands/app-iap.ts).
+
+**`--min-deployment` APPROVED 검증은 client-side 미구현 (follow-up)**: 서버는 APPROVED 상태 배포만 유효한 `minDeploymentId`로 받는데, 이걸 client에서 미리 검증하려면 `fetchBundles`(`GET .../bundles?deployStatus=...`)의 불투명한 필터 값·응답 필드명을 추측해야 한다 — dog-food 앱 31146엔 APPROVED 배포가 아직 하나도 없어 실제 채워진 응답을 관측한 적이 없다. 검증되지 않은 추측을 배포하느니 CLI는 `--min-deployment`가 양의 정수인지만 확인하고, 승인되지 않은 값은 서버가 거부하도록 남겨둔다.
+
 **CLI가 이 body에서 의도적으로 빼는 필드**: 폼은 `isAgreed`(체크박스 "위 내용을 확인했어요. 설정된 내용으로 상품을 등록할게요.")도 react-hook-form 필드로 등록돼 있어, `handleSubmit`의 스프레드(`{...R, ...}`)에 구조적으로 포함될 수 있다 — 다만 이게 실제로 서버 request body에 실려 전송되는지, 서버가 이를 검증하는지는 미확인이다(등록 마법사의 법정 동의 체크박스들이 서버 payload엔 안 실리는 것과 같은 패턴일 가능성이 높음 — [`mini-apps.md`](./mini-apps.md) "Server-side validation" 참고). CLI는 이 필드를 body에 넣지 않는 대신, 동일한 의도를 `--confirm` CLI-level 게이트로 강제한다(`aitcc app iap products create`는 `--dry-run` 없이 `--confirm` 없으면 거부, exit 2). 실제로 서버가 `isAgreed`를 요구한다면 첫 라이브 시도에서 명확한 validation 에러로 드러날 것이고, 그때 이 문서와 body 조립 로직을 보강한다.
 
-**할인 정책(`discountPolicies`) CLI 미노출**: 폼은 `FREE_TRIAL`/`NEW_SUBSCRIPTION`/`RETURNING` 세 고정 슬롯을 체크박스로 켜고 각각 다른 필드(`period` vs `durationMonths`+`discountedNetPrice`)를 받지만, issue #220 스코프가 "discount/settlement/analytics 명령은 후속"으로 명시했으므로 `aitcc app iap products create`는 항상 `discountPolicies: []`를 보낸다. API 레이어(`createIapProduct`)는 향후를 위해 입력 타입을 열어 두었다.
+**REVIEW-lock(미확인)**: 미니앱 등록의 `errorCode: 4046`(검수중인 요청이 있어 재요청 불가, [`mini-apps.md`](./mini-apps.md) "REVIEW lock")과 같은 패턴이 IAP 심사에도 있을 수 있다 — 관측된 적은 없지만, 만약 뜬다면 운영팀이 기존 심사를 처리할 때까지 대기하는 게 맞는 대응이고 **새 상품을 만들어 우회하지 않는다**(umbrella CLAUDE.md §3의 "lock 풀려고 새 앱 만들기" 반-패턴과 동일 원칙).
 
-**실행 정책**: 이 함수는 `--dry-run`으로 payload를 미리보기(네트워크 호출 없음)하거나 `--confirm`으로 실제 제출하는 두 경로만 있다. 이 repo의 자동 테스트·dog-food 검증은 **mocked fetch로만** 이 함수를 호출한다 — 실제 콘솔에 대한 첫 호출은 메인테이너가 명시적으로 `--confirm`을 붙여 실행하는 시점까지 일어나지 않는다.
+**실행 정책**: `--dry-run`은 payload 조립·검증만 하고 네트워크 호출이 전혀 없다(preflight 포함 없음). `--confirm` 경로는 POST 전에 read-only `catalogs` preflight를 한 번 거친다(위 "게이트" 참고). 이 repo의 자동 테스트·dog-food 검증은 **mocked fetch로만** `createIapProduct`를 호출한다 — 실제 콘솔에 대한 첫 호출은 메인테이너가 명시적으로 `--confirm`을 붙여 실행하는 시점까지, 그리고 위 두 precondition이 충족된 뒤까지 일어나지 않는다.
 
 ## 짝 문서
 

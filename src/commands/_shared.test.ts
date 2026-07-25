@@ -155,6 +155,16 @@ describe('hintForErrorCode', () => {
     expect(hint).toContain('거래처 등록');
     expect(hint).toContain('aitcc workspace partner');
   });
+
+  it('5001 hint points to aitcc workspace terms --type IAP without claiming auto-agreement', () => {
+    const hint = hintForErrorCode('5001');
+    expect(hint).toBeDefined();
+    expect(hint).toContain('workspace terms --type IAP');
+    expect(hint).toContain('workspace terms agree IAP');
+    // Must not read as "we agreed it for you" — agreeing terms is a
+    // maintainer/account-owner decision, never CLI-automatic.
+    expect(hint).toContain('법적 결정');
+  });
 });
 
 describe('formatAiRiskPreflightWarning', () => {

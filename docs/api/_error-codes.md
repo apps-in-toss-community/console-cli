@@ -29,11 +29,11 @@
 | `4039` | `프로모션_머니_약관_미동의` | 프로모션 머니 기능 약관 미동의. SPA에 명시적 redirect 케이스 없음(공통 throw). |
 | `4040` | `워크스페이스_약관_미동의` | 워크스페이스 단위 약관 미동의. SPA는 `/workspace/<wid>/workspace-terms`로 redirect. |
 | `4099` | `광고관리_약관_미동의` | 광고 관리 기능 약관 미동의. SPA에 명시적 redirect 케이스 없음. |
-| `5001` | `인앱결제상품_약관_미동의` | 인앱결제 상품 약관 미동의. SPA에 명시적 redirect 케이스 없음. |
+| `5001` | `인앱결제상품_약관_미동의` | 인앱결제 상품(IAP 위탁매매) 약관 미동의 — 라이브 확인된 제목은 "앱인토스 디지털콘텐츠 위탁매매 약관"([`mini-app-bundles.md`](./mini-app-bundles.md)의 `app deploy --dry-run` terms-blocker 캡처, workspace 3095). SPA에 명시적 redirect 케이스 없음. `aitcc app iap products create`는 실제 POST 전에 read-only `catalogs` preflight로 이 코드를 감지해 `aitcc workspace terms --type IAP` 확인 힌트를 붙인다(`hintForErrorCode('5001')`) — 동의는 법적 결정이라 CLI가 대신 처리하지 않는다. 상세: [`in-app-purchase.md`](./in-app-purchase.md) "products create — confirmed body shape". |
 | `5002` | (미확인 — 서버 `reason` message-only) | **거래처(파트너) 미등록.** 약관 동의가 아니라 워크스페이스 파트너(빌링/정산 주체) 등록 여부 게이트 — 5001(약관)과는 별개 축이다. IAP 상품/주문/환불 조회가 전부 이 코드로 막힌다. 실측: `GET .../in-app-purchase/catalogs`가 `errorCode: "5002", reason: "거래처 등록이 필요합니다."`로 FAIL (2026-07-23, workspace 3095, 미등록 상태). SPA에 명시적 redirect 케이스 없음. CLI는 `aitcc workspace partner`로 상태 확인을 안내(`src/commands/_shared.ts#hintForErrorCode`가 5002 에러에 이 hint를 붙인다). 상세: [`in-app-purchase.md`](./in-app-purchase.md). |
 | `5010` | `혁신금융서비스_약관_미동의` | AI 위험 고지·이용약관(`AI_RISK_USE`) 미동의. **계정-level 최상위 게이트** — 미동의 시 거의 모든 워크스페이스 read/write가 막힌다(Deploy Key 발급·배포 포함). SPA는 `/ai-risk-use-terms`로 redirect. CLI는 `aitcc me terms agree --scope AI_RISK_USE`로 동의 처리(`src/commands/_shared.ts#hintForErrorCode`가 5010 에러에 이 hint를 붙인다). 엔드포인트: [`auth-session.md`](./auth-session.md) "`?termsScope=AI_RISK_USE`". |
 
-CLI는 이 코드들을 만나면 별도 redirect 자동화 없이 사용자에게 `aitcc me terms` 같은 명령으로 콘솔에서 동의를 받도록 안내해야 한다. 4040(워크스페이스 약관)은 `aitcc workspace terms`에, 5002(거래처 미등록)는 `aitcc workspace partner`에, 5010(AI 위험 고지)은 `aitcc me terms agree --scope AI_RISK_USE`에 이미 포커스됨 — 5002/5010 모두 `hintForErrorCode`가 자동으로 seam hint를 emit한다.
+CLI는 이 코드들을 만나면 별도 redirect 자동화 없이 사용자에게 `aitcc me terms` 같은 명령으로 콘솔에서 동의를 받도록 안내해야 한다. 4040(워크스페이스 약관)은 `aitcc workspace terms`에, 5001(IAP 위탁매매 약관)은 `aitcc workspace terms --type IAP`에, 5002(거래처 미등록)는 `aitcc workspace partner`에, 5010(AI 위험 고지)은 `aitcc me terms agree --scope AI_RISK_USE`에 이미 포커스됨 — 5001/5002/5010 모두 `hintForErrorCode`가 자동으로 seam hint를 emit한다.
 
 ### 세션 / 권한
 

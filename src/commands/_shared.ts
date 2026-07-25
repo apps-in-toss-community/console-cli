@@ -123,6 +123,14 @@ export function hintForErrorCode(errorCode: string | undefined): string | undefi
   if (errorCode === '5002') {
     return '거래처 등록이 필요합니다 — `aitcc workspace partner`로 상태를 확인하세요.';
   }
+  if (errorCode === '5001') {
+    return (
+      'IAP 위탁매매 약관(앱인토스 디지털콘텐츠 위탁매매 약관) 미동의예요 — ' +
+      '`aitcc workspace terms --type IAP`로 상태를 확인하세요. ' +
+      '동의는 법적 결정이라 이 명령이 대신 처리하지 않습니다 — 직접 검토한 뒤 ' +
+      '필요하면 `aitcc workspace terms agree IAP`로 동의하세요.'
+    );
+  }
   return undefined;
 }
 
