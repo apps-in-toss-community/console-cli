@@ -7,6 +7,7 @@ import {
   createAdsPlacementGroup,
   fetchAdsAbuseStatus,
   fetchAdsPlacementGroups,
+  resolveAdCategoryId,
 } from '../api/in-app-ads.js';
 import { ExitCode } from '../exit.js';
 import { exitAfterFlush } from '../flush.js';
@@ -35,12 +36,27 @@ import {
 //                                    [--reward-unit T --reward-amount N]
 //                                    [--banner-style S] [--app <id>]
 //                                    [--workspace <id>] [--dry-run] [--confirm]:
-//     { ok: true, dryRun: true, workspaceId, appId, payload }             exit 0  (--dry-run)
-//     { ok: true, workspaceId, appId, adGroupId, result: {...} }          exit 0  (real submit)
+//     { ok: true, dryRun: true, workspaceId, appId, payload,
+//       categorySource?: 'override'|'auto' }                             exit 0  (--dry-run)
+//     { ok: true, workspaceId, appId, adGroupId, result: {...},
+//       categorySource?: 'override'|'auto' }                             exit 0  (real submit)
 //     { ok: false, reason: 'not-confirmed', message }                    exit 2  (missing --confirm, no --dry-run)
 //     { ok: false, reason: 'invalid-args', field, message }               exit 2  (client-side validation — see
 //                                                                                  validateCreateAdsPlacementGroupArgs)
+//     { ok: false, reason: 'category-not-resolved', field: 'category', message } exit 2
+//       (--category omitted, non-BANNER, and the app's own impression category couldn't be read — see
+//        resolveAdCategoryId in src/api/in-app-ads.ts)
+//     { ok: false, reason: 'category-invalid', field: 'category', categoryId, message } exit 2
+//       (auto-resolved categoryId rejected by ad-mob-ad-info for this --format)
 //     (same context-resolution + 5002/auth/network failure modes as the read commands)
+//
+//   `--category` is required for BANNER-less formats (INTERSTITIAL/
+//   REWARDED) only when it can't be auto-resolved (issue #231, 2026-07-24
+//   live measurement): omitted → the app's own impression category id is
+//   read via fetchMiniAppDetail and best-effort validated via
+//   fetchAdMobAdInfo (categorySource: 'auto'); provided → used as an
+//   explicit override with no extra live lookups (categorySource:
+//   'override'). BANNER never takes a category (adStyles instead).
 //
 //   ⚠️ `placement-groups create`'s request body is inferred from static
 //   analysis of the console SPA's placement-group creation wizard
@@ -154,9 +170,19 @@ export type CreateAdsPlacementGroupValidation =
 
 // Field-level rules from the create contract (issue #229, confirmed via
 // console SPA serialization logic + public developer docs, 2026-07-24):
-//   displayName <=40 chars, adFormat required, categoryId required iff
-//   adFormat !== BANNER, rewardSettings required iff adFormat === REWARDED,
-//   adStyles (1-entry array) only when adFormat === BANNER (default NORMAL).
+//   displayName <=40 chars, adFormat required, rewardSettings required iff
+//   adFormat === REWARDED, adStyles (1-entry array) only when
+//   adFormat === BANNER (default NORMAL).
+//
+// `--category` is OPTIONAL here even when adFormat !== BANNER (issue #231,
+// 2026-07-24 live measurement) — when omitted, the command layer
+// auto-resolves it from the app's own impression category after the app
+// context is known (this pure function has no session/live-call access, so
+// it can only validate a *provided* value's shape; the "is a category
+// actually available" question is answered later by
+// `resolveAdCategoryId` in src/api/in-app-ads.ts). When provided it's
+// always taken as an explicit override — validated as a positive integer
+// exactly as before.
 export function validateCreateAdsPlacementGroupArgs(
   input: CreateAdsPlacementGroupArgsInput,
 ): CreateAdsPlacementGroupValidation {
@@ -179,14 +205,7 @@ export function validateCreateAdsPlacementGroupArgs(
   const adFormat = format as AdFormat;
 
   let categoryId: number | undefined;
-  if (adFormat !== 'BANNER') {
-    if (input.category === undefined) {
-      return {
-        ok: false,
-        field: 'category',
-        message: `--category is required when --format is ${adFormat}.`,
-      };
-    }
+  if (adFormat !== 'BANNER' && input.category !== undefined) {
     const parsed = Number(input.category);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
       return {
@@ -273,9 +292,9 @@ const placementGroupsCreateCommand = defineCommand({
     category: {
       type: 'string',
       description:
-        'Ad category id — required when --format is INTERSTITIAL or REWARDED. Valid ' +
-        'category ids are not exposed by any known console/public API yet (issue #229) — ' +
-        'check the placement-group creation screen in the console UI for the current list.',
+        'Ad category id override — only used when --format is INTERSTITIAL or REWARDED. ' +
+        "Optional: when omitted, the app's own category id is auto-resolved (fetched from " +
+        'app details and validated for the given --format); pass this to override it.',
     },
     'reward-unit': {
       type: 'string',
@@ -350,19 +369,71 @@ const placementGroupsCreateCommand = defineCommand({
     printContextHeader(ctx, { json: args.json });
     const { session, workspaceId } = ctx;
 
+    // --- categoryId resolution (non-BANNER only, issue #231) ---
+    //
+    // An explicit --category is always an override — no live lookups, same
+    // as before. Omitted --category on a non-BANNER format now auto-resolves
+    // from the app's own impression category (fetchMiniAppDetail) and
+    // best-effort validates it against --format (fetchAdMobAdInfo). Both
+    // calls are read-only GETs, so this runs ahead of --dry-run too — the
+    // preview should show the categoryId that a real submit would actually
+    // use.
+    let categoryId = validation.value.categoryId;
+    let categorySource: 'override' | 'auto' | undefined;
+    if (validation.value.adFormat !== 'BANNER') {
+      if (categoryId !== undefined) {
+        categorySource = 'override';
+      } else {
+        const resolved = await withReauthRetry(args.json, session, (s) =>
+          resolveAdCategoryId(
+            { workspaceId, miniAppId: appId, adFormat: validation.value.adFormat },
+            s.cookies,
+          ),
+        );
+        if (!resolved.ok) {
+          if (args.json) {
+            emitJson({
+              ok: false,
+              reason: resolved.reason,
+              field: 'category',
+              message: resolved.message,
+              ...(resolved.reason === 'category-invalid'
+                ? { categoryId: resolved.categoryId }
+                : {}),
+            });
+          } else {
+            process.stderr.write(`app ads placement-groups create: ${resolved.message}\n`);
+          }
+          return exitAfterFlush(ExitCode.Usage);
+        }
+        categoryId = resolved.categoryId;
+        categorySource = 'auto';
+        if (!resolved.validated && !args.json) {
+          process.stderr.write(
+            `[warn] Could not confirm category ${categoryId} via ad-mob-ad-info (best-effort check unavailable) — proceeding with the app's own category id anyway.\n`,
+          );
+        }
+      }
+    }
+
     const input = {
       workspaceId,
       miniAppId: appId,
       displayName: validation.value.displayName,
       adFormat: validation.value.adFormat,
-      ...(validation.value.categoryId !== undefined
-        ? { categoryId: validation.value.categoryId }
-        : {}),
+      ...(categoryId !== undefined ? { categoryId } : {}),
       ...(validation.value.rewardSettings !== undefined
         ? { rewardSettings: validation.value.rewardSettings }
         : {}),
       ...(validation.value.adStyles !== undefined ? { adStyles: validation.value.adStyles } : {}),
     };
+
+    const categoryLine = (): string =>
+      `Category ID: ${categoryId} (${
+        categorySource === 'auto'
+          ? "auto-resolved from the app's own category"
+          : 'override via --category'
+      })\n`;
 
     if (args['dry-run']) {
       const payload = {
@@ -373,13 +444,21 @@ const placementGroupsCreateCommand = defineCommand({
         ...(input.adStyles !== undefined ? { adStyles: input.adStyles } : {}),
       };
       if (args.json) {
-        emitJson({ ok: true, dryRun: true, workspaceId, appId, payload });
+        emitJson({
+          ok: true,
+          dryRun: true,
+          workspaceId,
+          appId,
+          payload,
+          ...(categorySource !== undefined ? { categorySource } : {}),
+        });
         return exitAfterFlush(ExitCode.Ok);
       }
       process.stdout.write('[dry-run] Would POST to ');
       process.stdout.write(
         `.../workspaces/${workspaceId}/mini-app/${appId}/in-app-ads-v2/placement-group\n`,
       );
+      if (categorySource !== undefined) process.stdout.write(categoryLine());
       process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
       return exitAfterFlush(ExitCode.Ok);
     }
@@ -398,12 +477,14 @@ const placementGroupsCreateCommand = defineCommand({
           appId,
           adGroupId: result.groupId,
           result: result.extra,
+          ...(categorySource !== undefined ? { categorySource } : {}),
         });
         return exitAfterFlush(ExitCode.Ok);
       }
       process.stdout.write(
         `Created placement group ${result.groupId ?? '(unknown id)'} for app ${appId} (ws ${workspaceId})\n`,
       );
+      if (categorySource !== undefined) process.stdout.write(categoryLine());
       process.stdout.write(
         '상태: REGISTERING — 구글 광고 시스템 반영까지 최대 2시간 걸릴 수 있어요.\n',
       );

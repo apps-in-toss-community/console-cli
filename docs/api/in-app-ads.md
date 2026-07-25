@@ -13,6 +13,7 @@
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/placement-groups` | 광고 지면 목록 | ✅ confirmed |
 | POST | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/placement-group` | 광고 지면 생성 (단수형 path 주의) | ⚠️ inferred (body) |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/abuse-status` | 어뷰징/노출차단 상태 | ✅ confirmed |
+| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-ads-v2/category/<categoryId>/ad-mob-ad-info/<adFormat>` | 광고 categoryId 유효성 검증 | ✅ confirmed |
 
 ## `GET .../in-app-ads-v2/placement-groups` — 광고 지면 목록
 
@@ -50,15 +51,18 @@
 - **실서빙 게이트**: 지면을 만들었다고 바로 광고가 노출되는 게 아니다 — 사업자 등록·정산 승인이 인앱광고의 선행조건이다(`aitcc workspace business-verification show`로 확인). CLI는 생성 성공 메시지에 이 게이트를 함께 안내한다.
 - **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인).
 
-### category 후보 조회 — 미해결 (issue #229)
+### category 자동 해소 (issue #231, 2026-07-24 실측)
 
-`adFormat !== 'BANNER'`일 때 필요한 `categoryId`의 **유효 후보 목록을 반환하는 GET 엔드포인트를 아직 찾지 못했다**. 시도한 경로:
+`adFormat !== 'BANNER'`일 때 필요한 `categoryId`는 **미니앱 자신의 category id를 재사용**한다. 앱 상세(`GET .../mini-app/:aid`) 응답의 `miniApp.impression.categoryPaths[0].category.id`가 그 값이다(예: 31146 → `3882`). 유효성은 전용 엔드포인트로 검증한다:
 
-- 공식 개발자 문서(`developers-apps-in-toss.toss.im/ads/intro.html`, `/ads/develop.html`, `IntegratedAd.html` bedrock reference)를 WebFetch로 확인: 광고 정책·유형별 가이드·테스트 ID는 문서화돼 있지만 categoryId 후보 목록/조회 API는 언급이 없다.
-- issue #229의 create 계약 확정 작업(콘솔 SPA 생성 위저드 직렬화 로직 정적 분석)은 body 필드명 복원이 목적이라 별도 category-list GET route까지는 훑지 않았다 — 전용 정적 분석이 필요한 남은 작업.
-- 미니앱 등록용 `impression/category-list`([`impression.md`](./impression.md))는 **다른 도메인**이다 — 그건 미니앱 자체의 노출 카테고리(`impression.categoryIds`)고, 광고 지면의 `categoryId`와는 별개 taxonomy로 보인다(혼동 주의).
+- `GET .../in-app-ads-v2/category/:categoryId/ad-mob-ad-info/:adFormat`
+  - valid → `{ resultType: 'SUCCESS', success: { id, categoryId, category } }` (예: cat 3882 → id 179)
+  - invalid → `success: { reason: 'not exist category : N' }`
+  - cat 0 → `success: null` (placeholder — 실제 카테고리 아님)
 
-라이브 콘솔에 인증된 API 호출을 넣어 이 경로를 탐색하는 건 이번 작업 범위 밖(SECRET-HANDLING 정책상 mutation 인접 탐색은 메인테이너 승인 흐름을 거친다)이라, **CLI는 `--category`를 항상 필수 입력으로 요구**하고 `--help` 텍스트에 "콘솔의 지면 생성 화면에서 유효 category id를 확인하라"는 안내를 붙였다. 후속 세션이 콘솔 SPA를 category-list 관점으로 재분석하거나, 콘솔 UI에서 직접 확인하거나, 라이브 생성 첫 시도의 에러 메시지로 후보를 역추적하면 이 섹션을 갱신한다.
+따라서 CLI는 `--category`를 **선택 입력**으로 바꿨다: 생략하면 앱 상세에서 category id를 auto-resolve하고 위 엔드포인트로 검증하며, 명시하면 override로 쓴다. 앱 상세에 `categoryPaths`가 없거나 검증이 invalid면 `--category`를 명시하라는 에러로 degrade한다.
+
+> 정정 (issue #229 당시 note): 미니앱 등록용 `impression` 카테고리([`impression.md`](./impression.md))를 광고 `categoryId`와 별개 taxonomy로 추정했으나, 실측 결과 **같은 값**이다 — 광고 `categoryId` = 앱 자신의 impression `category.id`.
 
 ## `GET .../in-app-ads-v2/abuse-status` — 어뷰징/노출차단 상태
 

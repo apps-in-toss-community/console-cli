@@ -1,5 +1,6 @@
 import type { CdpCookie } from '../cdp.js';
 import { type FetchLike, requestConsoleApi } from './http.js';
+import { fetchMiniAppDetail } from './mini-apps.js';
 
 // In-app advertising (IAA) placement-group inventory + abuse/serving status,
 // scoped to a single mini-app (mirrors in-app-purchase.ts's app-scoped
@@ -148,4 +149,200 @@ function normalizeCreatePlacementGroupResult(raw: unknown): CreateAdsPlacementGr
   const rawId = rec.groupId ?? rec.id;
   const groupId = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : undefined;
   return { groupId, extra: rec };
+}
+
+// --- Ad category id resolution (issue #231) ---
+//
+// #229 shipped `placement-groups create` with `--category` as a hard
+// requirement for non-BANNER formats because no category-candidate
+// endpoint was known. #231's 2026-07-24 live measurement closed that gap:
+// the ad categoryId is simply the mini-app's OWN impression category — the
+// same `category.id` `app show` already surfaces at
+// `miniApp.impression.categoryPaths[].category.id` (see
+// `extractAppCategoryId` below, mirroring the read logic in
+// `commands/app.ts`'s `app show`). A second endpoint sanity-checks that id
+// against a given ad format:
+//
+//   GET .../mini-app/:aid/in-app-ads-v2/category/:categoryId/ad-mob-ad-info/:adFormat
+//
+// Observed (workspace 3095 / app 31146, categoryId 3882):
+//   valid   → { resultType: 'SUCCESS', success: { id: 179, categoryId: 3882, category: {...} } }
+//   invalid → { resultType: 'SUCCESS', success: { reason: 'not exist category : N' } }
+//   cat 0   → { resultType: 'SUCCESS', success: null }  (placeholder/fallback, not a real category)
+//
+// `resolveAdCategoryId` composes both calls: resolve the app's own category
+// id, then best-effort validate it for the requested `adFormat`. The
+// validation step is deliberately soft — a network hiccup on the
+// second call must not block an otherwise-correct resolution, so any
+// error from `fetchAdMobAdInfo` degrades to `validated: false` rather than
+// throwing. Only an explicit "not a valid category for this format" answer
+// from the server is treated as a hard failure (`category-invalid`) — the
+// command layer then asks the caller to pass `--category` explicitly.
+
+export interface AdMobAdInfo {
+  readonly id: string | number;
+  readonly categoryId: number;
+  readonly category: Readonly<Record<string, unknown>>;
+}
+
+export interface AdMobAdInfoResult {
+  readonly valid: boolean;
+  readonly info: AdMobAdInfo | null;
+  readonly reason: string | null;
+}
+
+export interface FetchAdMobAdInfoParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly categoryId: number;
+  readonly adFormat: AdFormat;
+}
+
+export async function fetchAdMobAdInfo(
+  params: FetchAdMobAdInfoParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<AdMobAdInfoResult> {
+  const url =
+    `${BASE}/workspaces/${params.workspaceId}/mini-app/${params.miniAppId}` +
+    `/in-app-ads-v2/category/${params.categoryId}/ad-mob-ad-info/${params.adFormat}`;
+  const raw = await requestConsoleApi<unknown>({
+    url,
+    cookies,
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  return normalizeAdMobAdInfo(raw);
+}
+
+function normalizeAdMobAdInfo(raw: unknown): AdMobAdInfoResult {
+  // `success: null` — the cat-0 placeholder/fallback case (or any other
+  // non-object payload we don't recognise). Not a real category.
+  if (raw === null || typeof raw !== 'object') {
+    return { valid: false, info: null, reason: null };
+  }
+  const rec = raw as Record<string, unknown>;
+
+  const rawReason = rec.reason;
+  if (typeof rawReason === 'string') {
+    return { valid: false, info: null, reason: rawReason };
+  }
+
+  const rawId = rec.id;
+  const rawCategoryId = rec.categoryId;
+  const rawCategory = rec.category;
+  if (
+    (typeof rawId === 'string' || typeof rawId === 'number') &&
+    typeof rawCategoryId === 'number' &&
+    rawCategory !== null &&
+    typeof rawCategory === 'object'
+  ) {
+    return {
+      valid: true,
+      info: {
+        id: rawId,
+        categoryId: rawCategoryId,
+        category: rawCategory as Record<string, unknown>,
+      },
+      reason: null,
+    };
+  }
+
+  return { valid: false, info: null, reason: null };
+}
+
+/**
+ * Pull the mini-app's own ad-relevant category id out of a
+ * `fetchMiniAppDetail` response — `miniApp.impression.categoryPaths[0]
+ * .category.id`. Mirrors the display logic `app show` already uses for the
+ * same field (see `pickMiniAppView`'s category rendering in
+ * `commands/app.ts`), pulled out as a pure function so the resolution path
+ * is unit-testable without a citty invocation.
+ */
+export function extractAppCategoryId(miniApp: Record<string, unknown> | null): number | null {
+  if (miniApp === null) return null;
+  const impression = miniApp.impression;
+  if (impression === null || typeof impression !== 'object') return null;
+  const categoryPaths = (impression as Record<string, unknown>).categoryPaths;
+  if (!Array.isArray(categoryPaths) || categoryPaths.length === 0) return null;
+  const firstPath = categoryPaths[0];
+  if (firstPath === null || typeof firstPath !== 'object') return null;
+  const category = (firstPath as Record<string, unknown>).category;
+  if (category === null || typeof category !== 'object') return null;
+  const id = (category as Record<string, unknown>).id;
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+}
+
+export interface ResolveAdCategoryIdParams {
+  readonly workspaceId: number;
+  readonly miniAppId: number;
+  readonly adFormat: AdFormat;
+}
+
+export type ResolveAdCategoryIdResult =
+  | { readonly ok: true; readonly categoryId: number; readonly validated: boolean }
+  | { readonly ok: false; readonly reason: 'category-not-resolved'; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly reason: 'category-invalid';
+      readonly categoryId: number;
+      readonly message: string;
+    };
+
+/**
+ * Auto-resolve the ad categoryId for a non-BANNER placement group from the
+ * mini-app's own impression category, then best-effort validate it via
+ * `fetchAdMobAdInfo`. Both calls are read-only GETs — safe to run even
+ * ahead of a `--dry-run` preview, same as any other read command in this
+ * module.
+ */
+export async function resolveAdCategoryId(
+  params: ResolveAdCategoryIdParams,
+  cookies: readonly CdpCookie[],
+  opts: { fetchImpl?: FetchLike } = {},
+): Promise<ResolveAdCategoryIdResult> {
+  const detail = await fetchMiniAppDetail(params.workspaceId, params.miniAppId, cookies, opts);
+  const categoryId = extractAppCategoryId(detail.miniApp);
+  if (categoryId === null) {
+    return {
+      ok: false,
+      reason: 'category-not-resolved',
+      message:
+        `Could not determine an ad category id from app ${params.miniAppId}'s own category ` +
+        '(impression.categoryPaths is empty or missing). Pass --category <id> explicitly.',
+    };
+  }
+
+  // Best-effort sanity check — never let a hiccup on this secondary lookup
+  // block a resolution that otherwise succeeded.
+  let adInfo: AdMobAdInfoResult | null;
+  try {
+    adInfo = await fetchAdMobAdInfo(
+      {
+        workspaceId: params.workspaceId,
+        miniAppId: params.miniAppId,
+        categoryId,
+        adFormat: params.adFormat,
+      },
+      cookies,
+      opts,
+    );
+  } catch {
+    adInfo = null;
+  }
+
+  if (adInfo === null) {
+    return { ok: true, categoryId, validated: false };
+  }
+  if (!adInfo.valid) {
+    return {
+      ok: false,
+      reason: 'category-invalid',
+      categoryId,
+      message:
+        `App category id ${categoryId} is not a valid ad category for format ${params.adFormat}` +
+        (adInfo.reason ? ` (${adInfo.reason})` : '') +
+        '. Pass --category <id> explicitly with a known-valid category id.',
+    };
+  }
+  return { ok: true, categoryId, validated: true };
 }
