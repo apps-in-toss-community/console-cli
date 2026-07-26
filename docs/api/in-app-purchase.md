@@ -34,7 +34,7 @@
 ## `GET .../in-app-purchase/catalogs` — 상품 목록
 
 - **Used by**: [`src/api/in-app-purchase.ts#fetchIapProducts`](../../src/api/in-app-purchase.ts), `aitcc app iap products ls`
-- **Capture status**: ⚠️ mixed — 5002 에러 경로는 ✅ confirmed, SUCCESS 응답 shape은 미관측
+- **Capture status**: ⚠️ mixed — 5002 에러 경로는 ✅ confirmed, SUCCESS 응답 shape은 미관측 (5002 게이트는 2026-07-25/26 재측정에서 이 워크스페이스에 더 이상 재현되지 않는다 — 정확한 SUCCESS 필드는 여전히 미확정)
 - **Query**: `?page=<int>&search=<string>&type=<CONSUMABLE|NON_CONSUMABLE|SUBSCRIPTION>&catalogStatus=<string>` (콘솔 UI의 다중 선택 필터 — `type`/`catalogStatus`는 반복 가능한 query param으로 추정, 실측 없음)
 
 ### 실측: 파트너 미등록 시 5002 (2026-07-23, workspace 3095 / app 31146)
@@ -52,6 +52,10 @@
 ```
 
 CLI는 `hintForErrorCode('5002')`([`src/commands/_shared.ts`](../../src/commands/_shared.ts))로 이 코드를 만나면 `--json` 여부와 무관하게 `아itcc workspace partner`로 상태를 확인하라는 hint를 구조화된 형태로 붙인다. 상세는 [`_error-codes.md`](./_error-codes.md) `5002` 항목.
+
+### 갱신 (2026-07-25/26, workspace 3095 / app 31146)
+
+같은 `catalogs` GET을 재호출한 결과, 위 5002는 더 이상 재현되지 않는다 — 이제 HTTP 200, 상품 0건을 반환한다. 이 관측에서는 정확한 SUCCESS envelope 필드까지는 기록하지 못했다 — 아래 "SUCCESS 응답 (⚠️ 추정)"의 추정 shape은 그대로 유효하다.
 
 ### SUCCESS 응답 (⚠️ 추정)
 
@@ -101,7 +105,9 @@ CLI는 이 shape을 강제하지 않고 응답을 그대로(opaque) 통과시킨
 - **Used by**: [`src/api/in-app-purchase.ts#createIapProduct`](../../src/api/in-app-purchase.ts), `aitcc app iap products create`
 - **Capture status**: ✅ body shape confirmed — 콘솔 SPA 직렬화 로직 정적 분석 + 재측정([issue #232](https://github.com/apps-in-toss-community/console-cli/issues/232), 2026-07-25, high confidence). **응답은 물론 request 자체도 라이브로 호출된 적이 없다** — 이건 "계약은 확정, 라이브 미실행" 상태다(SECRET-HANDLING: read-only가 아니라 실제 상품을 등록하고 검수 큐에 올리는 mutation이라, 메인테이너 승인 게이트(`--confirm`) 뒤에서만 실행된다).
 - 미니앱 등록(`POST /mini-app/review`, [`mini-apps.md`](./mini-apps.md) "Update mode")과 같은 패턴 — **등록과 검수 제출이 분리된 두 endpoint가 아니라 단일 POST**. dual-mode(create vs update)는 이 endpoint가 아니라 `PUT .../product/<productId>/inspection`(수정)으로 나뉘어 있다는 점만 미니앱과 다르다.
-- **게이트: 광고 지면 생성(`app ads placement-groups create`)보다 강하다.** ⚠️ 승인 전(사전-승인) create는 광고와 달리 **막힐 개연성이 높다** — (1) `minDeploymentId`는 **APPROVED 상태 배포에서만** 유효한데 dog-food 앱 31146은 아직 승인된 배포가 0개, (2) create = 심사 제출이라 IAP 위탁매매 약관(`errorCode: 5001`) 미동의 시 서버가 거부할 개연성이 있다. 그래서 `aitcc app iap products create`는 실제 POST 전에 **read-only preflight**로 `catalogs`를 먼저 호출해, 그 GET이 5001로 실패하면 POST를 시도하지도 않고 `aitcc workspace terms --type IAP`를 가리키는 힌트로 중단한다(`hintForErrorCode('5001')`, [`_error-codes.md`](./_error-codes.md) `5001` 참고 — 이 워크스페이스(3095)는 실제로 이 약관이 미동의 상태다, [`mini-app-bundles.md`](./mini-app-bundles.md)의 `app deploy --dry-run` terms-blocker 캡처에서 확인). 약관 동의는 법적 결정이라 CLI가 대신 처리하지 않는다.
+- **게이트: 광고 지면 생성(`app ads placement-groups create`)보다 강하다.** ⚠️ 승인 전(사전-승인) create는 광고와 달리 **막힐 개연성이 높다** — (1) `minDeploymentId`는 **APPROVED 상태 배포에서만** 유효한데 dog-food 앱 31146은 아직 승인된 배포가 0개, (2) create = 심사 제출이라 IAP 위탁매매 약관(`errorCode: 5001`) 미동의 시 서버가 거부할 개연성이 있다. 그래서 `aitcc app iap products create`는 실제 POST 전에 **read-only preflight**로 `catalogs`를 먼저 호출해, 그 GET이 5001로 실패하면 POST를 시도하지도 않고 `aitcc workspace terms --type IAP`를 가리키는 힌트로 중단한다(`hintForErrorCode('5001')`, [`_error-codes.md`](./_error-codes.md) `5001` 참고). 약관 동의는 법적 결정이라 CLI가 대신 처리하지 않는다.
+
+  **갱신 (2026-07-25/26)**: (2)는 이 워크스페이스(3095)에서 더 이상 재현되지 않는다 — `catalogs` GET이 현재 200(상품 0건)을 반환한다. 현재까지 확인된 블로커는 (1)이다. 다만 `POST .../product/inspection` 자체는 아직 라이브로 실행된 적이 없어 다른 서버측 거부 가능성은 배제되지 않는다.
 
 ### products create — confirmed body shape
 

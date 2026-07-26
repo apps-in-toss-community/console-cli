@@ -228,6 +228,10 @@ Exit code 17 (`api-error`).
 
 `permissions.role`은 `members/me`의 워크스페이스 멤버십에서 derive ([`fetchConsoleMemberUserInfo`](../../src/api/me.ts)). best-effort 체크라 fetch 실패 시 `role: null` + `error` 필드만 채우고 dry-run 자체는 진행한다.
 
+### 갱신 (2026-07-25/26)
+
+위 dry-run 캡처의 약관 블로커 7개는 2026-05-11 시점 스냅샷이다. 그 이후 워크스페이스 3095의 배포 관련 약관은 모두 동의 완료됐고, `app deploy --dry-run`은 이제 약관 블로커 없이 clean한 pre-flight를 보고한다. 위 캡처는 정정하지 않고 historical record로 유지한다.
+
 ## 31146 deploy 캡처 결과
 
 ### 2026-05-11 (GET 경로 + dry-run)
