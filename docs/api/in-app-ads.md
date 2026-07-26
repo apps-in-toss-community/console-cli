@@ -118,7 +118,7 @@ CLI는 이 shape을 타입으로 강제하지 않는다 — 각 항목을 opaque
 }
 ```
 
-- **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 `state`가 `"REGISTERING"`인지는 **추정이며 라이브 미관측**이다 — repo 안에서 이 값은 테스트 mock(`src/api/in-app-ads.test.ts`)에서만 등장하고 공식문서·라이브 캡처 어디에도 근거가 없다. 한편 구글 광고 시스템 반영까지 **최대 2시간** 걸릴 수 있다는 점은 공식 개발자 문서(`developers-apps-in-toss.toss.im/ads/intro.html`, "광고 그룹 ID는 구글에 등록되기까지 최대 2시간이 걸릴 수 있어요")에 명시돼 있다 — 출처 기반, 라이브 미관측.
+- **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 `state`가 `"REGISTERING"`인지는 **추정이며 라이브 미관측**이다 — repo 안에서 이 값은 테스트 mock(`src/api/in-app-ads.test.ts`)과 **CLI가 스스로 인쇄하는 하드코딩 문자열**(`src/commands/app-ads.ts:489` `'상태: REGISTERING — …'`)로만 등장하고, 공식문서·라이브 캡처 어디에도 근거가 없다. 즉 지금 CLI는 서버가 확인해 주지 않은 상태값을 사용자에게 단정해 보여주고 있다(#240). 한편 구글 광고 시스템 반영까지 **최대 2시간** 걸릴 수 있다는 점은 공식 개발자 문서(`developers-apps-in-toss.toss.im/ads/intro.html`, "광고 그룹 ID는 구글에 등록되기까지 최대 2시간이 걸릴 수 있어요")에 명시돼 있다 — 출처 기반, 라이브 미관측.
 - **실서빙 게이트**: 지면을 만들었다고 바로 광고가 노출되는 게 아니다 — 사업자 등록·정산 승인이 인앱광고의 선행조건이다(`aitcc workspace business-verification show`로 확인). CLI는 생성 성공 메시지에 이 게이트를 함께 안내한다.
 - **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인) — 실기기 서빙은 아래 "SDK 측 실서빙 관측" 참고.
 
