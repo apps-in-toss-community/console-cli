@@ -23,7 +23,7 @@
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
 | Mini-apps · 기타 (certs/params/analytics/logs) | [`mini-app-misc.md`](./mini-app-misc.md) | ⚠️ inferred (정적 분석) |
 | In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate는 2026-07-25/26 재측정에서 미재현, `catalogs`는 200/0건까지만 — 원본 envelope·항목 shape 미기록, 상세/생성 shape inferred) |
-| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ⚠️ mixed (목록은 지면 4건 채워진 상태까지 confirmed, 어뷰징 상태 confirmed — 지면 **생성 응답 본문**만 여전히 미캡처) |
+| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ⚠️ mixed (목록은 지면 4건 채워진 상태까지 confirmed, 어뷰징 상태 confirmed — 지면 **생성 응답 본문**, 채워진 `report`/`targeting.excludedRegionCodes`·`targetedRegionCodes`/`adSources`, `blockedPlacementGroups` item shape, `ENABLED` 외 `state` 값은 여전히 미캡처) |
 | API Keys | [`api-keys.md`](./api-keys.md) | ✅ confirmed |
 | Impression (카테고리) | [`impression.md`](./impression.md) | ✅ confirmed |
 | Notices (별도 호스트) | [`notices.md`](./notices.md) | ⚠️ inferred |

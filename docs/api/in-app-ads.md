@@ -35,10 +35,10 @@
 |---|---|---|---|---|---|---|
 | `ait.v2.live.f75ef8504e254b11` | `INTERSTITIAL` | `["MOMENT","MOMENT_VIDEO","BRAND"]` | `null` | 있음 | 있음 | `2026-07-24T03:29:37` |
 | `ait.v2.live.4ebc5e0284164325` | `REWARDED` | `["MOMENT_VIDEO"]` | `{"unitAmount":1,"unitType":"포인트"}` | 있음 | 있음 | `2026-07-24T13:08:47` |
-| `ait.v2.live.934f395bb2b44754` | `BANNER` (리스트형) | `["NORMAL"]` | `null` | **`null`** | **`null`** | `2026-07-24T13:08:48` |
-| `ait.v2.live.8e3e176e1b224c7f` | `BANNER` (피드형) | `["NATIVE_IMAGE"]` | `null` | **`null`** | **`null`** | `2026-07-24T13:08:49` |
+| `ait.v2.live.934f395bb2b44754` | `BANNER` | `["NORMAL"]` | `null` | **`null`** | **`null`** | `2026-07-24T13:08:48` |
+| `ait.v2.live.8e3e176e1b224c7f` | `BANNER` | `["NATIVE_IMAGE"]` | `null` | **`null`** | **`null`** | `2026-07-24T13:08:49` |
 
-4건 모두 `regTs === updTs`(생성 후 서버측 갱신 없음), `scheduledDelTs: null`, `report: null`, `abuseLevel: "NONE"`.
+4건 모두 `regTs === updTs`다 — 다만 `updTs`가 서버측 변이를 신뢰성 있게 반영하는 필드인지는 확인되지 않았다(아래 "콘솔 쪽 대조로 좁혀진 범위" 참고). 그 외 공통: `scheduledDelTs: null`, `report: null`, `abuseLevel: "NONE"`.
 
 **BANNER의 placement 비대칭**: INTERSTITIAL/REWARDED는 iOS·Android 양쪽에 AdMob placement + mediation 워터폴이 채워져 있는데, BANNER 2건은 두 플랫폼 placement가 모두 `null`이다 — REWARDED 지면과 1~2초 간격으로 연달아 생성됐는데도 그렇다. 즉 `state: "ENABLED"`가 곧 "양 플랫폼 지면 프로비저닝 완료"를 뜻하지 않는다. 배너 계열이 비동기 프로비저닝을 더 기다리는 것인지, 포맷별로 절차가 다른 것인지는 미확인 — 재관측 대상.
 
@@ -58,7 +58,7 @@
   adFormat: 'BANNER' | 'INTERSTITIAL' | 'REWARDED',
   adStyles: string[],              // 관측: ['MOMENT','MOMENT_VIDEO','BRAND'] | ['MOMENT_VIDEO'] | ['NORMAL'] | ['NATIVE_IMAGE']
   displayName: string,
-  state: string,                   // 관측된 값은 'ENABLED'뿐 (생성 직후의 'REGISTERING'은 이번 캡처에 안 잡힘)
+  state: string,                   // 관측된 값은 'ENABLED'뿐 — 생성 직후 'REGISTERING'이 존재하는지는 추정이고 라이브 미관측(아래 "광고 지면 생성" 참고)
   rewardSettings: { unitAmount: number, unitType: string } | null,   // REWARDED에만, 그 외 null
   iosPlacement: Placement | null,      // BANNER 2건은 null
   androidPlacement: Placement | null,  // 동일
@@ -118,7 +118,7 @@ CLI는 이 shape을 타입으로 강제하지 않는다 — 각 항목을 opaque
 }
 ```
 
-- **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 상태는 `state: "REGISTERING"`이고, 구글 광고 시스템 반영까지 **최대 2시간** 걸리는 비동기 처리다.
+- **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 `state`가 `"REGISTERING"`인지는 **추정이며 라이브 미관측**이다 — repo 안에서 이 값은 테스트 mock(`src/api/in-app-ads.test.ts`)에서만 등장하고 공식문서·라이브 캡처 어디에도 근거가 없다. 한편 구글 광고 시스템 반영까지 **최대 2시간** 걸릴 수 있다는 점은 공식 개발자 문서(`developers-apps-in-toss.toss.im/ads/intro.html`, "광고 그룹 ID는 구글에 등록되기까지 최대 2시간이 걸릴 수 있어요")에 명시돼 있다 — 출처 기반, 라이브 미관측.
 - **실서빙 게이트**: 지면을 만들었다고 바로 광고가 노출되는 게 아니다 — 사업자 등록·정산 승인이 인앱광고의 선행조건이다(`aitcc workspace business-verification show`로 확인). CLI는 생성 성공 메시지에 이 게이트를 함께 안내한다.
 - **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인) — 실기기 서빙은 아래 "SDK 측 실서빙 관측" 참고.
 
@@ -157,10 +157,10 @@ CLI는 이 shape을 타입으로 강제하지 않는다 — 각 항목을 opaque
 위 실기기 실패를 콘솔 상태와 대조한 결과, **몇 가지 설명은 배제된다**:
 
 - 로드를 시도한 두 지면(interstitial `ait.v2.live.f75ef8504e254b11`, rewarded `ait.v2.live.4ebc5e0284164325`)은 캡처 시점에 `state: "ENABLED"`이고, iOS·Android **양쪽**에 AdMob placement + mediation 워터폴이 채워져 있다 → **지면 부재**로는 설명되지 않는다.
-- 두 지면 모두 2026-07-24 생성이고 온디바이스 측정은 07-25/26 — 24~48시간 뒤다. CLI가 생성 시 안내하는 "구글 광고 시스템 반영까지 최대 2시간" 창을 한참 지났다 → **비동기 반영 대기 중**으로도 설명되지 않는다.
+- 두 지면 모두 2026-07-24 생성이다(가장 늦은 것은 rewarded, `13:08:47`). 온디바이스 측정은 "07-25/26"로만 기록돼 정확한 시각은 남아 있지 않다 — 그래도 가장 늦게 생성된 지면 기준으로 최소 약 11시간, CLI가 생성 시 안내하는 "구글 광고 시스템 반영까지 최대 2시간" 창을 크게 넘는다 → **비동기 반영 대기 중**으로도 설명되지 않는다.
 - `abuse-status`가 `abuseLevel: "NONE"` / `isServingBlocked: false`이고 `blockedPlacementGroups`도 비어 있다 → **어뷰징 차단**으로도 설명되지 않는다.
 
-**같이 적어 두는 단서**: `updTs`가 `regTs`와 같다는 사실만으로 "측정 시점에 이미 `ENABLED`였다"가 증명되지는 않는다 — 서버측 `REGISTERING`→`ENABLED` 전이가 `updTs`를 건드리지 않았을 수 있다. 위 두 번째 항목의 근거는 `updTs` 불변이 아니라 **경과 시간(24~48h) 대 안내된 2시간 창**이다.
+**같이 적어 두는 단서**: `updTs`가 `regTs`와 같다는 사실만으로 "측정 시점에 이미 `ENABLED`였다"가 증명되지는 않는다 — 서버측 `REGISTERING`→`ENABLED` 전이가 `updTs`를 건드리지 않았을 수 있다. 위 두 번째 항목의 근거는 `updTs` 불변이 아니라 **경과 시간(최소 약 11h) 대 안내된 2시간 창**이다.
 
 **혼동 금지**: BANNER 지면 2건은 양 플랫폼 placement가 `null`이라 애초에 미프로비저닝 상태다(위 "BANNER의 placement 비대칭"). 배너 로드가 실패한다면 그건 이미 알려진 별개 사유이므로, interstitial/rewarded 관측과 섞어 읽지 않는다.
 
