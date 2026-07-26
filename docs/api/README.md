@@ -22,8 +22,8 @@
 | Mini-apps · 이미지 업로드 | [`mini-app-images.md`](./mini-app-images.md) | ✅ confirmed |
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
 | Mini-apps · 기타 (certs/params/analytics/logs) | [`mini-app-misc.md`](./mini-app-misc.md) | ⚠️ inferred (정적 분석) |
-| In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate는 2026-07-25/26 재측정에서 미재현, 목록/상세/생성 shape inferred) |
-| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ⚠️ mixed (지면 생성은 라이브 실행됐으나 응답 본문 미캡처, 목록/어뷰징 상태는 confirmed) |
+| In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate는 2026-07-25/26 재측정에서 미재현, `catalogs`는 200/0건까지만 — 원본 envelope·항목 shape 미기록, 상세/생성 shape inferred) |
+| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ⚠️ mixed (목록은 지면 4건 채워진 상태까지 confirmed, 어뷰징 상태 confirmed — 지면 **생성 응답 본문**만 여전히 미캡처) |
 | API Keys | [`api-keys.md`](./api-keys.md) | ✅ confirmed |
 | Impression (카테고리) | [`impression.md`](./impression.md) | ✅ confirmed |
 | Notices (별도 호스트) | [`notices.md`](./notices.md) | ⚠️ inferred |
@@ -82,7 +82,7 @@
 - `POST /workspaces/<wid>/mini-app/pre-review` — AI 사전 검토 버튼. ([`mini-apps.md`](./mini-apps.md))
 - `mini-app-bundles.md` 전체 — `app deploy` 흐름 (initialize → upload → complete → review → release) E2E. ([`mini-app-bundles.md`](./mini-app-bundles.md))
 - `app reports` cursor pagination shape — 한 번이라도 신고 들어오면 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
-- `GET .../in-app-purchase/catalogs` 실제 목록/`catalog/<productId>` 상세 SUCCESS shape — 2026-07-25/26 재측정으로 200(상품 0건)까지는 확인됐지만, 정확한 envelope 필드는 여전히 미기록. 상품이 1건 이상 있는 상태에서 재관측 필요. ([`in-app-purchase.md`](./in-app-purchase.md))
+- `GET .../in-app-purchase/catalogs` 실제 목록/`catalog/<productId>` 상세 SUCCESS shape — 2026-07-26에 CLI 정규화 출력까지 남겼지만(200, 상품 0건, `success.contents`가 배열인 것만 확정) **정규화 전 원본 envelope**과 항목 shape은 여전히 미기록. 상품이 1건 이상 있는 상태에서 raw 본문 재관측 필요. ([`in-app-purchase.md`](./in-app-purchase.md))
 - `POST .../in-app-purchase/product/inspection` (products create) 실제 request/response — 메인테이너 승인 게이트 뒤에서만 실행 (issue #220 SECRET-HANDLING). ([`in-app-purchase.md`](./in-app-purchase.md))
 - `GET .../in-app-purchase/orders`, `/refunds` 실제 목록 shape. ([`in-app-purchase.md`](./in-app-purchase.md))
 
@@ -95,6 +95,7 @@
 
 **우선순위 4 — 별도 액션 필요**:
 
+- `POST .../in-app-ads-v2/placement-group` (지면 생성) 응답 본문 — 목록(`ls`)으로 저장된 리소스 shape은 2026-07-26에 확정됐지만, create가 그 자리에서 돌려주는 envelope은 미캡처. 다음 지면 생성 시 함께 캡처(메인테이너 `--confirm` 게이트 뒤 mutation). ([`in-app-ads.md`](./in-app-ads.md))
 - `POST /workspaces/<wid>/api-keys` (발급) — 1회성 액션, dog-food 시 별도 진행. ([`api-keys.md`](./api-keys.md))
 - `PUT /workspaces/<wid>/api-keys/<id>/disable` — 발급 후 검증 페어로 동시 캡처. ([`api-keys.md`](./api-keys.md))
 - toss-login `review` / `marketing-agreement` / `encryption-key/email` — 토스 로그인 사용 사례 필요. ([`mini-app-misc.md`](./mini-app-misc.md))
