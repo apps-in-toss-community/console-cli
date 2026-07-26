@@ -492,7 +492,7 @@ const placementGroupsCreateCommand = defineCommand({
         '실서빙은 사업자 등록·정산 승인 후 시작돼요 (인앱광고 선행조건 — `aitcc workspace business-verification show`로 확인).\n',
       );
       process.stdout.write(
-        `SDK: GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId: '${result.groupId ?? '<adGroupId>'}' } }) — 개발 중 테스트는 ait-ad-test-* ID를 쓰세요.\n`,
+        `SDK: GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId: '${result.groupId ?? '<adGroupId>'}' } }) — 개발 중 테스트는 ait-ad-test-* ID를 쓰세요(실기기에서는 승인·배포 상태에 따라 테스트 ID도 로드에 실패할 수 있어요).\n`,
       );
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
