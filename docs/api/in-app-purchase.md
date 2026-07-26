@@ -10,7 +10,7 @@
 
 | Method | Path | 용도 | 상태 |
 |---|---|---|---|
-| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/catalogs` | 상품 목록 | ⚠️ (5002 게이트만 ✅) |
+| GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/catalogs` | 상품 목록 | ⚠️ (5002 게이트 ✅, 200/0건 확인 — 원본 envelope 미기록) |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/catalog/<product_id>` | 상품 상세 | ⚠️ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/orders` | 주문 목록 | ⚠️ |
 | GET | `/workspaces/<wid>/mini-app/<mini_app_id>/in-app-purchase/refunds` | 환불 목록 | ⚠️ |
@@ -34,7 +34,7 @@
 ## `GET .../in-app-purchase/catalogs` — 상품 목록
 
 - **Used by**: [`src/api/in-app-purchase.ts#fetchIapProducts`](../../src/api/in-app-purchase.ts), `aitcc app iap products ls`
-- **Capture status**: ⚠️ mixed — 5002 에러 경로는 ✅ confirmed, SUCCESS 응답 shape은 미관측 (5002 게이트는 2026-07-25/26 재측정에서 이 워크스페이스에 더 이상 재현되지 않는다 — 정확한 SUCCESS 필드는 여전히 미확정)
+- **Capture status**: ⚠️ mixed — 5002 에러 경로는 ✅ confirmed, SUCCESS 원본 envelope은 여전히 미기록. 5002 게이트는 2026-07-25/26 재측정에서 이 워크스페이스에 더 이상 재현되지 않고, 2026-07-26에는 CLI 정규화 출력까지 남겼지만(아래) 그건 서버 원본 본문이 아니다. 상품 0건이라 항목 shape도 미확인.
 - **Query**: `?page=<int>&search=<string>&type=<CONSUMABLE|NON_CONSUMABLE|SUBSCRIPTION>&catalogStatus=<string>` (콘솔 UI의 다중 선택 필터 — `type`/`catalogStatus`는 반복 가능한 query param으로 추정, 실측 없음)
 
 ### 실측: 파트너 미등록 시 5002 (2026-07-23, workspace 3095 / app 31146)
@@ -57,9 +57,25 @@ CLI는 `hintForErrorCode('5002')`([`src/commands/_shared.ts`](../../src/commands
 
 같은 `catalogs` GET을 재호출한 결과, 위 5002는 더 이상 재현되지 않는다 — 이제 HTTP 200, 상품 0건을 반환한다. 이 관측에서는 정확한 SUCCESS envelope 필드까지는 기록하지 못했다 — 아래 "SUCCESS 응답 (⚠️ 추정)"의 추정 shape은 그대로 유효하다.
 
+### 갱신 (2026-07-26, workspace 3095 / app 31146) — CLI 정규화 출력
+
+`aitcc app iap products ls --json`의 stdout을 그대로 남겼다:
+
+```json
+{"ok":true,"workspaceId":3095,"appId":31146,"page":0,"totalPage":0,"currentPage":0,"products":[]}
+```
+
+**이건 서버 원본 envelope이 아니라 CLI가 정규화한 shape이다.** 그래서 이 출력에서 서버 필드로 확정할 수 있는 것과 없는 것이 갈린다:
+
+- **확정**: 서버 `success`는 객체이고 그 안에 배열 `contents`가 있다. `fetchIapProducts`가 `success`를 객체로 못 보거나 `contents`가 배열이 아니면 예외를 던지므로([`src/api/in-app-purchase.ts`](../../src/api/in-app-purchase.ts)), `ok: true`가 나온 것 자체가 두 조건의 통과를 뜻한다. 등록된 상품은 0건.
+- **미확정**: 출력의 `totalPage: 0` / `currentPage: 0`은 **서버에 그 필드가 있었다는 증거가 아니다** — 같은 함수가 두 필드를 `typeof === 'number'`가 아닐 때 `0`으로 defaulting한다. 서버가 안 보냈어도 같은 출력이 나온다. 출력의 `page`는 `--page` 인자를 그대로 echo한 것이라 서버 필드와 무관하다.
+- **미확정**: 항목(상품) shape. 0건이라 여전히 미관측이다.
+
+즉 "page 기반 페이지네이션"은 아래 추정대로 남는다. 원본 envelope 확정은 `contents`에 상품이 1건 이상 있는 상태에서 **정규화 전 raw 본문**을 캡처해야 한다.
+
 ### SUCCESS 응답 (⚠️ 추정)
 
-파트너 등록 후 재관측 필요. 이 API 계열의 다른 목록 endpoint(`bundles`, `segments` 등)가 전부 page-based `{contents, totalPage, currentPage}` shape을 쓰므로 같은 shape으로 추정해 뒀다:
+파트너 등록 후 재관측 필요. `contents`가 배열로 존재한다는 것까지는 위 2026-07-26 관측으로 확정됐고, 나머지 두 필드는 이 API 계열의 다른 목록 endpoint(`bundles`, `segments` 등)가 전부 page-based `{contents, totalPage, currentPage}` shape을 쓰므로 같은 shape으로 추정해 뒀다:
 
 ```jsonc
 {

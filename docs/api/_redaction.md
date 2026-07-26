@@ -30,6 +30,7 @@
 | `keywordList` 항목들 | `["<keyword>", ...]` | 갯수만 보존, 내용은 placeholder |
 | 이미지 CDN URL의 UUID | `<image_uuid>` | `https://static.toss.im/appsintoss/<wid>/<image_uuid>.png` 형태로 host/path는 유지 |
 | `miniAppId`(특정 사용자의 앱 id) | 그대로 두되 본 inventory 작성에 사용된 sdk-example dog-food 앱들(29349, 29356, 29397, 29405 — trail, 더 이상 touch 안 함) 및 현재 메인 dog-food 앱(`31146` `aitcc-sdk-example`)은 공개 식별자로 취급 |
+| **광고 수익화 식별자** — `appPlacementId`/`adUnitId`/`mediationGroupId`/`adSourceId`/`cpmMicros`, mediation line id·`displayName`(파트너사명) | 필드별 타입 placeholder(`<int>`/`<string>`) | in-app-ads 도메인. 토스 쪽 광고 수익화 설정이라 실값을 싣지 않는다. `groupId`(`ait.v2.live.*`)·워크스페이스 `3095`·앱 `31146`·`adFormat`/`adStyles`/`state`/카테고리/타임스탬프는 앱 소유자 자기 설정이라 redact 안 함 |
 
 ## 유지하는 것 (redact 안 함)
 
