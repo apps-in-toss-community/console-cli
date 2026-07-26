@@ -32,7 +32,7 @@
 ## `POST .../in-app-ads-v2/placement-group` — 광고 지면 생성
 
 - **Used by**: [`src/api/in-app-ads.ts#createAdsPlacementGroup`](../../src/api/in-app-ads.ts), `aitcc app ads placement-groups create`
-- **Capture status**: ⚠️ inferred — request body는 콘솔 SPA의 지면 생성 위저드 폼→바디 직렬화 로직 + 공식문서(`developers-apps-in-toss.toss.im/ads/*`) 교차 확인으로 복원(issue #229). **응답은 물론 request 자체도 라이브로 호출된 적이 없다** (SECRET-HANDLING: 이 endpoint는 read-only가 아니라 실제 광고 지면을 생성하는 mutation이라, 메인테이너 승인 게이트(`--confirm`) 뒤에서만 실행된다).
+- **Capture status**: ⚠️ inferred — request body는 콘솔 SPA의 지면 생성 위저드 폼→바디 직렬화 로직 + 공식문서(`developers-apps-in-toss.toss.im/ads/*`) 교차 확인으로 복원(issue #229). **갱신 (2026-07-25/26)**: 이 endpoint는 실제로 31146에 대해 라이브로 호출돼, 광고 지면 4개(interstitial `ait.v2.live.f75ef8504e254b11`, rewarded `ait.v2.live.4ebc5e0284164325` 포함)가 생성됐다 — 메인테이너 승인 게이트(`--confirm`) 뒤에서 실행(SECRET-HANDLING: read-only가 아니라 실제 광고 지면을 생성하는 mutation이라는 원칙은 유지). 다만 **create 응답 본문**(`groupId`/`state` 등)은 아직 캡처하지 못했다 — follow-up.
 - **경로 주의**: 목록(`placement-groups`, 복수형)과 달리 생성은 **단수형** `placement-group` path.
 
 ### placement-group create — inferred body shape
@@ -49,7 +49,7 @@
 
 - **응답**: 서버 발급 `groupId`(SDK 쪽 `adGroupId`와 동일 개념). 생성 직후 상태는 `state: "REGISTERING"`이고, 구글 광고 시스템 반영까지 **최대 2시간** 걸리는 비동기 처리다.
 - **실서빙 게이트**: 지면을 만들었다고 바로 광고가 노출되는 게 아니다 — 사업자 등록·정산 승인이 인앱광고의 선행조건이다(`aitcc workspace business-verification show`로 확인). CLI는 생성 성공 메시지에 이 게이트를 함께 안내한다.
-- **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인).
+- **SDK 연결**: 생성된 `adGroupId`는 `GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId } })`로 소비한다. 개발 중 테스트는 실제 지면 없이 `ait-ad-test-interstitial-id` / `ait-ad-test-rewarded-id` / `ait-ad-test-banner-id` / `ait-ad-test-native-image-id` 같은 고정 테스트 ID를 쓸 수 있다(공식문서 확인) — 실기기 서빙은 아래 "SDK 측 실서빙 관측" 참고.
 
 ### category 자동 해소 (issue #231, 2026-07-24 실측)
 
@@ -63,6 +63,25 @@
 따라서 CLI는 `--category`를 **선택 입력**으로 바꿨다: 생략하면 앱 상세에서 category id를 auto-resolve하고 위 엔드포인트로 검증하며, 명시하면 override로 쓴다. 앱 상세에 `categoryPaths`가 없거나 검증이 invalid면 `--category`를 명시하라는 에러로 degrade한다.
 
 > 정정 (issue #229 당시 note): 미니앱 등록용 `impression` 카테고리([`impression.md`](./impression.md))를 광고 `categoryId`와 별개 taxonomy로 추정했으나, 실측 결과 **같은 값**이다 — 광고 `categoryId` = 앱 자신의 impression `category.id`.
+
+## SDK 측 실서빙 관측 (env3 실기기, 2026-07-25/26)
+
+이 섹션은 콘솔 API surface 밖의 관측이다 — SDK(`GoogleAdMob`)가 실기기에서 광고를 로드/노출하는 동작이라 위 콘솔 endpoint들과 직접 호출 관계는 없지만, 위 "실서빙 게이트"(사업자·정산 승인)가 실제로 어떻게 나타나는지와 직결돼 함께 기록한다.
+
+**조건**: iOS, `@apps-in-toss/web-framework` 2.10.0, miniAppId 31146, `PREPARE` 상태 candidate 번들을 `intoss-private` deep-link로 cold-load (환경 3), 워크스페이스 광고 사업자/정산 승인 심사중.
+
+**측정 결과** (4건):
+
+- `GoogleAdMob.loadAppsInTossAdMob` + 공식 테스트 ID(`ait-ad-test-interstitial-id`, `ait-ad-test-rewarded-id`) → `errorCode: PLACEMENT_ID_FETCH_FAILED`, message `GoogleAdMobLoadError(message: "Request Error: A network error occurred.", code: Optional("LOAD_FAILED"))`.
+- 같은 호출을 31146 자신의 실제 지면(interstitial `ait.v2.live.f75ef8504e254b11`, rewarded `ait.v2.live.4ebc5e0284164325`)으로 → **동일한** `PLACEMENT_ID_FETCH_FAILED`. 테스트 ID 고유 현상이 아니다.
+- 로드 실패 후 `showAppsInTossAdMob` 호출 → `FAILED_TO_GET_LOADED_AD`, "광고가 없습니다."
+- 통합 `loadFullScreenAd` + 테스트 ID → `EXECUTION_ERROR`, "광고 요청 처리에 실패했습니다 [1011]" (서버까지 도달해 애플리케이션 레벨에서 거부된 형태 — 단순 네트워크 단절은 아님).
+
+네 경우 모두 광고가 렌더되지 않았다.
+
+**원인은 분리되지 않는다.** (A) 승인 게이트가 테스트 ID에도 걸리는지, (B) `PREPARE`/비-`APPROVED` 배포가 애초에 지면을 resolve하지 못하는지 — 위 관측만으로는 둘을 구분할 수 없다. 분리하려면 APPROVED 배포이거나, 승인 완료 후 재측정이 필요하다. 원인을 단정하지 않는다.
+
+**devtools mock은 이 실패를 예측하지 못한다**: 실패 dial(`failureModes.loadAdMob`)을 명시적으로 켜지 않는 한, mock은 `adGroupId` 값을 검사하지 않고 고정 지연 후 그냥 `loaded`를 emit한다.
 
 ## `GET .../in-app-ads-v2/abuse-status` — 어뷰징/노출차단 상태
 

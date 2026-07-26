@@ -22,8 +22,8 @@
 | Mini-apps · 이미지 업로드 | [`mini-app-images.md`](./mini-app-images.md) | ✅ confirmed |
 | Mini-apps · Bundles · Deployments | [`mini-app-bundles.md`](./mini-app-bundles.md) | ⚠️ inferred (코드 + 정적 분석) |
 | Mini-apps · 기타 (certs/params/analytics/logs) | [`mini-app-misc.md`](./mini-app-misc.md) | ⚠️ inferred (정적 분석) |
-| In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate ✅, 목록/상세/생성 shape inferred) |
-| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ✅ confirmed |
+| In-app purchase (상품·주문·환불) | [`in-app-purchase.md`](./in-app-purchase.md) | ⚠️ mixed (5002 gate는 2026-07-25/26 재측정에서 미재현, 목록/상세/생성 shape inferred) |
+| In-app advertising (광고 지면·어뷰징 상태) | [`in-app-ads.md`](./in-app-ads.md) | ⚠️ mixed (지면 생성은 라이브 실행됐으나 응답 본문 미캡처, 목록/어뷰징 상태는 confirmed) |
 | API Keys | [`api-keys.md`](./api-keys.md) | ✅ confirmed |
 | Impression (카테고리) | [`impression.md`](./impression.md) | ✅ confirmed |
 | Notices (별도 호스트) | [`notices.md`](./notices.md) | ⚠️ inferred |
@@ -82,7 +82,7 @@
 - `POST /workspaces/<wid>/mini-app/pre-review` — AI 사전 검토 버튼. ([`mini-apps.md`](./mini-apps.md))
 - `mini-app-bundles.md` 전체 — `app deploy` 흐름 (initialize → upload → complete → review → release) E2E. ([`mini-app-bundles.md`](./mini-app-bundles.md))
 - `app reports` cursor pagination shape — 한 번이라도 신고 들어오면 캡처. ([`mini-app-misc.md`](./mini-app-misc.md))
-- `GET .../in-app-purchase/catalogs` 실제 목록/`catalog/<productId>` 상세 SUCCESS shape — 현재는 파트너 미등록 5002 gate만 관측됨. 거래처 등록 후 재관측 필요. ([`in-app-purchase.md`](./in-app-purchase.md))
+- `GET .../in-app-purchase/catalogs` 실제 목록/`catalog/<productId>` 상세 SUCCESS shape — 2026-07-25/26 재측정으로 200(상품 0건)까지는 확인됐지만, 정확한 envelope 필드는 여전히 미기록. 상품이 1건 이상 있는 상태에서 재관측 필요. ([`in-app-purchase.md`](./in-app-purchase.md))
 - `POST .../in-app-purchase/product/inspection` (products create) 실제 request/response — 메인테이너 승인 게이트 뒤에서만 실행 (issue #220 SECRET-HANDLING). ([`in-app-purchase.md`](./in-app-purchase.md))
 - `GET .../in-app-purchase/orders`, `/refunds` 실제 목록 shape. ([`in-app-purchase.md`](./in-app-purchase.md))
 
