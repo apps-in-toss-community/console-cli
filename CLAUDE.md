@@ -13,7 +13,7 @@
 이 repo와 직접 관련된 짝:
 
 - **`sdk-example`** (downstream consumer) — console-cli가 완성되면 sdk-example을 앱인토스 실제 미니앱으로 배포해 E2E 검증. CLI의 주요 품질 게이트.
-- **`agent-plugin`** — `/ait deploy`, `/ait logs` 같은 skill이 **Bash로 이 CLI를 shell out** 호출. MCP wrapping 안 함. `--json` 출력으로 충분.
+- **`agent-plugin`** — `/ait:deploy`, `/ait:logs` 같은 skill이 **Bash로 이 CLI를 shell out** 호출. MCP wrapping 안 함. `--json` 출력으로 충분.
 
 독립 실행 가능. 다른 repo 변경 없이 배포 가능.
 

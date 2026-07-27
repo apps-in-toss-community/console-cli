@@ -27,7 +27,7 @@ import {
 //     { ok: false, reason: 'invalid-id', message }                              exit 2
 //
 //   `needsKey: true` is emitted when the key list is empty. The flag is
-//   there so `/ait deploy` (and similar agent-plugin skills) can bail
+//   there so `/ait:deploy` (and similar agent-plugin skills) can bail
 //   with a friendly "issue a key first" message instead of attempting a
 //   deploy that will 401 server-side. We keep the UI-specific Korean
 //   wording out of JSON (it lives on stderr plain output only).
