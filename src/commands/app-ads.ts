@@ -72,10 +72,25 @@ import {
 // network-error exit 11, api-error exit 17.
 //
 // `placement-groups ls` / `abuse-status` are read-only, confirmed live
-// 2026-07-24 (workspace 3095 / app 31146): both endpoints return 200 with
-// empty/neutral state (no placement groups registered yet, abuse level
-// NONE). See docs/api/in-app-ads.md. `placement-groups create` is the one
+// 2026-07-24 (workspace 3095 / app 31146) and re-captured 2026-07-26 with
+// four registered placement groups, which is when the entry shape was first
+// observed. See docs/api/in-app-ads.md. `placement-groups create` is the one
 // mutation in this command group — gated behind --confirm (see below).
+
+// Human-output row for one placement-group entry. The server keys are
+// `groupId` / `name` / `state` — confirmed by the 2026-07-26 live capture
+// (docs/api/in-app-ads.md "Entry shape"). Before that capture this rendered
+// `g.id` / `g.status`, which do not exist in the response, so identifier and
+// state both collapsed to `-` (issue #240). `--json` passes the response
+// through untouched, so only the human path was ever affected.
+//
+// Exported as a pure function so the key contract is testable without a
+// citty invocation, matching `validateCreateAdsPlacementGroupArgs` below.
+export function formatPlacementGroupRow(g: Readonly<Record<string, unknown>>): string {
+  const str = (v: unknown): string =>
+    typeof v === 'string' || typeof v === 'number' ? String(v) : '-';
+  return `${str(g.groupId)}\t${str(g.name)}\t${str(g.state)}`;
+}
 
 const placementGroupsLsCommand = defineCommand({
   meta: {
@@ -127,11 +142,9 @@ const placementGroupsLsCommand = defineCommand({
       process.stdout.write(
         `App ${appId} (ws ${workspaceId}): ${placementGroups.length} placement group(s)\n`,
       );
+      process.stdout.write('GROUP ID\tNAME\tSTATE\n');
       for (const g of placementGroups) {
-        const id = typeof g.id === 'string' || typeof g.id === 'number' ? g.id : '-';
-        const name = typeof g.name === 'string' ? g.name : '-';
-        const status = typeof g.status === 'string' ? g.status : '-';
-        process.stdout.write(`${id}\t${name}\t${status}\n`);
+        process.stdout.write(`${formatPlacementGroupRow(g)}\n`);
       }
       return exitAfterFlush(ExitCode.Ok);
     } catch (err) {
@@ -485,8 +498,12 @@ const placementGroupsCreateCommand = defineCommand({
         `Created placement group ${result.groupId ?? '(unknown id)'} for app ${appId} (ws ${workspaceId})\n`,
       );
       if (categorySource !== undefined) process.stdout.write(categoryLine());
+      // 생성 직후의 `state` 값은 라이브로 관측된 적이 없다 — 예전에는 여기서
+      // `REGISTERING`을 단정해 인쇄했지만 서버가 확인해 준 값이 아니었다(#240).
+      // 구글 반영까지 최대 2시간이라는 점만 출처가 있다(공식 개발자 문서).
+      // 실제 상태는 `placement-groups ls`의 STATE 열로 확인한다.
       process.stdout.write(
-        '상태: REGISTERING — 구글 광고 시스템 반영까지 최대 2시간 걸릴 수 있어요.\n',
+        '구글 광고 시스템 반영까지 최대 2시간 걸릴 수 있어요 — 상태는 `aitcc app ads placement-groups ls`로 확인하세요.\n',
       );
       process.stdout.write(
         '실서빙은 사업자 등록·정산 승인 후 시작돼요 (인앱광고 선행조건 — `aitcc workspace business-verification show`로 확인).\n',
