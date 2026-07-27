@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateCreateAdsPlacementGroupArgs } from './app-ads.js';
+import { formatPlacementGroupRow, validateCreateAdsPlacementGroupArgs } from './app-ads.js';
 
 // Field-level rules are pinned against the create contract confirmed in
 // issue #229 (console SPA placement-group wizard serialization logic +
@@ -262,5 +262,41 @@ describe('validateCreateAdsPlacementGroupArgs', () => {
       expect(interstitial.value.adStyles).toBeUndefined();
       expect(interstitial.value.rewardSettings).toBeUndefined();
     }
+  });
+});
+
+// The `placement-groups ls` human renderer reads server keys directly, so a
+// key rename (or a wrong guess) is invisible to `--json` and shows up only as
+// `-` columns. That is exactly how issue #240 stayed latent: the renderer read
+// `id`/`status`, the response carries `groupId`/`state`, and our own workflow
+// only ever used `--json`. These cases pin the three keys the human path
+// depends on. Values here are synthetic — real placement-group identifiers are
+// ad monetization data and never enter fixtures (docs/api/_redaction.md).
+describe('formatPlacementGroupRow', () => {
+  it('reads groupId / name / state — the keys the live response actually uses', () => {
+    expect(
+      formatPlacementGroupRow({
+        groupId: 'test.group.id',
+        name: '홈 배너',
+        state: 'ENABLED',
+      }),
+    ).toBe('test.group.id\t홈 배너\tENABLED');
+  });
+
+  it('does not fall back to the pre-#240 id/status keys', () => {
+    expect(formatPlacementGroupRow({ id: 'wrong', name: 'n', status: 'WRONG' })).toBe('-\tn\t-');
+  });
+
+  it('renders a numeric groupId', () => {
+    expect(formatPlacementGroupRow({ groupId: 42, name: 'n', state: 'ENABLED' })).toBe(
+      '42\tn\tENABLED',
+    );
+  });
+
+  it('renders - for missing or non-scalar fields rather than throwing', () => {
+    expect(formatPlacementGroupRow({})).toBe('-\t-\t-');
+    expect(formatPlacementGroupRow({ groupId: null, name: { a: 1 }, state: undefined })).toBe(
+      '-\t-\t-',
+    );
   });
 });

@@ -5,12 +5,14 @@ import { type FetchLike, requestConsoleApi } from './http.js';
 // single mini-app (unlike `workspace partner`, which is workspace-level).
 // Endpoint inventory recovered by static-analysing the console SPA's public
 // Vite chunks (no auth, no console API touched — see issue #220 "정적 분석
-// inventory"). Read paths below are ⚠️ inferred for their *response* shape
-// (the only live observation we have is the `errorCode: 5002` gate on
-// `catalogs` for an unregistered partner — see docs/api/in-app-purchase.md)
-// but the *paths themselves* are directly read out of the SPA's route
-// registration table (`M(D.path("...").method("get").create())`), so we
-// treat the URLs as confirmed and the body shape as inferred.
+// inventory"). The *paths themselves* are directly read out of the SPA's
+// route registration table (`M(D.path("...").method("get").create())`), so
+// the URLs are confirmed. Response shapes are still ⚠️ inferred: `catalogs`
+// no longer hits the `errorCode: 5002` partner gate in this workspace and
+// now answers 200 (2026-07-25/26), but with zero products — so the SUCCESS
+// envelope was never recorded field-by-field and the item shape has never
+// been seen at all. See docs/api/in-app-purchase.md for the capture status
+// table and what each update did and did not establish.
 const BASE = 'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole';
 
 export const IAP_PRODUCT_TYPES = ['CONSUMABLE', 'NON_CONSUMABLE', 'SUBSCRIPTION'] as const;
@@ -53,12 +55,18 @@ function buildListQuery(params: {
 }
 
 // GET .../mini-app/:aid/in-app-purchase/catalogs
-// Confirmed live (2026-07-23, workspace 3095 / app 31146): an unregistered
-// partner gets `resultType: FAIL, errorCode: '5002', reason: '거래처 등록이
-// 필요합니다.'` — see `hintForErrorCode('5002')` in src/commands/_shared.ts
-// for the CLI-level remedy hint. The SUCCESS response shape below (page-based
-// `{contents, totalPage, currentPage}`, matching every other list endpoint
-// in this API family) is ⚠️ inferred, not live-observed.
+// Two live states observed (workspace 3095 / app 31146):
+//   2026-07-23 — unregistered partner: `resultType: FAIL, errorCode: '5002',
+//     reason: '거래처 등록이 필요합니다.'` (see `hintForErrorCode('5002')` in
+//     src/commands/_shared.ts for the CLI-level remedy hint).
+//   2026-07-25/26 — the 5002 gate no longer reproduces here; the call answers
+//     HTTP 200 with zero products.
+// The SUCCESS path is therefore reachable, but its shape is still ⚠️ inferred:
+// the 200 was not recorded field-by-field (only the CLI's own normalized
+// output was kept, which is not the server envelope), and with zero products
+// the item shape remains entirely unobserved. The page-based
+// `{contents, totalPage, currentPage}` assumption below still rests on the
+// other list endpoints in this API family, not on a capture.
 export async function fetchIapProducts(
   params: FetchIapProductsParams,
   cookies: readonly CdpCookie[],

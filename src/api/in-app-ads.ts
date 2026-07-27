@@ -4,26 +4,35 @@ import { fetchMiniAppDetail } from './mini-apps.js';
 
 // In-app advertising (IAA) placement-group inventory + abuse/serving status,
 // scoped to a single mini-app (mirrors in-app-purchase.ts's app-scoped
-// shape). Confirmed live 2026-07-24, workspace 3095 / app 31146 — see
-// issue #226 for the endpoint discovery session. The create path
-// (createAdsPlacementGroup, below) is the one mutation in this module —
-// its request body is ⚠️ inferred from static analysis of the console SPA's
-// placement-group wizard serialization logic + the public developer docs
-// (issue #229), never live-confirmed. Per SECRET-HANDLING policy it is never
-// invoked against the live console in this repo (dry-run only in CI/
-// dog-food); the real first call happens behind a maintainer-approved
-// `--confirm` invocation. See docs/api/in-app-ads.md "placement-group
-// create — inferred body shape".
+// shape). Confirmed live 2026-07-24 and re-captured with populated inventory
+// 2026-07-26, workspace 3095 / app 31146 — see issue #226 for the endpoint
+// discovery session and issue #236 for the shape capture. The create path
+// (createAdsPlacementGroup, below) is the one mutation in this module — its
+// request body was originally ⚠️ inferred from static analysis of the console
+// SPA's placement-group wizard serialization logic + the public developer
+// docs (issue #229). It has since been exercised live behind a
+// maintainer-approved `--confirm` invocation and did create placement groups,
+// so the request body is accepted by the server; the create **response**
+// envelope is still unobserved (whether it echoes the whole resource, returns
+// only `groupId`, or reports an initial `state`). Per SECRET-HANDLING policy
+// the POST is never issued from CI or dog-food automation — dry-run only —
+// and `--confirm` stays a maintainer gate. See docs/api/in-app-ads.md
+// "placement-group create".
 const BASE = 'https://apps-in-toss.toss.im/console/api-public/v3/appsintossconsole';
 
 // --- Placement groups ---
 
 // GET .../mini-app/:aid/in-app-ads-v2/placement-groups
-// Confirmed live (2026-07-24, workspace 3095 / app 31146): 200 with an empty
-// array — no placement groups registered yet for this app. Entry shape is
-// unobserved; pass entries through opaquely (same policy as
-// fetchIapProduct in in-app-purchase.ts) rather than typing fields we've
-// never seen populated.
+// Confirmed live twice (workspace 3095 / app 31146): 2026-07-24 returned an
+// empty array, and 2026-07-26 returned four registered groups — that second
+// capture is where the entry shape was first observed (`groupId` / `name` /
+// `state` / per-platform placement objects; `state: "ENABLED"` on all four).
+// Field names and types are canon in docs/api/in-app-ads.md "Entry shape";
+// the values are ad monetization data and are not reproduced in this repo.
+// Entries are still passed through opaquely (same policy as fetchIapProduct
+// in in-app-purchase.ts): one capture of one app is a thin basis for a
+// checked type, and the human renderer pins the keys it reads instead
+// (`formatPlacementGroupRow` in ../commands/app-ads.ts, issue #240).
 export async function fetchAdsPlacementGroups(
   params: { workspaceId: number; miniAppId: number },
   cookies: readonly CdpCookie[],
