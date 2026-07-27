@@ -197,7 +197,7 @@ Magic bytes로 첫 8바이트에서 자동 분기. `--json` 출력에 `bundleFor
 
 ## 기술 스택
 
-공통 baseline: **Node 24 LTS**, **pnpm 10.33.0** (`packageManager` 고정), **TypeScript strict**, **Biome** (lint + formatter — ESLint/Prettier 사용 안 함, `suspicious.noExplicitAny: error`). Pre-commit hook은 source-controlled (`.githooks/pre-commit`)이며 contributor가 수동 활성화한다: `git config core.hooksPath .githooks`. CI `pnpm lint`가 실제 강제 계층, hook은 빠른 피드백 용도. Commit message는 Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
+공통 baseline: **Node 24 LTS**, **pnpm 11.17.0** (`packageManager` 고정), **TypeScript strict**, **Biome** (lint + formatter — ESLint/Prettier 사용 안 함, `suspicious.noExplicitAny: error`). Pre-commit hook은 source-controlled (`.githooks/pre-commit`)이며 contributor가 수동 활성화한다: `git config core.hooksPath .githooks`. CI `pnpm lint`가 실제 강제 계층, hook은 빠른 피드백 용도. Commit message는 Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`).
 
 이 repo 고유:
 
