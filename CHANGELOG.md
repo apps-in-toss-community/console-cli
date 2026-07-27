@@ -1,5 +1,27 @@
 # @ait-co/console-cli
 
+## 0.1.47
+
+### Patch Changes
+
+- 915de2a: feat(ads): `app ads placement-groups create`의 `--category`를 선택 입력으로 — 비배너(전면·리워드) 포맷에서 생략 시 미니앱 자신의 category id(`impression.categoryPaths[].category.id`)를 auto-resolve하고 `in-app-ads-v2/category/:id/ad-mob-ad-info/:format`으로 검증한다. `--category`는 override로 유지. categoryPaths가 없거나 검증 실패 시 `--category` 명시를 요구하는 에러로 degrade.
+- 0e29c3c: `aitcc app ads placement-groups create`를 추가했다 — 인앱광고 지면(광고 그룹)을 생성하는 mutation 명령이다. `--format BANNER|INTERSTITIAL|REWARDED`에 따라 포맷별 필수 필드(배너는 `--banner-style`, 전면·리워드는 `--category`, 리워드는 추가로 `--reward-unit`/`--reward-amount`)를 검증해 바디를 조립한다. `aitcc app iap products create`와 동일한 `--dry-run`/`--confirm` mutation 게이트를 따른다.
+
+  2026-07-24 3소스 교차 규명 결과, Toss 인앱광고는 개발자의 Google AdMob 계정 없이도 지면을 만들 수 있다 — 미디에이션 구성을 앱 카테고리 기준으로 Toss가 자동으로 한다. 생성 성공 시 발급된 `adGroupId`와 함께 "구글 등록까지 최대 2시간", "실서빙은 사업자·정산 승인 후"라는 안내, SDK 사용 힌트(`GoogleAdMob.loadAppsInTossAdMob`)를 출력한다.
+
+  전면·리워드형에 필요한 `categoryId`의 후보 목록을 반환하는 조회 API는 아직 찾지 못했다 — `--category`는 항상 필수 입력이고, 상세는 `docs/api/in-app-ads.md` "category 후보 조회 — 미해결" 참고.
+
+- bff3ca5: fix(ads): `app ads placement-groups create`의 SDK 안내 문구에 실기기 caveat 추가 — "개발 중 테스트는 ait-ad-test-\* ID를 쓰세요"만 인쇄하면 테스트 ID가 실기기에서 항상 로드된다는 뜻으로 읽힌다. 2026-07-25/26 env3 실측에서 테스트 ID와 자체 발급 실 지면이 동일하게 `PLACEMENT_ID_FETCH_FAILED`로 실패했으므로, 승인·배포 상태에 따라 테스트 ID도 로드에 실패할 수 있다는 단서를 같은 줄에 덧붙인다. (실패 원인이 승인 게이트인지 `PREPARE` 배포 상태인지는 미해결 — 문구도 단정하지 않는다.)
+- abdf53e: `aitcc app iap products create`의 생성 계약을 2026-07-25 콘솔 SPA 재측정 결과(issue #232)에 맞춰 갱신했다. 플래그를 `--icon-img-url`→`--icon`, `--min-deployment-id`→`--min-deployment`, `--post-inspection-status <S>`→`--expose`(불리언)로 정리하고, `--price`는 10원 단위로 스냅해 범위를 검증하며 스냅 시 경고를 낸다(`warnings` — json/stderr). `--renewal-cycle`/`--discount`는 `--type SUBSCRIPTION`이 아니면 조용히 버리지 않고 거부한다(fail fast). `--discount <spec>`을 새로 지원한다 — citty(0.2.2)에 반복 플래그를 배열로 모으는 기능이 없어 `;`-구분 다중 entry를 담는 단일 플래그로 구현(`FREE_TRIAL`/`NEW_SUBSCRIPTION`/`RETURNING` discountPolicies 조립, `src/commands/app-iap.ts#parseDiscountPoliciesSpec`).
+
+  `--confirm` 경로는 실제 POST 전에 read-only `catalogs` preflight를 거쳐, `errorCode: 5001`(IAP 위탁매매 약관 미동의)을 만나면 POST를 시도하지 않고 `aitcc workspace terms --type IAP`를 가리키는 힌트로 중단한다(`hintForErrorCode`에 5001 케이스 추가 — 동의는 법적 결정이라 CLI가 대신 처리하지 않음). `--min-deployment`의 APPROVED-배포 검증은 클라이언트에서 확정 관측된 API 응답이 없어 follow-up으로 남겼다(플래그 존재 여부만 검증, help text에 명시).
+
+  `app ads placement-groups create`보다 강한 게이트(생성 = 심사 제출)라는 점을 명령 설명·거부 메시지에 명시했고, 성공 출력에 "노출은 심사 APPROVED 후"와 SDK 소비 힌트(`IAP.getProductItemList()` → `createOneTimePurchaseOrder`)를 추가했다. `docs/api/in-app-purchase.md`의 "products create" 섹션을 ⚠️ inferred에서 ✅ confirmed로 갱신 — 승인 전 create는 광고와 달리 막힐 개연성이 높다는 점을 명시.
+
+- 4b053ab: 수익화 상태를 조회하는 read-only 명령 5종을 추가했다: `aitcc app ads placement-groups ls` / `aitcc app ads abuse-status`(인앱 광고 지면·어뷰징 상태), `aitcc app pay-config show`(토스페이 키 설정 상태), `aitcc workspace promotion-money show`(자사 앱 홍보 지출 축 — IAA 광고수익과는 다른 축), `aitcc workspace business-verification show`(사업자 라이선스 인증 + 파트너 등록 상태를 한 리포트로). 전부 2026-07-24 라이브 200 응답으로 확정된 엔드포인트(workspace 3095 / app 31146)를 기반으로 한다.
+
+  `aitcc app pay-config show`는 5개 토스페이 자격증명 필드(`payApiKey`/`testPayApiKey`/`billingPayApiKey`/`testBillingPayApiKey`/`tossCertClientId`)의 값을 API 레이어에서부터 `'SET'|'UNSET'`으로만 마스킹한다 — Deploy Key와 동일한 시크릿 취급 원칙이며, `--json`을 포함한 어떤 출력 경로에도 원시 값이 노출되지 않는다. `aitcc workspace business-verification show`가 관측한 사업자 라이선스 미등록 신호(`errorCode: 500`)는 HTTP 실패가 아니라 SUCCESS envelope 안에 nest된 business-level 필드라, 에러로 죽지 않고 진단 메시지로 렌더링한다.
+
 ## 0.1.46
 
 ### Patch Changes
