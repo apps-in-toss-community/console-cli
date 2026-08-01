@@ -5,9 +5,11 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있습니다. 인증·워크스페이스·미니앱 명령(번들 배포, 인증서 관리 포함)이 end-to-end로 동작하며, `app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 명령 표면은 [진행 상황](#진행-상황) 참조.
+> 1.0 이전 단계 (`0.1.x`) — npm에 배포돼 있습니다. 인증·워크스페이스·미니앱 명령(번들 배포, 인증서 관리 포함)이 end-to-end로 동작하며, `app logs`는 백엔드 endpoint가 없어 구현되지 않았습니다. 전체 명령 표면은 [진행 상황](#진행-상황) 참조.
 
 `aitcc`는 앱인토스 개발자 콘솔을 자동화하는 커뮤니티 CLI입니다 — 브라우저로 한 번만 로그인하면 이후 작업은 셸이나 AI 코딩 에이전트가 headless 브라우저로 처리합니다.
+
+이 프로젝트는 유지보수를 종료합니다. 저장소는 archive되어 read-only가 되며, 소스와 이슈 기록은 GitHub에 그대로 남습니다. npm 패키지 `@ait-co/console-cli`와 GitHub Releases 바이너리는 계속 설치할 수 있지만 더 이상 업데이트되지 않습니다. `aitc.dev` 도메인과 그 위에서 운영하던 사이트·서비스는 종료되므로, 문서와 관련 프로젝트는 [GitHub organization](https://github.com/apps-in-toss-community)의 소스를 보세요. CLI 자체는 앱인토스 콘솔 API만 호출하고 `aitc.dev` 호스트에 의존하지 않으며, `install.sh`와 `aitcc upgrade`가 쓰는 GitHub Releases 경로도 archive 이후 그대로 유지됩니다.
 
 ## 설치
 
@@ -191,7 +193,7 @@ aitcc app deploy ./aitc-sdk-example.ait --json
 - 미니앱: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
 - 그 외: Deploy Key 발급(`keys`), `upgrade`(self-update), `completion`(셸 자동완성)
 
-`app logs`는 백엔드 endpoint 확보 후 구현 예정입니다. 전체 로드맵은 [organization landing page](https://aitc.dev/) 참조.
+`app logs`는 콘솔이 노출하는 백엔드 endpoint가 없어 구현되지 않았습니다. 조직의 다른 저장소는 [GitHub organization](https://github.com/apps-in-toss-community)에서 볼 수 있습니다.
 
 ## Deploy Key 발급
 
