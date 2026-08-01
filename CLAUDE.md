@@ -286,7 +286,7 @@ Gatekeeper(`spctl --assess`)는 ad-hoc인 한 quarantine bit가 붙은 시나리
 
 `login` / `logout` / `whoami` / `upgrade`는 end-to-end 동작. App/workspace/me/notices 명령군은 위 "Command surface" 참조. 새 기능은 Playwright headed 세션으로 network tap 해서 endpoint + payload shape 파악 → pure `fetch()` 재현 방식으로 구현.
 
-전체 로드맵은 [landing page](https://aitc.dev/) 참고.
+조직의 다른 저장소는 [GitHub organization](https://github.com/apps-in-toss-community) 참고. (`aitc.dev` 도메인은 종료되므로 그 호스트를 가리키는 링크는 새로 만들지 않는다.)
 
 ## Contributing
 

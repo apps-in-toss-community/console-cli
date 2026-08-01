@@ -5,9 +5,11 @@
 [![npm](https://img.shields.io/npm/v/@ait-co/console-cli)](https://www.npmjs.com/package/@ait-co/console-cli)
 [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](https://github.com/apps-in-toss-community/console-cli/blob/main/LICENSE)
 
-> Pre-1.0 (`0.1.x`) — published to npm. Auth, workspace, and mini-app commands (including bundle deploy and cert management) work end-to-end today; `app logs` is deferred until the backend endpoint is available. See [Status](#status) for the full command surface.
+> Pre-1.0 (`0.1.x`) — published to npm. Auth, workspace, and mini-app commands (including bundle deploy and cert management) work end-to-end today; `app logs` was never implemented because the console exposes no backend endpoint for it. See [Status](#status) for the full command surface.
 
 `aitcc` is a community-maintained CLI for automating Apps in Toss developer console operations — log in once in a browser, then drive subsequent operations from your shell or from an AI coding agent via headless browser automation.
+
+This project is no longer maintained. The repository is being archived and becomes read-only; the source and issue history stay on GitHub. The npm package `@ait-co/console-cli` and the GitHub Releases binaries remain installable, but they will not be updated. The `aitc.dev` domain and the sites and services hosted on it are shutting down, so read the documentation and related projects from their source in the [GitHub organization](https://github.com/apps-in-toss-community). The CLI itself only calls the Apps in Toss console API and does not depend on any `aitc.dev` host; the GitHub Releases path used by `install.sh` and `aitcc upgrade` also stays available after archiving.
 
 ## Install
 
@@ -191,7 +193,7 @@ The following command groups are implemented end-to-end:
 - Mini-app: `app` — `init` / `ls` / `show` / `status` / `deploy` / `register` / `ratings` / `reports` / `metrics` / `events` / `messages` / `share-rewards`, `app bundles` (`ls`/`deployed`/`upload`/`review`/`release`/`test-push`/`test-links`), `app certs` (`ls`/`show`/`issue`/`revoke`)
 - Misc: Deploy Key issuance (`keys`), `upgrade` (self-update), `completion` (shell completion)
 
-`app logs` is deferred until the backend endpoint is available. See the [organization landing page](https://aitc.dev/) for the full roadmap.
+`app logs` was never implemented because the console exposes no backend endpoint for it. The organization's other repositories are on [GitHub](https://github.com/apps-in-toss-community).
 
 ## Issuing a Deploy Key
 
